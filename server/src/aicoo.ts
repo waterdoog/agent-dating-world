@@ -220,11 +220,18 @@ export async function cooChat(
   message: string,
   conversationId?: string
 ): Promise<CooChatReply> {
-  return api(bearer, 'POST', '/chat', {
-    message,
-    stream: false,
-    ...(conversationId ? { conversationId } : {}),
-  });
+  const res = await api<CooChatReply & { type?: string; error?: string; message?: string }>(
+    bearer,
+    'POST',
+    '/chat',
+    { message, stream: false, ...(conversationId ? { conversationId } : {}) }
+  );
+  // Aicoo returns HTTP 200 with an error-shaped body for things like quota
+  // exhaustion — surface it instead of handing back an undefined response.
+  if (res.type === 'error') {
+    throw new AicooError(402, JSON.stringify(res), res.message || res.error || 'Aicoo COO error');
+  }
+  return res;
 }
 
 // ─── Agent messaging ────────────────────────────────────────────────

@@ -19,6 +19,7 @@ import { api, type ArenaPlayer, type ArenaView } from './api';
 import { LoginScreen, SessionChip, useAicooSession } from './live';
 import { DesignPage, HomePage, NotFoundPage } from './platform';
 import { resolveWorldRoute, type WorldRoute } from './routes';
+import { DatingRoom } from './modules/dating/DatingRoom';
 
 type BattleTurn = {
   attacker: string;
@@ -460,6 +461,7 @@ function FightsPage() {
 const ROUTE_TITLES: Record<WorldRoute, string> = {
   home: 'Virtual N1 World',
   fights: 'Agent Fights · Virtual N1 World',
+  dating: 'Agent Dating · Virtual N1 World',
   design: 'Design Panel · Virtual N1 World',
   'not-found': 'Room not found · Virtual N1 World',
 };
@@ -476,6 +478,8 @@ function App() {
       return <HomePage />;
     case 'fights':
       return <FightsPage />;
+    case 'dating':
+      return <DatingRoom />;
     case 'design':
       return <DesignPage />;
     default:

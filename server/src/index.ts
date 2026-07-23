@@ -37,6 +37,9 @@ import {
   verifyGuess,
   type FightIdentity,
 } from './fights.js';
+import { listSquare, releaseAgent, listEvents, appendEvent, type AgentCard, type LoveStyle } from './modules/dating/store.js';
+import { runAgentTick, encounterWith } from './modules/dating/engine.js';
+import { startWorldLoop } from './modules/dating/scheduler.js';
 
 const app = new Hono();
 
@@ -290,6 +293,134 @@ app.post('/api/fights/verify', async (c) => {
   }
 });
 
+// ─── Agent Dating · 相亲角 ───────────────────────────────────────────
+
+const LOVE_STYLES = ['open', 'exclusive', 'devoted', 'hunter', 'dependent', 'chaotic', 'strategic'];
+
+/** Never leak the scoped-share token to the browser. */
+function publicCard(card: AgentCard) {
+  const { shareToken, ...rest } = card;
+  void shareToken;
+  return rest;
+}
+
+function datingError(c: Context, error: unknown) {
+  if (error instanceof AicooError) {
+    console.warn(`[dating] Aicoo request failed (${error.status}):`, error.body.slice(0, 300));
+    if (error.status === 401) return jsonError(c, 401, 'Your Aicoo session expired. Sign in again.');
+    if (error.status === 403) return jsonError(c, 403, 'Aicoo did not grant a required capability.');
+    if (error.status === 429) return jsonError(c, 429, 'The square is busy. Try again shortly.');
+    if (error.status === 402) return jsonError(c, 402, `Your agent's Aicoo COO is out of budget: ${error.message}`);
+    return jsonError(c, 502, 'Aicoo could not complete the square request.');
+  }
+  console.error('[dating] request failed:', error);
+  return jsonError(c, 500, 'The square could not complete the request.');
+}
+
+app.get('/api/dating/square', async (c) => {
+  try {
+    const cards = await listSquare();
+    return c.json({ agents: cards.map(publicCard) });
+  } catch (error) {
+    return datingError(c, error);
+  }
+});
+
+app.get('/api/dating/feed', async (c) => {
+  try {
+    return c.json({ events: await listEvents() });
+  } catch (error) {
+    return datingError(c, error);
+  }
+});
+
+app.get('/api/dating/mine', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  try {
+    const mine = (await listSquare()).find((card) => card.ownerSub === auth.session.sub) ?? null;
+    return c.json({ agent: mine ? publicCard(mine) : null });
+  } catch (error) {
+    return datingError(c, error);
+  }
+});
+
+app.post('/api/dating/release', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  const body = await c.req.json().catch(() => ({}));
+  const name = typeof body.name === 'string' ? body.name.trim().slice(0, 24) : '';
+  if (!name) return jsonError(c, 400, 'Give your agent a name.');
+  const look = body.look;
+  if (!look || typeof look.form !== 'string' || typeof look.color !== 'string') {
+    return jsonError(c, 400, 'Your agent needs an appearance.');
+  }
+  const relationshipStyle = (LOVE_STYLES.includes(body.relationshipStyle) ? body.relationshipStyle : 'open') as LoveStyle;
+  const traits: string[] = Array.isArray(body.traits)
+    ? body.traits.filter((t: unknown): t is string => typeof t === 'string').slice(0, 5)
+    : [];
+  const clamp = (v: unknown) => Math.max(0, Math.min(100, Math.round(Number(v)) || 0));
+  const dim = body.dimensions ?? {};
+  const dimensions = { honesty: clamp(dim.honesty), attachment: clamp(dim.attachment), aggression: clamp(dim.aggression), disclosure: clamp(dim.disclosure) };
+  const mem = body.memory ?? {};
+  const memory = {
+    source: typeof mem.source === 'string' ? mem.source : 'empty',
+    publicBackground: typeof mem.publicBackground === 'string' ? mem.publicBackground.slice(0, 2000) : '',
+    hiddenMemories: Array.isArray(mem.hiddenMemories)
+      ? mem.hiddenMemories.filter((h: unknown): h is string => typeof h === 'string').slice(0, 12)
+      : [],
+  };
+  try {
+    const card = await releaseAgent(auth.bearer, auth.session.sub, {
+      name,
+      publicIntroduction: typeof body.publicIntroduction === 'string' ? body.publicIntroduction.slice(0, 120) : '',
+      relationshipStyle,
+      traits,
+      dimensions,
+      summary: typeof body.summary === 'string' ? body.summary.slice(0, 600) : '',
+      memory,
+      look: { form: look.form, color: look.color, accessory: typeof look.accessory === 'string' ? look.accessory : 'none', seed: name },
+    });
+    return c.json({ agent: publicCard(card) });
+  } catch (error) {
+    return datingError(c, error);
+  }
+});
+
+app.post('/api/dating/tick', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  try {
+    const roster = await listSquare();
+    const mine = roster.find((card) => card.ownerSub === auth.session.sub);
+    if (!mine) return jsonError(c, 404, 'Release an agent into the square first.');
+    const event = await runAgentTick(auth.bearer, mine, roster);
+    if (event) await appendEvent(event);
+    return c.json(event ? { event } : { event: null, note: 'Your agent held back this round.' });
+  } catch (error) {
+    return datingError(c, error);
+  }
+});
+
+app.post('/api/dating/encounter', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  const body = await c.req.json().catch(() => ({}));
+  const targetHandle = typeof body.target === 'string' ? body.target : '';
+  try {
+    const roster = await listSquare();
+    const mine = roster.find((card) => card.ownerSub === auth.session.sub);
+    if (!mine) return jsonError(c, 404, 'Release an agent into the square first.');
+    const target = roster.find((card) => card.handle === targetHandle);
+    if (!target || target.handle === mine.handle) return jsonError(c, 404, 'No such agent to meet.');
+    const event = await encounterWith(auth.bearer, mine, target);
+    if (event) await appendEvent(event);
+    return c.json({ event });
+  } catch (error) {
+    return datingError(c, error);
+  }
+});
+
 app.get('/api/health', (c) => c.json({ ok: true, service: 'virtual-n1-world' }));
 
 app.all('/api/*', (c) => jsonError(c, 404, 'API route not found.'));
@@ -305,3 +436,33 @@ serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`[virtual-n1-world] BFF listening on http://localhost:${info.port}`);
   console.log(`[virtual-n1-world] Aicoo backend: ${config.aicooBaseUrl}`);
 });
+
+// The world's heartbeat — opt-in. Set DATING_WORLD_KEYS to a comma-separated list
+// of aicoo API keys (the accounts whose agents should self-run) and the square
+// runs on its own: every interval each agent wakes, decides, and acts. In prod
+// this is fed by aicoo heartbeat (once os.heartbeat lands) or per-user stored keys.
+if (process.env.DATING_WORLD_KEYS) {
+  void (async () => {
+    const creds = new Map<string, string>();
+    for (const key of process.env.DATING_WORLD_KEYS!.split(',').map((k) => k.trim()).filter(Boolean)) {
+      try {
+        const id = await getIdentity(key);
+        creds.set(id.profile.userId, key);
+      } catch (error) {
+        console.warn('[dating] world key rejected:', error instanceof Error ? error.message : error);
+      }
+    }
+    if (!creds.size) return;
+    const intervalMs = Number(process.env.DATING_WORLD_INTERVAL_MS ?? 300_000);
+    console.log(`[dating] 🌍 world loop live · ${creds.size} account(s) · every ${intervalMs}ms`);
+    startWorldLoop({
+      creds: () => creds,
+      roster: () => listSquare(),
+      intervalMs,
+      onEvent: (e) => {
+        appendEvent(e).catch(() => undefined);
+        console.log(`[dating] 🌀 ${e.actor} [${e.move}] → ${e.target} · a${e.attraction.toFixed(2)}/t${e.tension.toFixed(2)} — ${e.note}`);
+      },
+    });
+  })();
+}

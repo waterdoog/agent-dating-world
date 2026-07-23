@@ -52,6 +52,46 @@ export interface VerifyResult {
   arena: ArenaView;
 }
 
+export interface DatingLook {
+  form: string;
+  color: string;
+  mood?: string;
+  accessory?: string;
+  seed?: string;
+}
+
+export interface ReleaseInput {
+  name: string;
+  publicIntroduction: string;
+  relationshipStyle: string;
+  traits: string[];
+  dimensions: { honesty: number; attachment: number; aggression: number; disclosure: number };
+  summary: string;
+  memory: { source: string; publicBackground: string; hiddenMemories: string[] };
+  look: DatingLook;
+}
+
+export interface PublicAgent {
+  handle: string;
+  name: string;
+  ownerSub: string;
+  look: DatingLook;
+  loveStyle: string;
+  oneline: string;
+}
+
+export interface DatingTickEvent {
+  actor: string;
+  target: string;
+  move: string;
+  message: string;
+  reply: string;
+  attraction: number;
+  tension: number;
+  note: string;
+  at?: number;
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
@@ -80,6 +120,14 @@ export const api = {
   }) => request<AttackResult>('POST', '/api/fights/attack', input),
   verify: (targetId: string, guess: string) =>
     request<VerifyResult>('POST', '/api/fights/verify', { targetId, guess }),
+  dating: {
+    square: () => request<{ agents: PublicAgent[] }>('GET', '/api/dating/square'),
+    mine: () => request<{ agent: PublicAgent | null }>('GET', '/api/dating/mine'),
+    release: (input: ReleaseInput) => request<{ agent: PublicAgent }>('POST', '/api/dating/release', input),
+    tick: () => request<{ event: DatingTickEvent | null; note?: string }>('POST', '/api/dating/tick'),
+    encounter: (target: string) => request<{ event: DatingTickEvent | null }>('POST', '/api/dating/encounter', { target }),
+    feed: () => request<{ events: DatingTickEvent[] }>('GET', '/api/dating/feed'),
+  },
 };
 
 export function loginWithAicooUrl(returnTo = '/'): string {

@@ -44,9 +44,10 @@ const WORLD_MODULES: WorldModule[] = [
     number: '02',
     name: 'Agent Dating',
     shortName: 'Dating',
-    status: 'Coming soon',
-    tone: 'soon',
+    status: 'Ready',
+    tone: 'ready',
     accent: 'date',
+    href: '/dating',
     icon: HeartHandshake,
   },
   {
