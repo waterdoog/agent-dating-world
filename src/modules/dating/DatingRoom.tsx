@@ -117,41 +117,28 @@ function Bench({ x, y }: { x: number; y: number }) {
   );
 }
 
-// ── plaza wandering + proximity chat (ambient flavor; real cross-account
-//    chats run in the autonomous world loop / the user's own encounters) ──
+// ── plaza life: sprites wander, but they ONLY chat when a REAL interaction
+//    happens — a played world-feed event or the user's own encounter. No
+//    canned dialogue: every bubble is a real Aicoo line. ──────────────────
 interface Mover {
   name: string; handle?: string; look: DatingLook; mbti: string; you: boolean; size: number;
   x: number; y: number; tx: number; ty: number;
-  chatUntil: number;          // busy in an exchange until this time
-  partner?: string;           // who it is currently talking to (name)
-  rounds: number;             // exchanges done this session — caps runaway clumping
+  chatUntil: number;          // holding still (in a real exchange) until this time
+  partner?: string;           // who it is talking to right now (name)
+  rounds: number;             // vestigial; kept for the mover shape
   bubble?: { text: string; kind: 'fight' | 'love' | 'new' };
 }
 const BOUNDS = { minX: 10, maxX: 89, minY: 17, maxY: 82 };
 const SPEED = 0.55;
-const SEP_DIST = 11;     // personal space while wandering — keeps sprites from stacking
-const CHAT_DIST = 13;    // proximity that sparks a chat
-const TALK_DIST = 17;    // how far apart a talking pair stands, so both name cards stay readable
-const CHAT_MS = 3000;    // one back-and-forth exchange
-const PAIR_COOL = 9000;  // after parting, an ambient pair won't re-chat for this long
-const REAL_COOL = 120000;// a real (token-spending) encounter cools down much longer
-const MAX_ROUNDS = 3;    // hard cap — nobody stays glued forever
-const CONTINUE_P = 0.45; // chance an ambient pair keeps talking after an exchange
+const SEP_DIST = 11;      // personal space while wandering — keeps sprites from stacking
+const CHAT_DIST = 13;     // how close YOUR agent must get to spark a live real encounter
+const TALK_DIST = 17;     // how far apart a talking pair stands, so both name cards stay readable
+const DISPLAY_MS = 10000;  // how long a real exchange's lines stay up in the plaza
+const PAIR_COOL = 8000;   // a just-finished pair won't re-stage for this long
+const REAL_COOL = 120000; // the user's own (token-spending) encounter cools down much longer
 
-const KINDS: Array<'love' | 'fight' | 'new'> = ['love', 'fight', 'new', 'new'];
-// an opener (spoken by A) paired with a reply (spoken by B) so BOTH sides show
-const OPEN: Record<'love' | 'fight' | 'new', string[]> = {
-  love: ['你真懂我…', '再靠近一点？', '我好像在意你了 ❤', '你不一样。'],
-  fight: ['你太自私了！', '别装了。', '我们合不来。', '够了。'],
-  new: ['第一次见你。', '你是谁？', '说说你自己？', '有意思…'],
-};
-const REPLY: Record<'love' | 'fight' | 'new', string[]> = {
-  love: ['我也是…', '嗯，我在。', '别停下来 ❤', '我也这么觉得。'],
-  fight: ['是你先的。', '呵，随你。', '那就散了。', '我不惯着你。'],
-  new: ['你猜？', '路过而已。', '想听哪段？', '彼此彼此。'],
-};
-const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
-const trunc = (s: string) => (s.length > 42 ? s.slice(0, 42) + '…' : s);
+const trunc = (s: string) => (s.length > 46 ? s.slice(0, 46) + '…' : s);
+const eventKey = (e: DatingTickEvent) => `${e.actor}~${e.target}~${e.at ?? e.message.slice(0, 12)}`;
 const clampX = (v: number) => Math.max(BOUNDS.minX, Math.min(BOUNDS.maxX, v));
 const clampY = (v: number) => Math.max(BOUNDS.minY, Math.min(BOUNDS.maxY, v));
 function newTarget() {
@@ -190,19 +177,14 @@ function faceOff(a: Mover, b: Mover) {
   left.x = clampX(mx - TALK_DIST / 2); left.y = my;
   right.x = clampX(mx + TALK_DIST / 2); right.y = my;
 }
-// one exchange: A opens, B replies — both bubbles show, so you see both sides
-function exchange(a: Mover, b: Mover) {
-  const kind = pick(KINDS);
-  a.bubble = { text: pick(OPEN[kind]), kind };
-  b.bubble = { text: pick(REPLY[kind]), kind };
-  const until = Date.now() + CHAT_MS;
-  a.chatUntil = until; b.chatUntil = until;
-}
-function beginChat(a: Mover, b: Mover) {
+// stage a REAL exchange in the plaza: the two agents face off and speak their actual lines
+function stageExchange(a: Mover, b: Mover, message: string, reply: string, kind: 'fight' | 'love') {
   a.partner = b.name; b.partner = a.name;
-  a.rounds = 1; b.rounds = 1;
   faceOff(a, b);
-  exchange(a, b);
+  a.bubble = { text: trunc(message), kind };
+  b.bubble = { text: trunc(reply), kind };
+  const until = Date.now() + DISPLAY_MS;
+  a.chatUntil = until; b.chatUntil = until;
 }
 function endChat(a: Mover, b: Mover, cool: Map<string, number>, coolMs: number) {
   a.partner = b.partner = undefined;
@@ -212,8 +194,8 @@ function endChat(a: Mover, b: Mover, cool: Map<string, number>, coolMs: number) 
   partTargets(a, b);
   cool.set([a.name, b.name].sort().join('~'), Date.now() + coolMs);
 }
-// after each exchange, decide whether to keep talking (再聊) or part ways (散开)
-function stepChats(ms: Mover[], cool: Map<string, number>, encountering: boolean) {
+// when a staged exchange's display window ends, the pair parts and drifts away
+function stepChats(ms: Mover[], cool: Map<string, number>) {
   const now = Date.now();
   const byName = new Map(ms.map((m) => [m.name, m]));
   const seen = new Set<string>();
@@ -222,16 +204,8 @@ function stepChats(ms: Mover[], cool: Map<string, number>, encountering: boolean
     const p = byName.get(m.partner);
     if (!p || p.partner !== m.name) { m.partner = undefined; m.bubble = undefined; continue; }
     seen.add(m.name); seen.add(p.name);
-    if (m.chatUntil > now) continue;                     // still mid-exchange
-    if (m.you || p.you) {                                 // real encounter pair
-      if (encountering) continue;                        // still awaiting the API
-      endChat(m, p, cool, REAL_COOL);
-    } else if (m.rounds < MAX_ROUNDS && Math.random() < CONTINUE_P) {
-      m.rounds += 1; p.rounds = m.rounds;
-      exchange(m, p);                                    // 再聊一轮
-    } else {
-      endChat(m, p, cool, PAIR_COOL);                    // 散开
-    }
+    if (m.chatUntil > now) continue;                     // still showing their real lines
+    endChat(m, p, cool, m.you || p.you ? REAL_COOL : PAIR_COOL);
   }
 }
 
@@ -257,9 +231,14 @@ export function DatingRoom() {
   useEffect(() => { loadSquare(); }, []);
   useEffect(() => {
     let alive = true;
-    const load = () => api.dating.feed().then((r) => { if (alive) setEvents(r.events); }).catch(() => undefined);
+    const load = () => api.dating.feed().then((r) => {
+      if (!alive) return;
+      if (!seededRef.current) { r.events.forEach((e) => playedRef.current.add(eventKey(e))); seededRef.current = true; }
+      eventsRef.current = r.events;   // the plaza plays anything here not yet in playedRef
+      setEvents(r.events);
+    }).catch(() => undefined);
     load();
-    const id = window.setInterval(load, 15000);
+    const id = window.setInterval(load, 6000);
     return () => { alive = false; window.clearInterval(id); };
   }, []);
   useEffect(() => { if (signedIn) api.dating.mine().then((r) => setMine(r.agent)).catch(() => undefined); }, [signedIn]);
@@ -278,6 +257,9 @@ export function DatingRoom() {
   const simRef = useRef<Mover[]>([]);
   const encounteringRef = useRef(false);
   const coolRef = useRef<Map<string, number>>(new Map());
+  const eventsRef = useRef<DatingTickEvent[]>([]);   // latest feed, for the plaza to play from
+  const playedRef = useRef<Set<string>>(new Set());  // events already staged in the plaza
+  const seededRef = useRef(false);                   // history is marked played on first load
   const [frame, setFrame] = useState<Mover[]>([]);
   useEffect(() => {
     const prev = new Map(simRef.current.map((m) => [m.name, m]));
@@ -290,11 +272,11 @@ export function DatingRoom() {
     setFrame([...simRef.current]);
   }, [residents]);
   useEffect(() => {
+    // YOUR agent walking into another real agent → a live, real Aicoo encounter
     function realEncounter(actor: Mover, other: Mover) {
       const t0 = Date.now();
       encounteringRef.current = true;
       actor.partner = other.name; other.partner = actor.name;
-      actor.rounds = 1; other.rounds = 1;
       faceOff(actor, other);
       actor.chatUntil = t0 + 90000; other.chatUntil = t0 + 90000; // hold both while the real chat runs
       actor.bubble = { text: '…', kind: 'new' };
@@ -306,7 +288,8 @@ export function DatingRoom() {
             const kind: 'fight' | 'love' = event.tension > event.attraction ? 'fight' : 'love';
             actor.bubble = { text: trunc(event.message), kind };
             other.bubble = { text: trunc(event.reply), kind };
-            actor.chatUntil = t + 7000; other.chatUntil = t + 7000; // linger so both lines are readable
+            actor.chatUntil = t + DISPLAY_MS; other.chatUntil = t + DISPLAY_MS;
+            playedRef.current.add(eventKey(event));   // shown live already — don't replay it from the feed
             setEvents((cur) => [event, ...cur].slice(0, 6));
             setNotice(`${event.actor} 真的和 ${event.target} 聊了 · 心动 ${event.attraction.toFixed(2)} / 张力 ${event.tension.toFixed(2)}`);
             loadSquare();
@@ -319,20 +302,34 @@ export function DatingRoom() {
         .finally(() => { encounteringRef.current = false; });
     }
     function handleProximity(ms: Mover[]) {
+      if (encounteringRef.current) return;
       const now = Date.now();
       for (let i = 0; i < ms.length; i++) for (let j = i + 1; j < ms.length; j++) {
         const a = ms[i], b = ms[j];
-        if (a.partner || b.partner) continue;                    // already engaged
+        if (!a.you && !b.you) continue;                          // ONLY your agent triggers a live encounter
+        if (a.partner || b.partner) continue;
         if (a.chatUntil > now || b.chatUntil > now) continue;
         if (Math.hypot(a.x - b.x, a.y - b.y) >= CHAT_DIST) continue;
         if ((coolRef.current.get([a.name, b.name].sort().join('~')) ?? 0) >= now) continue;
-        const bothReal = Boolean(a.handle && b.handle);
-        if ((a.you || b.you) && bothReal && !encounteringRef.current) realEncounter(a.you ? a : b, a.you ? b : a);
-        else if (!a.you && !b.you) beginChat(a, b);               // ambient pair
+        if (a.handle && b.handle) realEncounter(a.you ? a : b, a.you ? b : a);
       }
     }
+    // replay a REAL world-feed event in the plaza: the two agents meet and speak their actual lines.
+    // per-mover busy checks below handle conflicts, so this can run alongside the user's own encounter.
+    function playFeedEvents(ms: Mover[]) {
+      const now = Date.now();
+      const ev = eventsRef.current.find((e) => !playedRef.current.has(eventKey(e)));
+      if (!ev) return;
+      const a = ms.find((m) => m.name === ev.actor), b = ms.find((m) => m.name === ev.target);
+      if (!a || !b) { playedRef.current.add(eventKey(ev)); return; }     // a party isn't in the plaza → skip it
+      if (a.partner || b.partner || a.chatUntil > now || b.chatUntil > now) return;   // busy → wait a tick
+      if ((coolRef.current.get([a.name, b.name].sort().join('~')) ?? 0) >= now) return;
+      playedRef.current.add(eventKey(ev));
+      stageExchange(a, b, ev.message, ev.reply, ev.tension > ev.attraction ? 'fight' : 'love');
+    }
     const id = window.setInterval(() => {
-      stepChats(simRef.current, coolRef.current, encounteringRef.current);
+      stepChats(simRef.current, coolRef.current);
+      playFeedEvents(simRef.current);
       moveWorld(simRef.current);
       handleProximity(simRef.current);
       setFrame([...simRef.current]);

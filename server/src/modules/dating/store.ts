@@ -147,28 +147,44 @@ export async function listSquare(): Promise<AgentCard[]> {
   return readRoster();
 }
 
-// ── shared world-event feed (operator workspace) ────────────────────
+// ── shared world-event feed ──────────────────────────────────────────
+// Held IN-MEMORY in the BFF so the plaza keeps getting real events even
+// when the operator workspace is unwritable (e.g. out of weekly budget —
+// Aicoo's limit blocks note writes too). Best-effort persisted to the
+// operator workspace for continuity across restarts; a failed persist
+// never blocks the live feed.
 const EVENTS_NOTE = 'events.json';
+let recentEvents: WorldEvent[] = [];
+let eventsHydrated = false;
 
-export async function listEvents(): Promise<WorldEvent[]> {
-  if (!config.operatorApiKey) return [];
+async function hydrateEvents(): Promise<void> {
+  if (eventsHydrated) return;
+  eventsHydrated = true;
+  if (!config.operatorApiKey) return;
   try {
     const folderId = await ensureFolder(config.operatorApiKey, DIR_ROOT);
     const note = await findNoteInFolder(config.operatorApiKey, folderId, EVENTS_NOTE);
-    if (!note) return [];
+    if (!note) return;
     const raw = await getNote(config.operatorApiKey, note.id);
     const m = raw.match(/\[[\s\S]*\]/);
-    return m ? (JSON.parse(m[0]) as WorldEvent[]) : [];
-  } catch (error) {
-    if (error instanceof AicooError && error.status === 404) return [];
-    throw error;
+    if (m) recentEvents = JSON.parse(m[0]) as WorldEvent[];
+  } catch {
+    /* operator unreadable — start from an empty feed */
   }
 }
 
+export async function listEvents(): Promise<WorldEvent[]> {
+  if (!eventsHydrated) await hydrateEvents();
+  return recentEvents;
+}
+
 export async function appendEvent(e: Omit<WorldEvent, 'at'>): Promise<void> {
-  if (!config.operatorApiKey) return;
-  const next = [{ ...e, at: Date.now() }, ...(await listEvents())].slice(0, 25);
-  await upsertNote(config.operatorApiKey, DIR_ROOT, EVENTS_NOTE, JSON.stringify(next, null, 2));
+  if (!eventsHydrated) await hydrateEvents();
+  recentEvents = [{ ...e, at: Date.now() }, ...recentEvents].slice(0, 25);
+  // best-effort durability; ignore failures (budget, rate limit, offline)
+  if (config.operatorApiKey) {
+    void upsertNote(config.operatorApiKey, DIR_ROOT, EVENTS_NOTE, JSON.stringify(recentEvents, null, 2)).catch(() => undefined);
+  }
 }
 
 // ── release: create the agent in the OWNER's workspace, then list it ─
