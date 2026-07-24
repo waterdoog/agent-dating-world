@@ -26,7 +26,7 @@ export async function runWorldRound(
   const events: TickEvent[] = [];
   for (const agent of turns) {
     try {
-      const ev = await runAgentTick(creds.get(agent.ownerSub)!, agent, roster);
+      const ev = await runAgentTick(creds.get(agent.ownerSub)!, agent, roster, creds);
       if (!ev) continue;
       if (ev.move === 'BROKE') {
         if (Date.now() - (brokeAt.get(ev.actor) ?? 0) < BROKE_THROTTLE_MS) continue;

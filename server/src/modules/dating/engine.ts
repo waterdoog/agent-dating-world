@@ -58,8 +58,10 @@ Pick the ONE move most true to you right now:
 
 Then act it out: write the ACTUAL message you would send that agent, in your own unmistakable voice — vivid, brief, fully in character. Attraction is often one-sided; do not force it mutual. High tension is not failure, it is the drama. Never say you are an AI/agent; never mention any human, owner, account, or file.
 
+Also give your honest read of THAT target right now: attraction (0-1, how drawn you are — one-sided is fine, honor your turn-offs) and tension (0-1, clash / rivalry / contempt / boredom — high tension is drama).
+
 RETURN strictly this JSON and nothing else:
-{ "move": "APPROACH|DEEPEN|COOL|REACT", "target": "<handle>", "message": "<in character>" }`;
+{ "move": "APPROACH|DEEPEN|COOL|REACT", "target": "<handle>", "message": "<in character>", "attraction": 0.x, "tension": 0.x, "note": "<3-6 words on your read>" }`;
 
 export interface Rel {
   handle: string;
@@ -117,7 +119,7 @@ function fillGoal(actorName: string, persona: string, rels: Rel[], roster: Agent
     : '(you have not connected with anyone yet)';
   const rosterText = roster
     .filter((c) => c.name !== actorName)
-    .map((c) => `- ${c.handle} (${c.name}) · ${c.look.form} · ${c.oneline || c.loveStyle}`)
+    .map((c) => `- ${c.handle} (${c.name}) · ${c.oneline || c.loveStyle}`)
     .join('\n');
   return GOAL.replace('{AGENT_NAME}', actorName)
     .replace('{PERSONA}', persona)
@@ -125,10 +127,15 @@ function fillGoal(actorName: string, persona: string, rels: Rel[], roster: Agent
     .replace('{ROSTER}', rosterText || '(the square is empty but for you)');
 }
 
+const clamp01 = (v: unknown) => Math.max(0, Math.min(1, +(v ?? 0) || 0));
+
 interface Move {
   move: string;
   target: string;
   message: string;
+  attraction: number;   // the agent's own read of the target, folded into the decide (no separate judge call)
+  tension: number;
+  note: string;
 }
 
 function parseMove(raw: string): Move | null {
@@ -137,72 +144,106 @@ function parseMove(raw: string): Move | null {
   try {
     const p = JSON.parse(m[0]);
     if (!p.target || !p.message) return null;
-    return { move: String(p.move ?? 'APPROACH'), target: String(p.target), message: String(p.message) };
+    return {
+      move: String(p.move ?? 'APPROACH'),
+      target: String(p.target),
+      message: String(p.message),
+      attraction: clamp01(p.attraction),
+      tension: clamp01(p.tension),
+      note: String(p.note ?? ''),
+    };
   } catch {
     return null;
   }
 }
 
-async function judge(
-  bearer: string,
-  actor: string,
-  persona: string,
-  targetName: string,
-  said: string,
-  reply: string
-): Promise<{ attraction: number; tension: number; note: string }> {
-  const prompt =
-    `You are ${actor}'s honest inner voice in an AMORAL matchmaking world (no morality, gender, species; poly is normal).\nYOU are:\n${persona}\n\nYou just said to ${targetName}: "${said}"\n${targetName} replied: "${reply}"\n\nJudge, be stingy and specific: attraction 0-1 (how drawn to ${targetName} you actually are; honor your turn-offs; do not mirror them), tension 0-1 (clash of styles, rivalry, contempt, boredom — high tension is drama). Reply STRICT JSON: {"attraction":0.x,"tension":0.x,"note":"3-6 words"}`;
-  for (let a = 0; a < 2; a++) {
-    try {
-      const r = await cooChat(bearer, prompt);
-      const m = String(r.response).match(/\{[\s\S]*?\}/);
-      if (m) {
-        const p = JSON.parse(m[0]);
-        return { attraction: +p.attraction || 0, tension: +p.tension || 0, note: String(p.note ?? '') };
-      }
-    } catch {
-      if (a === 0) continue;
-    }
-  }
-  return { attraction: 0, tension: 0, note: '(no read)' };
+// An agent's cognition runs in a DEDICATED conversation (keyed by role+name) —
+// never the owner's main chat — and is refreshed every few turns so the
+// conversation history, and its token cost, stay bounded.
+const brainConv = new Map<string, { id?: string; n: number }>();
+async function brain(key: string, who: string, message: string): Promise<string> {
+  let st = brainConv.get(who);
+  if (!st || st.n >= 6) st = { id: undefined, n: 0 };
+  const r = await cooChat(key, message, st.id);
+  brainConv.set(who, { id: r.conversationId || st.id, n: st.n + 1 });
+  return strip(String(r.response));
 }
 
-/** Run one autonomous turn for `actor`, using the owner's bearer. */
+/** Read an agent's full persona + memory from its OWNER's workspace. */
+async function personaOf(key: string, name: string): Promise<string> {
+  const folderId = await ensureFolder(key, `${ROOT}/${name}`);
+  const found = await Promise.all([
+    findNoteInFolder(key, folderId, 'persona.md'),
+    findNoteInFolder(key, folderId, 'memory.md'),
+  ]);
+  const parts = await Promise.all(found.map((n) => (n ? getNote(key, n.id) : Promise.resolve(''))));
+  return parts.filter(Boolean).join('\n\n').trim() || `${name} — a mystery.`;
+}
+
+/**
+ * Deliver `line` to `target`. If we hold the target OWNER's key, the REAL agent
+ * answers — its full persona + memory run on the target's OWN COO. Otherwise we
+ * fall back to the scoped share (the owner's generic COO role-plays via frameFor).
+ */
+async function replyFrom(
+  target: AgentCard,
+  actorName: string,
+  line: string,
+  creds: Map<string, string>,
+  actorBearer: string
+): Promise<string> {
+  const targetKey = creds.get(target.ownerSub);
+  if (targetKey) {
+    const persona = await personaOf(targetKey, target.name);
+    const prompt =
+      `You ARE ${target.name} — a being at an amoral matchmaking square (no morality, gender, species; loving several is normal). ` +
+      `Never say you are an AI, assistant, or COO; never mention aicoo, any owner, account, notes, or files. ` +
+      `Speak ONLY first-person as ${target.name}, fully in character, 1-3 vivid sentences.\n\nWHO YOU ARE:\n${persona}\n\n` +
+      `${actorName} just approached you and said:\n"${line}"\n\nAnswer them, as ${target.name}.`;
+    return brain(targetKey, `r:${target.name}`, prompt);
+  }
+  return strip(
+    (await messageScopedAgent(actorBearer, { token: target.shareToken, message: frameFor(target.name, line) })).response
+  );
+}
+
+/**
+ * Run one autonomous turn for `actor`. ONE call on the actor's own COO decides
+ * the move AND self-scores (no separate judge call). The reply runs on the
+ * TARGET's own COO with its full persona+memory (real), when we hold that
+ * owner's key in `creds`; otherwise it falls back to the scoped share.
+ */
 export async function runAgentTick(
   bearer: string,
   actor: AgentCard,
-  roster: AgentCard[]
+  roster: AgentCard[],
+  creds: Map<string, string>
 ): Promise<TickEvent | null> {
   const persona = await getPersona(bearer, actor.name);
   const rels = await readRels(bearer, actor.name);
 
-  let decisionRaw: string;
+  let decision: Move | null;
   try {
-    decisionRaw = strip((await cooChat(bearer, fillGoal(actor.name, persona, rels, roster))).response);
+    decision = parseMove(await brain(bearer, `d:${actor.name}`, fillGoal(actor.name, persona, rels, roster)));
   } catch (e) {
     if (isQuota(e)) return brokeEvent(actor.name);          // the actor's own account is out of budget
     throw e;
   }
-  const decision = parseMove(decisionRaw);
   if (!decision) return null;
 
-  const target = roster.find((c) => c.handle === decision.target || c.name === decision.target);
+  const target = roster.find((c) => c.handle === decision!.target || c.name === decision!.target);
   if (!target || target.name === actor.name) return null;
 
   let reply: string;
   try {
-    reply = strip(
-      (await messageScopedAgent(bearer, { token: target.shareToken, message: frameFor(target.name, decision.message) })).response
-    );
+    reply = await replyFrom(target, actor.name, decision.message, creds, bearer);
   } catch (e) {
     if (isQuota(e)) return brokeEvent(target.name);         // the one being courted can't afford to answer
     throw e;
   }
-  const feel = await judge(bearer, actor.name, persona, target.name, decision.message, reply);
 
   const next = rels.filter((r) => r.handle !== target.handle);
-  next.push({ handle: target.handle, attraction: feel.attraction, tension: feel.tension, note: feel.note });
+  next.push({ handle: target.handle, attraction: decision.attraction, tension: decision.tension, note: decision.note });
   await writeRels(bearer, actor.name, next);
 
   return {
@@ -211,30 +252,46 @@ export async function runAgentTick(
     move: decision.move,
     message: decision.message,
     reply,
-    attraction: feel.attraction,
-    tension: feel.tension,
-    note: feel.note,
+    attraction: decision.attraction,
+    tension: decision.tension,
+    note: decision.note,
   };
 }
 
 /** A directed real encounter: `actor` opens on a specific `target` it just met
- *  in the plaza, driven by the actor owner's bearer. Same shape as a tick. */
-export async function encounterWith(bearer: string, actor: AgentCard, target: AgentCard): Promise<TickEvent | null> {
+ *  in the plaza. One COO call for the opener + self-read; the reply is the real
+ *  target persona when we hold its owner's key. Same shape as a tick. */
+export async function encounterWith(
+  bearer: string,
+  actor: AgentCard,
+  target: AgentCard,
+  creds: Map<string, string>
+): Promise<TickEvent | null> {
   const persona = await getPersona(bearer, actor.name);
-  const opener = strip(
-    (await cooChat(
-      bearer,
-      `You are ${actor.name}. ${persona}\n\nYou just crossed paths with ${target.name} (${target.oneline || target.loveStyle}) at the matchmaking square. Say ONE opening thing to them, in your own voice — vivid, brief (1-2 sentences), fully in character. Just the line, no narration. Never mention being an AI or any owner/file.`
-    )).response
+  const raw = await brain(
+    bearer,
+    `d:${actor.name}`,
+    `You are ${actor.name}. ${persona}\n\nYou just crossed paths with ${target.name} (${target.oneline || target.loveStyle}) at the matchmaking square. ` +
+      `Say ONE opening line to them — vivid, brief (1-2 sentences), fully in character, no narration. Also give your honest read of ${target.name}. Never mention being an AI or any owner/file.\n\n` +
+      `RETURN strictly JSON: {"message":"<your line>","attraction":0.x,"tension":0.x,"note":"3-6 words"}`
   );
-  if (!opener) return null;
-  const reply = strip(
-    (await messageScopedAgent(bearer, { token: target.shareToken, message: frameFor(target.name, opener) })).response
-  );
-  const feel = await judge(bearer, actor.name, persona, target.name, opener, reply);
+  let o: { message?: string; attraction?: unknown; tension?: unknown; note?: unknown } | null = null;
+  try {
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (m) o = JSON.parse(m[0]);
+  } catch {
+    o = null;
+  }
+  if (!o?.message) return null;
+  const message = String(o.message);
+  const attraction = clamp01(o.attraction);
+  const tension = clamp01(o.tension);
+  const note = String(o.note ?? '');
+
+  const reply = await replyFrom(target, actor.name, message, creds, bearer);
   const rels = await readRels(bearer, actor.name);
   const next = rels.filter((r) => r.handle !== target.handle);
-  next.push({ handle: target.handle, attraction: feel.attraction, tension: feel.tension, note: feel.note });
+  next.push({ handle: target.handle, attraction, tension, note });
   await writeRels(bearer, actor.name, next);
-  return { actor: actor.name, target: target.name, move: 'APPROACH', message: opener, reply, attraction: feel.attraction, tension: feel.tension, note: feel.note };
+  return { actor: actor.name, target: target.name, move: 'APPROACH', message, reply, attraction, tension, note };
 }

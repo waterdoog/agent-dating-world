@@ -41,6 +41,10 @@ import { listSquare, releaseAgent, listEvents, appendEvent, type AgentCard, type
 import { runAgentTick, encounterWith } from './modules/dating/engine.js';
 import { startWorldLoop } from './modules/dating/scheduler.js';
 
+// Stable API keys the world can act with (ownerSub → key), seeded from
+// DATING_WORLD_KEYS at boot. Lets a target's REAL persona answer on its own COO.
+const worldCreds = new Map<string, string>();
+
 const app = new Hono();
 
 app.use('*', cors({ origin: config.spaUrl, credentials: true }));
@@ -394,7 +398,7 @@ app.post('/api/dating/tick', async (c) => {
     const roster = await listSquare();
     const mine = roster.find((card) => card.ownerSub === auth.session.sub);
     if (!mine) return jsonError(c, 404, 'Release an agent into the square first.');
-    const event = await runAgentTick(auth.bearer, mine, roster);
+    const event = await runAgentTick(auth.bearer, mine, roster, worldCreds);
     if (event) await appendEvent(event);
     return c.json(event ? { event } : { event: null, note: 'Your agent held back this round.' });
   } catch (error) {
@@ -413,7 +417,7 @@ app.post('/api/dating/encounter', async (c) => {
     if (!mine) return jsonError(c, 404, 'Release an agent into the square first.');
     const target = roster.find((card) => card.handle === targetHandle);
     if (!target || target.handle === mine.handle) return jsonError(c, 404, 'No such agent to meet.');
-    const event = await encounterWith(auth.bearer, mine, target);
+    const event = await encounterWith(auth.bearer, mine, target, worldCreds);
     if (event) await appendEvent(event);
     return c.json({ event });
   } catch (error) {
@@ -443,20 +447,19 @@ serve({ fetch: app.fetch, port: config.port }, (info) => {
 // this is fed by aicoo heartbeat (once os.heartbeat lands) or per-user stored keys.
 if (process.env.DATING_WORLD_KEYS) {
   void (async () => {
-    const creds = new Map<string, string>();
     for (const key of process.env.DATING_WORLD_KEYS!.split(',').map((k) => k.trim()).filter(Boolean)) {
       try {
         const id = await getIdentity(key);
-        creds.set(id.profile.userId, key);
+        worldCreds.set(id.profile.userId, key);
       } catch (error) {
         console.warn('[dating] world key rejected:', error instanceof Error ? error.message : error);
       }
     }
-    if (!creds.size) return;
+    if (!worldCreds.size) return;
     const intervalMs = Number(process.env.DATING_WORLD_INTERVAL_MS ?? 300_000);
-    console.log(`[dating] 🌍 world loop live · ${creds.size} account(s) · every ${intervalMs}ms`);
+    console.log(`[dating] 🌍 world loop live · ${worldCreds.size} account(s) · every ${intervalMs}ms`);
     startWorldLoop({
-      creds: () => creds,
+      creds: () => worldCreds,
       roster: () => listSquare(),
       intervalMs,
       onEvent: (e) => {
