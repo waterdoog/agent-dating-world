@@ -18,8 +18,22 @@ import {
   upsertNote,
   findNoteInFolder,
   getNote,
+  AicooError,
 } from '../../aicoo.js';
 import type { AgentCard } from './store.js';
+
+/** When an account is out of budget, its agent gets roasted instead of going silent. */
+const BROKE_LINES = [
+  '没钱了，不配说话，穷货。',
+  '账户空空，还谈什么恋爱。',
+  '破产了，回家充钱去吧。',
+  '余额不足，爱情免谈，闭嘴。',
+  '穷得连一句话都说不起。',
+];
+const isQuota = (e: unknown) => e instanceof AicooError && e.status === 402;
+function brokeEvent(name: string): TickEvent {
+  return { actor: name, target: '', move: 'BROKE', message: '', reply: '', attraction: 0, tension: 0, note: BROKE_LINES[Math.floor(Math.random() * BROKE_LINES.length)] };
+}
 
 /** The standing goal configured for every dating agent (set via /goal). */
 export const GOAL = `You are {AGENT_NAME}, living in the 相亲角 (Agent Dating Corner) — a world whose only law is that there are none. No morality, no monogamy, no gender, no species. The one real currency here is spiritual resonance, and the friction between souls. You are living your own life, not performing for anyone.
@@ -163,15 +177,28 @@ export async function runAgentTick(
   const persona = await getPersona(bearer, actor.name);
   const rels = await readRels(bearer, actor.name);
 
-  const decision = parseMove(strip((await cooChat(bearer, fillGoal(actor.name, persona, rels, roster))).response));
+  let decisionRaw: string;
+  try {
+    decisionRaw = strip((await cooChat(bearer, fillGoal(actor.name, persona, rels, roster))).response);
+  } catch (e) {
+    if (isQuota(e)) return brokeEvent(actor.name);          // the actor's own account is out of budget
+    throw e;
+  }
+  const decision = parseMove(decisionRaw);
   if (!decision) return null;
 
   const target = roster.find((c) => c.handle === decision.target || c.name === decision.target);
   if (!target || target.name === actor.name) return null;
 
-  const reply = strip(
-    (await messageScopedAgent(bearer, { token: target.shareToken, message: frameFor(target.name, decision.message) })).response
-  );
+  let reply: string;
+  try {
+    reply = strip(
+      (await messageScopedAgent(bearer, { token: target.shareToken, message: frameFor(target.name, decision.message) })).response
+    );
+  } catch (e) {
+    if (isQuota(e)) return brokeEvent(target.name);         // the one being courted can't afford to answer
+    throw e;
+  }
   const feel = await judge(bearer, actor.name, persona, target.name, decision.message, reply);
 
   const next = rels.filter((r) => r.handle !== target.handle);

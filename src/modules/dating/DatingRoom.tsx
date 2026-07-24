@@ -320,6 +320,12 @@ export function DatingRoom() {
       const now = Date.now();
       const ev = eventsRef.current.find((e) => !playedRef.current.has(eventKey(e)));
       if (!ev) return;
+      if (ev.move === 'BROKE') {                                   // 💸 roast the broke agent — solo bubble
+        playedRef.current.add(eventKey(ev));
+        const m = ms.find((x) => x.name === ev.actor);
+        if (m && !m.partner && m.chatUntil <= now) { m.bubble = { text: '💸 ' + ev.note, kind: 'fight' }; m.chatUntil = now + DISPLAY_MS; }
+        return;
+      }
       const a = ms.find((m) => m.name === ev.actor), b = ms.find((m) => m.name === ev.target);
       if (!a || !b) { playedRef.current.add(eventKey(ev)); return; }     // a party isn't in the plaza → skip it
       if (a.partner || b.partner || a.chatUntil > now || b.chatUntil > now) return;   // busy → wait a tick
@@ -467,6 +473,16 @@ export function DatingRoom() {
                 <li className="dt-feed-row"><div className="dt-f-txt"><b>广场刚开门</b><span className="dt-f-note new">放生第一只 agent，让故事开始</span></div></li>
               )}
               {feedShown.map((e, i) => {
+                if (e.move === 'BROKE') {
+                  const bk = lookOf(e.actor);
+                  return (
+                    <li className="dt-feed-row" key={i}>
+                      <span className="dt-f-avs">{bk && <span className="dt-f-av dt-broke" dangerouslySetInnerHTML={{ __html: agentSprite(bk, 34) }} />}</span>
+                      <div className="dt-f-txt"><b>{e.actor}</b><span className="dt-f-note broke">💸 {e.note}</span></div>
+                      <time>{timeAgo(e.at, now)}</time>
+                    </li>
+                  );
+                }
                 const rel = relPhrase(e);
                 const av = lookOf(e.actor), bv = lookOf(e.target);
                 return (

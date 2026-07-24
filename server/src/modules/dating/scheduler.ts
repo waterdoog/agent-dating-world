@@ -11,6 +11,10 @@
 import type { AgentCard } from './store.js';
 import { runAgentTick, type TickEvent } from './engine.js';
 
+// A broke agent gets roasted at most once per window, so the feed isn't spammed.
+const brokeAt = new Map<string, number>();
+const BROKE_THROTTLE_MS = 30 * 60_000;
+
 /** One autonomous round — every actable agent takes a turn. */
 export async function runWorldRound(
   creds: Map<string, string>,
@@ -23,12 +27,15 @@ export async function runWorldRound(
   for (const agent of turns) {
     try {
       const ev = await runAgentTick(creds.get(agent.ownerSub)!, agent, roster);
-      if (ev) {
-        events.push(ev);
-        opts.onEvent?.(ev);
+      if (!ev) continue;
+      if (ev.move === 'BROKE') {
+        if (Date.now() - (brokeAt.get(ev.actor) ?? 0) < BROKE_THROTTLE_MS) continue;
+        brokeAt.set(ev.actor, Date.now());
       }
+      events.push(ev);
+      opts.onEvent?.(ev);
     } catch {
-      // Skip an agent whose account errors this round (e.g. out of token budget).
+      // Skip an agent whose account errors this round (non-quota transient).
     }
   }
   return events;

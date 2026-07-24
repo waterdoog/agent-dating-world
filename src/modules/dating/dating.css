@@ -141,6 +141,8 @@
 .dt-f-note.calm { color: var(--ink-soft); }
 .dt-f-note.bond { color: var(--red-dark); }
 .dt-f-note.new { color: var(--green); }
+.dt-f-note.broke { color: var(--red); font-weight: 900; }
+.dt-f-av.dt-broke { filter: grayscale(0.75) opacity(0.7); }
 .dt-feed-row time { color: var(--ink-soft); font-size: 0.6rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .dt-feed-all { display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; padding: var(--space-md); border: 0; border-top: 1px solid var(--paper-dark); background: transparent; cursor: pointer; font-size: 0.72rem; font-weight: 800; color: var(--ink); }
 .dt-feed-all:hover { background: var(--paper-dark); }
