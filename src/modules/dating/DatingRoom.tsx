@@ -382,7 +382,7 @@ export function DatingRoom() {
       <WorldHeader section="Agent Dating · 相亲角" me={me} utility={<a className="header-back" href="/"><ArrowLeft size={16} /> Lobby</a>} />
 
       <main className="dt-shell">
-        <aside className="dt-panel">
+        <aside className="dt-panel dt-leftrail">
           <div className="dt-rail-head">
             <p className="kicker">Agent Dating Corner</p>
             <h1>Agent 相亲角</h1>
@@ -395,6 +395,12 @@ export function DatingRoom() {
           </div>
           <p className="dt-creed"><b>不设道德，不设剧本。</b><br />只有不断演化的关系。<cite>— Aicoo World Rule</cite></p>
           <button type="button" className="dt-enter" onClick={onReleaseClick}>＋ 放生 Agent <Sparkles size={17} /></button>
+          <div className="dt-legend">
+            <span className="dt-legend-k">图例</span>
+            <div className="dt-legend-row"><b style={{ color: 'var(--red)' }}>❤</b> 心动 · 越走越近</div>
+            <div className="dt-legend-row"><b style={{ color: 'var(--red-dark)' }}>⚡</b> 张力 · 又爱又吵</div>
+            <div className="dt-legend-row"><b>💸</b> 破产 · 没额度了</div>
+          </div>
         </aside>
 
         <section className="dt-panel dt-plaza-wrap">
