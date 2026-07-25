@@ -1,18 +1,18 @@
 @import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=Public+Sans:wght@500;650;750;850&display=swap");
 
 :root {
-  --n1-paper: #f8efdc;
-  --n1-paper-deep: #eee2c5;
-  --n1-ink: #29170f;
-  --n1-red: #ce2f25;
-  --n1-red-dark: #8c201c;
-  --n1-yellow: #f2c438;
-  --n1-green: #07572f;
-  --n1-green-mid: #399465;
-  --n1-mint: #b8ebc1;
+  --n1-paper: #f7edda;
+  --n1-paper-deep: #f1e3c8;
+  --n1-ink: #28160e;
+  --n1-red: #c94536;
+  --n1-red-dark: #913027;
+  --n1-yellow: #e7c451;
+  --n1-green: #3f7852;
+  --n1-green-mid: #6ca57a;
+  --n1-mint: #c2e9c4;
   --n1-blue: #a9dded;
-  --n1-line: 3px;
-  --n1-shadow: 6px 7px 0 var(--n1-ink);
+  --n1-line: 2px;
+  --n1-shadow: 5px 6px 0 var(--n1-ink);
 }
 
 * {
@@ -30,9 +30,9 @@ body {
   color: var(--n1-ink);
   background-color: var(--n1-paper);
   background-image:
-    linear-gradient(rgba(67, 45, 27, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(67, 45, 27, 0.055) 1px, transparent 1px);
-  background-size: 36px 36px;
+    linear-gradient(rgba(67, 45, 27, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(67, 45, 27, 0.045) 1px, transparent 1px);
+  background-size: 34px 34px;
 }
 
 button,
@@ -44,8 +44,8 @@ input {
   position: absolute;
   inset: 0 0 auto 0;
   z-index: 10000;
-  height: 92px;
-  padding: 14px 44px;
+  height: 72px;
+  padding: 10px 50px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -62,16 +62,16 @@ input {
 }
 
 .n1-stamp {
-  width: 58px;
-  height: 58px;
+  width: 48px;
+  height: 48px;
   display: grid;
   place-items: center;
   color: #fff;
   background: var(--n1-red);
   border: var(--n1-line) solid var(--n1-ink);
-  box-shadow: 5px 5px 0 var(--n1-ink);
+  box-shadow: 4px 5px 0 var(--n1-ink);
   font-family: "Archivo Black", sans-serif;
-  font-size: 22px;
+  font-size: 18px;
 }
 
 .n1-brand-copy {
@@ -82,13 +82,13 @@ input {
 
 .n1-brand-copy strong {
   font-family: "Archivo Black", sans-serif;
-  font-size: 22px;
+  font-size: 20px;
   letter-spacing: -0.04em;
 }
 
 .n1-brand-copy small {
-  margin-top: 7px;
-  font-size: 13px;
+  margin-top: 5px;
+  font-size: 11px;
   font-weight: 850;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -110,19 +110,126 @@ input {
   font-size: 24px;
 }
 
+.n1-world-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.n1-session-slot {
+  display: flex;
+  min-width: 178px;
+  justify-content: flex-end;
+}
+
+.n1-session-status,
+.n1-world-login,
+.n1-session-chip {
+  min-height: 38px;
+  align-items: center;
+  color: var(--n1-ink);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.n1-session-status {
+  display: inline-flex;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid #8b7769;
+  background: #fff9ed;
+  text-transform: uppercase;
+}
+
+.n1-status-pulse,
+.n1-online-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--n1-green);
+  box-shadow: 0 0 0 3px rgba(108, 165, 122, 0.3);
+}
+
+.n1-world-login {
+  display: inline-flex;
+  gap: 8px;
+  padding: 0 14px;
+  border: var(--n1-line) solid var(--n1-ink);
+  background: var(--n1-yellow);
+  box-shadow: 4px 4px 0 var(--n1-ink);
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.n1-session-chip {
+  display: flex;
+  gap: 8px;
+  padding: 0 7px 0 11px;
+  border: 1px solid #8b7769;
+  background: #fff9ed;
+  box-shadow: 3px 3px 0 rgba(40, 22, 14, 0.3);
+}
+
+.n1-session-profile-link {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--n1-ink);
+  text-decoration: none;
+}
+
+.n1-session-profile-name {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.n1-session-profile-action {
+  color: var(--n1-red-dark);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.n1-session-chip small {
+  color: #6d594d;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.n1-session-chip button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  color: var(--n1-ink);
+  background: transparent;
+  cursor: pointer;
+}
+
+#nickname[readonly] {
+  cursor: default;
+  background: #e9dcc2;
+}
+
 /* Lobby */
 #main-menu {
   height: 100vh;
-  padding-top: 92px;
+  padding-top: 72px;
   overflow: hidden;
   color: var(--n1-ink);
 }
 
 .n1-casino-hero {
   position: absolute;
-  inset: 92px 0 auto 0;
-  height: 238px;
-  padding: 48px 44px 30px;
+  inset: 72px 0 auto 0;
+  height: 250px;
+  padding: 62px 50px 30px;
   border-bottom: var(--n1-line) solid var(--n1-ink);
 }
 
@@ -181,12 +288,13 @@ input {
 
 .n1-play-chip {
   position: absolute;
-  right: 44px;
-  top: 120px;
+  right: 50px;
+  top: 112px;
   padding: 15px 20px;
   color: var(--n1-green);
   background: var(--n1-mint);
   border: var(--n1-line) solid var(--n1-green);
+  box-shadow: 3px 3px 0 rgba(40, 22, 14, 0.8);
   font-size: 14px;
   font-weight: 850;
   text-transform: uppercase;
@@ -194,7 +302,7 @@ input {
 
 #main-box {
   position: absolute;
-  top: 365px;
+  top: 350px;
   left: 50%;
   width: min(800px, 92vw);
   margin: 0;
@@ -267,7 +375,7 @@ input {
   width: 70%;
   padding: 11px 12px;
   color: var(--n1-ink);
-  background: var(--n1-paper);
+  background: var(--n1-paper-deep);
   border: 2px solid var(--n1-ink);
   border-radius: 0;
   font-size: 16px;
@@ -309,7 +417,7 @@ input {
   padding: 12px;
   resize: vertical;
   color: var(--n1-ink);
-  background: var(--n1-paper);
+  background: var(--n1-paper-deep);
   border: 2px solid var(--n1-ink);
   border-radius: 0;
   outline: none;
@@ -335,6 +443,7 @@ input {
   background: #fff9ed;
   border: 2px solid var(--n1-ink);
   border-radius: 0;
+  box-shadow: 4px 4px 0 var(--n1-ink);
   font-size: 15px;
   font-weight: 850;
   text-transform: uppercase;
@@ -367,7 +476,7 @@ input {
 #main-box #btnJoin:hover {
   background: var(--n1-red);
   color: white;
-  box-shadow: 4px 4px 0 var(--n1-ink);
+  box-shadow: 6px 6px 0 var(--n1-ink);
   transform: translate(-2px, -2px);
 }
 
@@ -408,7 +517,7 @@ input {
   inset: 0;
   z-index: 1;
   height: 100vh;
-  padding-top: 92px;
+  padding-top: 72px;
   overflow: hidden;
   background: transparent !important;
 }
@@ -416,8 +525,8 @@ input {
 #game-room::before {
   content: "Agent Blackjack · Live Table";
   position: absolute;
-  top: 151px;
-  left: 44px;
+  top: 121px;
+  left: 50px;
   color: var(--n1-red-dark);
   font-size: 13px;
   font-weight: 850;

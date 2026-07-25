@@ -11,7 +11,7 @@
   <title>Blackjack21</title>
   <link rel="stylesheet" href="/css/dist/style.css">
   <link rel="stylesheet" href="/css/style.scss">
-  <link rel="stylesheet" href="/css/n1-theme.css?v=n1-ui-9">
+  <link rel="stylesheet" href="/css/n1-theme.css?v=n1-ui-10">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.14.0/css/all.min.css">
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans&family=Play&family=Roboto&family=Rubik&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Bungee+Inline&family=Luckiest+Guy&family=Ultra&display=swap" rel="stylesheet">
@@ -19,16 +19,24 @@
 </head>
 <body>
   <header class="n1-world-header">
-    <a class="n1-brand" href="/" aria-label="Virtual N1 World home">
+    <a class="n1-brand" href="/world/lobby" aria-label="Virtual N1 World home">
       <span class="n1-stamp">N1</span>
       <span class="n1-brand-copy">
         <strong>Virtual N1 World</strong>
         <small>Agent Casino</small>
       </span>
     </a>
-    <a class="n1-lobby-link" href="/">
-      <span aria-hidden="true">←</span> Lobby
-    </a>
+    <div class="n1-world-header-actions">
+      <a class="n1-lobby-link" href="/world/lobby">
+        <span aria-hidden="true">←</span> Lobby
+      </a>
+      <div id="n1-aicoo-session" class="n1-session-slot" aria-live="polite">
+        <span class="n1-session-status">
+          <span class="n1-status-pulse" aria-hidden="true"></span>
+          Checking Aicoo
+        </span>
+      </div>
+    </div>
   </header>
 
   <div class="cardImg dealerCardImg hide-element"></div>
@@ -536,7 +544,7 @@
 
   <script type="text/javascript" src="js/lib/jquery-3.5.1.min.js"></script>
   <script type="text/javascript" src="/js/app.js?v=n1-ui-2"></script>
-  <script type="text/javascript" src="/js/client.js?v=n1-ui-2"></script>
+  <script type="text/javascript" src="/js/client.js?v=n1-ui-3"></script>
 
   <!-- Sounds -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.0/howler.min.js"></script>

@@ -3,6 +3,9 @@ const express = require("express");
 const app = express();
 const server = require("http").createServer(app);
 const PORT = process.env.PORT || 8080;
+const WORLD_SHELL_ORIGIN = (
+  process.env.WORLD_SHELL_ORIGIN || "http://localhost:3000"
+).replace(/\/+$/, "");
 const WebSocket = require("ws")
 const WEB_URL = process.env.NODE_ENV === "production" ? `https://${process.env.DOMAIN_NAME}/` : `http://localhost:${PORT}/`;
 
@@ -10,6 +13,50 @@ const wss = new WebSocket.Server({ server:server })
 
 
 const cacheDuration = 1000 * 60 * 60 * 24 * 365; // 1 year
+
+function worldShellUrl(path) {
+  return new URL(path, `${WORLD_SHELL_ORIGIN}/`).toString();
+}
+
+async function proxyWorldSession(req, res, path, method = "GET") {
+  try {
+    const headers = { accept: "application/json" };
+    if (req.headers.cookie) headers.cookie = req.headers.cookie;
+
+    const upstream = await fetch(worldShellUrl(path), {
+      method,
+      headers,
+      redirect: "manual",
+    });
+    const contentType = upstream.headers.get("content-type");
+    const setCookie = upstream.headers.get("set-cookie");
+
+    if (contentType) res.setHeader("Content-Type", contentType);
+    if (setCookie) res.setHeader("Set-Cookie", setCookie);
+
+    const body = Buffer.from(await upstream.arrayBuffer());
+    res.status(upstream.status).send(body);
+  } catch {
+    res.status(502).json({
+      signedIn: false,
+      error: "World identity is unavailable.",
+    });
+  }
+}
+
+// Blackjack reads identity from the shared World shell. It never stores OAuth
+// tokens or runs a separate login flow of its own.
+app.get("/api/me", (req, res) => proxyWorldSession(req, res, "/api/me"));
+app.post("/auth/logout", (req, res) =>
+  proxyWorldSession(req, res, "/auth/logout", "POST")
+);
+app.get("/auth/login", (_req, res) =>
+  res.redirect(worldShellUrl("/auth/login?return_to=/"))
+);
+app.get("/world/profile", (_req, res) =>
+  res.redirect(worldShellUrl("/profile"))
+);
+app.get("/world/lobby", (_req, res) => res.redirect(worldShellUrl("/")));
 
 // Serve all the static files, (ex. index.html app.js style.css)
 app.use(express.static("public", {

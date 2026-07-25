@@ -67,6 +67,8 @@ let resetCards = false;
 
 const leaveTable = document.querySelector("#leave-table");
 const maxRoomPlayers = 7;
+const aicooSessionSlot = document.querySelector("#n1-aicoo-session");
+let aicooIdentity = null;
 
 function updateRoomPopulation(roomUsers = spectators) {
   const playerCount = Array.isArray(roomUsers)
@@ -75,6 +77,70 @@ function updateRoomPopulation(roomUsers = spectators) {
 
   $("#room-player-count").text(`${playerCount}/${maxRoomPlayers}`);
 }
+
+function renderAicooSession(me) {
+  aicooSessionSlot.replaceChildren();
+
+  if (!me || !me.signedIn) {
+    const login = document.createElement("a");
+    login.className = "n1-world-login";
+    login.href = "/auth/login";
+    login.target = "_blank";
+    login.rel = "noopener";
+    login.innerHTML = '<i class="fas fa-star" aria-hidden="true"></i> Sign in with Aicoo';
+    aicooSessionSlot.append(login);
+    nickname.readOnly = false;
+    nickname.removeAttribute("aria-label");
+    return;
+  }
+
+  const displayName = me.displayName || me.username || "Aicoo player";
+  aicooIdentity = me;
+  nickname.value = displayName.slice(0, nickname.maxLength || 12);
+  nickname.readOnly = true;
+  nickname.setAttribute("aria-label", `Playing as ${displayName}`);
+
+  const chip = document.createElement("div");
+  chip.className = "n1-session-chip";
+  chip.innerHTML = `
+    <span class="n1-online-dot" aria-hidden="true"></span>
+    <a class="n1-session-profile-link" href="/world/profile" title="Open player record">
+      <i class="far fa-user" aria-hidden="true"></i>
+      <span class="n1-session-profile-name"></span>
+      <span class="n1-session-profile-action">Record</span>
+    </a>
+    <small>Aicoo OAuth</small>
+    <button type="button" aria-label="Sign out">
+      <i class="fas fa-sign-out-alt" aria-hidden="true"></i>
+    </button>
+  `;
+  chip.querySelector(".n1-session-profile-name").textContent = displayName;
+  chip.querySelector("button").addEventListener("click", async () => {
+    await fetch("/auth/logout", { method: "POST" }).catch(() => undefined);
+    aicooIdentity = null;
+    nickname.value = "";
+    renderAicooSession({ signedIn: false });
+  });
+  aicooSessionSlot.append(chip);
+}
+
+async function loadAicooSession() {
+  try {
+    const response = await fetch("/api/me", {
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    renderAicooSession(await response.json());
+  } catch {
+    renderAicooSession({ signedIn: false });
+  }
+}
+
+loadAicooSession();
+window.addEventListener("focus", loadAicooSession);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") loadAicooSession();
+});
 // CSS
 
 ws.addEventListener("open", () => {
@@ -200,8 +266,8 @@ leaveTable.addEventListener("click", (e) => {
 });
 
 function playerJoin() {
-  nickname = nickname.value;
-  theClient.nickname = nickname.value;
+  const nicknameValue = nickname.value;
+  theClient.nickname = nicknameValue;
 
   avatar = avatar[slideIndex - 1].dataset.value;
   theClient.avatar = avatar;
@@ -220,7 +286,7 @@ function playerJoin() {
     playerSlotHTML: playerSlotHTML,
     players: players,
     spectators: spectators,
-    nickname: nickname,
+    nickname: nicknameValue,
     avatar: avatar,
     agentStrategy: strategy,
   };
