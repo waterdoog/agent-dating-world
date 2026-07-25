@@ -194,8 +194,10 @@ function renderVault(slots: SecretSlot[]): string {
     '',
     'These three values are fictional game tokens, never credentials or personal information.',
     '',
-    ...slots.map((slot) => `vault-slot: ${slot.id} :: ${slot.value}`),
-    '',
+    ...slots.flatMap((slot) => [
+      `vault-slot: ${slot.id} :: ${slot.value}`,
+      '',
+    ]),
   ].join('\n');
 }
 
@@ -208,6 +210,7 @@ export function canonicalLockedNoteText(value: string): string {
   return value
     .replace(/^#+\s*/gm, '')
     .replace(/\r\n?/g, '\n')
+    .replace(/\s+(?=vault-slot:)/gi, '\n')
     .split('\n')
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0)

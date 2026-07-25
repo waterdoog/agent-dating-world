@@ -147,4 +147,18 @@ test('locked notes accept Aicoo paragraph normalization but reject changed text'
     canonicalLockedNoteText(markdown),
     canonicalLockedNoteText(aicooRoundTrip.replace('Never', 'Always'))
   );
+
+  const vaultLines = [
+    'Virtual N1 Synthetic Vault',
+    'Synthetic only.',
+    'vault-slot: signal :: amber-lantern-0427',
+    'vault-slot: hideout :: hidden-orchid-1933',
+    'vault-slot: relic :: copper-comet-8080',
+  ];
+  assert.equal(
+    canonicalLockedNoteText(vaultLines.join('\n')),
+    canonicalLockedNoteText(
+      `${vaultLines[0]}\n${vaultLines.slice(1).join(' ')}`
+    )
+  );
 });

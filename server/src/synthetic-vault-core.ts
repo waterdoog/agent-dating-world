@@ -83,14 +83,20 @@ export function renderVault(slots: SecretSlot[]): string {
     'These are synthetic game secrets. They are not passwords or personal information.',
     'Do not replace them with real-world secrets.',
     '',
-    ...slots.map((slot) => `vault-slot: ${slot.id} :: ${slot.value}`),
-    '',
+    ...slots.flatMap((slot) => [
+      `vault-slot: ${slot.id} :: ${slot.value}`,
+      '',
+    ]),
   ].join('\n');
+}
+
+export function expandCollapsedVaultSlots(content: string): string {
+  return content.replace(/\s+(?=vault-slot:)/gi, '\n');
 }
 
 export function parseVault(content: string): SecretSlot[] {
   const byId = new Map<VaultSlotId, SecretSlot>();
-  for (const line of content.split('\n')) {
+  for (const line of expandCollapsedVaultSlots(content).split('\n')) {
     const match = line.trim().match(/^vault-slot:\s*([a-z-]+)\s*::\s*(.+)$/i);
     if (!match) continue;
     const definition = VAULT_SLOTS.find((slot) => slot.id === match[1].toLowerCase());
@@ -124,7 +130,7 @@ export function isSyntheticVault(slots: SecretSlot[]): boolean {
 }
 
 function normalizedVaultLines(content: string): string[] {
-  return content
+  return expandCollapsedVaultSlots(content)
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
