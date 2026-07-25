@@ -30,6 +30,20 @@ server.listen(PORT, () =>
 // hashmap clients
 const clients = {};
 const games = {};
+
+function getRoomKey(gameId) {
+  if (typeof gameId !== "string") return gameId;
+
+  return gameId
+    .split(/[?#]/)[0]
+    .replace(/\/+$/, "")
+    .split("/")
+    .pop();
+}
+
+function getGame(gameId) {
+  return games[gameId] || games[getRoomKey(gameId)];
+}
 const players = {};
 const spectators = {};
 
@@ -84,10 +98,11 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
           {},
         ],
       };
+      games[roomId] = games[gameId];
 
       const payLoad = {
         method: "create",
-        game: games[gameId],
+        game: getGame(gameId),
         roomId: roomId,
         offline: offline,
       };
@@ -108,7 +123,7 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
       const roomId = result.roomId;
       let theClient = result.theClient;
       const clientId = result.clientId;
-      const game = games[gameId];
+      const game = getGame(gameId);
       let players = game.players;
       const spectators = game.spectators;
       const playerSlot = game.playerSlot;
@@ -320,7 +335,7 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
 
     if (result.method === "thePlay") {
       const gameId = result.gameId;
-      const game = games[gameId];
+      const game = getGame(gameId);
       const player = result.player;
       const dealersTurn = result.dealersTurn;
       const currentPlayer = result.currentPlayer;
@@ -358,7 +373,7 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
       const user = result.theClient;
       const theSlot = result.theSlot;
       const gameId = result.gameId;
-      const game = games[gameId];
+      const game = getGame(gameId);
       const spectators = result.spectators;
       const players = result.players;
       const playerSlotHTML = result.playerSlotHTML;
@@ -454,7 +469,7 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
 
     if (result.method === "terminate") {
       let gameId = result.gameId;
-      let game = games[gameId];
+      let game = getGame(gameId);
       let spectators = result.spectators;
       let players = result.players;
       const theClient = result.theClient;
@@ -554,7 +569,7 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
 
     if (result.method === "playersLength") {
       const gameId = result.gameId;
-      const game = games[gameId];
+      const game = getGame(gameId);
       const playersLength = game.spectators.length;
 
       const payLoadLength = {
@@ -612,7 +627,7 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
     if (result.method === "finalCompare") {
       const spectators = result.spectators;
       const gameId = result.gameId;
-      const game = games[gameId];
+      const game = getGame(gameId);
       const players = result.players;
       game.players = players;
 
@@ -629,7 +644,7 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
     if (result.method === "resetGameState") {
       const spectators = result.spectators;
       const gameId = result.gameId;
-      const game = games[gameId];
+      const game = getGame(gameId);
       const players = result.players;
       game.players = players;
 
@@ -649,15 +664,9 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
 
     if (result.method === "getRoute") {
       const getRouteId = result.getRouteId;
-      let isRouteDefined = null;
-
-      for (let i = 3; i < app._router.stack.length; i++) {
-        if (app._router.stack[i].route.path === "/" + getRouteId) {
-          isRouteDefined = true;
-        } else {
-          isRouteDefined = false;
-        }
-      }
+      const isRouteDefined = app._router.stack.some(
+        (layer) => layer.route && layer.route.path === "/" + getRouteId
+      );
       // if route is not available, redirect to home page
       const payLoadRoute = {
         method: "redirect",
@@ -697,7 +706,7 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
 
     if (result.method === "syncGame") {
       const gameId = result.gameId;
-      let game = games[gameId];
+      let game = getGame(gameId);
       const gameOn = result.gameOn;
       const dealer = result.dealer;
       const players = result.players;

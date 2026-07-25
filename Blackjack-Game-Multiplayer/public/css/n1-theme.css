@@ -522,6 +522,23 @@ input {
   text-shadow: none;
 }
 
+#room-player-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  min-height: 24px;
+  margin-left: 8px;
+  padding: 0 7px;
+  border: 2px solid var(--n1-ink);
+  background: var(--n1-green);
+  box-shadow: 2px 2px 0 var(--n1-ink);
+  color: var(--n1-ink);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+}
+
 #users-online-box ul .users-list-box {
   border-color: var(--n1-red);
 }

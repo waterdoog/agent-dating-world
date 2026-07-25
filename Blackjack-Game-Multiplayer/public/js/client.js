@@ -66,6 +66,15 @@ let playerName = document.querySelectorAll(".player-name");
 let resetCards = false;
 
 const leaveTable = document.querySelector("#leave-table");
+const maxRoomPlayers = 7;
+
+function updateRoomPopulation(roomUsers = spectators) {
+  const playerCount = Array.isArray(roomUsers)
+    ? roomUsers.filter((user) => user && user.hasLeft !== true).length
+    : 0;
+
+  $("#room-player-count").text(`${playerCount}/${maxRoomPlayers}`);
+}
 // CSS
 
 ws.addEventListener("open", () => {
@@ -460,6 +469,7 @@ ws.onmessage = (message) => {
     reload = false;
     oldPlayerIndex = response.oldPlayerIndex;
     gameOn = response.gameOn;
+    updateRoomPopulation();
 
     // If player object is undefined (i.e has left, remove him from list)
     if (spectators[oldPlayerIndex] === undefined) {
@@ -546,6 +556,7 @@ ws.onmessage = (message) => {
     game = response.game;
     player = game.player;
     spectators = game.spectators;
+    updateRoomPopulation();
     playerSlotHTML = response.playerSlotHTML;
     roomId = response.roomId;
 
@@ -561,6 +572,7 @@ ws.onmessage = (message) => {
     game = response.game;
     players = response.players;
     spectators = game.spectators;
+    updateRoomPopulation();
     playerSlotHTML = response.playerSlotHTML;
 
     $("#invite-link").val(gameId);
@@ -615,8 +627,10 @@ ws.onmessage = (message) => {
   // Updated players array (i.e. players[i] = theClient)
   if (response.method === "updateClientArray") {
     players = response.players;
+    spectators = response.spectators;
     newPlayer = response.newPlayer;
     playerSlotHTML = response.playerSlotHTML;
+    updateRoomPopulation();
 
     // Update for players that already are in da game
     if (spectators.length > $("#users-online-container").children().length) {
@@ -647,7 +661,8 @@ ws.onmessage = (message) => {
   if (response.method === "joinMidGame") {
     theClient = response.theClient;
     game = response.game;
-    // spectators = game.spectators
+    spectators = game.spectators;
+    updateRoomPopulation();
     players = game.players;
     playerSlotHTML = game.playerSlotHTML;
     player = game.player;
@@ -842,6 +857,7 @@ ws.onmessage = (message) => {
   if (response.method === "joinMidGameUpdate") {
     spectators = response.spectators;
     newPlayer = response.newPlayer;
+    updateRoomPopulation();
 
     if (players.length > 0) {
       // Send dealersHiddenCard to the new player who joined
@@ -959,6 +975,7 @@ ws.onmessage = (message) => {
   if (response.method === "hasLeft") {
     players = response.players;
     spectators = response.spectators;
+    updateRoomPopulation();
   }
 
   // currentPlayer
