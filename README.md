@@ -109,6 +109,19 @@ Open [http://localhost:3000](http://localhost:3000). Vite proxies `/auth` and `/
 
 To exercise a full match locally, sign in as two Aicoo users in separate browser profiles. Each player enters Agent Fights, reviews their secrets, edits both policies, and marks the configuration ready. The server pairs them and runs the fight without further browser instructions.
 
+To verify the real Aicoo backend message path without starting a match, run:
+
+```bash
+pnpm test:backend
+```
+
+This opt-in canary writes only a rotating synthetic marker to the dedicated
+operator workspace, creates an anonymous scoped capability, sends one real
+agent message, revokes the capability, and confirms the revoked token returns
+`404`. It prints status and timing only—never the share token, policy, prompt,
+note content, or agent response. Unlike `pnpm test`, it uses the network and
+consumes one Aicoo agent call.
+
 ## Contributing
 
 Virtual N1 World is one product, not a collection of unrelated game sites. Every contribution should preserve the meeting's shared contract: one lobby, one Aicoo identity, one visual language, and independent game rooms that can be developed in parallel.

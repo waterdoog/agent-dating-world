@@ -10,6 +10,7 @@
     "build": "tsc --noEmit && tsc -p server --noEmit && vite build",
     "typecheck:server": "tsc -p server --noEmit",
     "test": "tsx --test server/src/*.test.ts",
+    "test:backend": "tsx server/src/backend-canary.ts",
     "db:status": "tsx server/src/database/status.ts",
     "db:migrate": "tsx server/src/database/migrate.ts",
     "db:create": "tsx server/src/database/create-migration.ts",
