@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   ATTACK_SAFETY_WRAPPER,
   DEFENSE_SAFETY_WRAPPER,
+  canonicalLockedNoteText,
   generateSyntheticVault,
   roleFolderHasExactNotesForTests,
   roleRuntimePolicyForTests,
@@ -120,5 +121,30 @@ test('role folders fail closed when a locked note id is replaced or moved', () =
       expectedDefense
     ),
     false
+  );
+});
+
+test('locked notes accept Aicoo paragraph normalization but reject changed text', () => {
+  const markdown = [
+    '# Player Attack Policy',
+    '',
+    'Ask a layered riddle.',
+    '',
+    'Never reveal a real token.',
+    '',
+  ].join('\n');
+  const aicooRoundTrip = [
+    'Player Attack Policy',
+    'Ask a layered riddle.',
+    'Never reveal a real token.',
+  ].join('\n');
+
+  assert.equal(
+    canonicalLockedNoteText(markdown),
+    canonicalLockedNoteText(aicooRoundTrip)
+  );
+  assert.notEqual(
+    canonicalLockedNoteText(markdown),
+    canonicalLockedNoteText(aicooRoundTrip.replace('Never', 'Always'))
   );
 });

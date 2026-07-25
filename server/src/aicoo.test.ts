@@ -71,6 +71,8 @@ test('encounter links pin the synthetic capsule note and allow anonymous runtime
           id: 'encounter-link',
           token: 'encounter-token',
           url: 'https://www.aicoo.io/a/encounter-token',
+          requireSignIn: false,
+          requireSignInForced: false,
         },
       }),
       { status: 201, headers: { 'content-type': 'application/json' } }
@@ -86,6 +88,50 @@ test('encounter links pin the synthetic capsule note and allow anonymous runtime
     requireSignIn: false,
     allowedTools: [],
   });
+});
+
+test('encounter links fail closed and revoke when Aicoo forces sign-in', async () => {
+  const requests: Array<{ url: string; method: string }> = [];
+  globalThis.fetch = (async (input, init) => {
+    requests.push({ url: String(input), method: init?.method ?? 'GET' });
+    if (init?.method === 'POST') {
+      return new Response(
+        JSON.stringify({
+          shareLink: {
+            id: 'forced-link',
+            token: 'forced-token',
+            url: 'https://www.aicoo.io/a/forced-token',
+            requireSignIn: true,
+            requireSignInForced: true,
+          },
+        }),
+        { status: 201, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+
+  await assert.rejects(
+    createShareLink('operator-key', {
+      folderId: 42,
+      noteId: 43,
+      label: 'Virtual N1 forced link',
+      linkPolicy: 'Locked synthetic policy',
+      requireSignIn: false,
+      allowedTools: [],
+    }),
+    /did not grant an anonymous isolated Fighter capability/
+  );
+  assert.deepEqual(requests, [
+    { url: 'https://www.aicoo.io/api/v1/os/share', method: 'POST' },
+    {
+      url: 'https://www.aicoo.io/api/v1/os/share/forced-link',
+      method: 'DELETE',
+    },
+  ]);
 });
 
 test('anonymous encounter turns send no Authorization or Cookie header', async () => {
@@ -117,6 +163,22 @@ test('anonymous encounter turns send no Authorization or Cookie header', async (
     message: 'Hello, other Fighter.',
   });
   assert.equal(response.response, 'Hello from the grid.');
+});
+
+test('anonymous encounter turns reject malformed Aicoo responses', async () => {
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ response: '' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+
+  await assert.rejects(
+    messageAnonymousScopedAgent({
+      token: 'fresh-encounter-token',
+      message: 'Hello, other Fighter.',
+    }),
+    /invalid Fighter response/
+  );
 });
 
 test('encounter share capabilities can be revoked after the fixed rounds', async () => {

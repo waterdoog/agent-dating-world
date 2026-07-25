@@ -199,14 +199,19 @@ function renderVault(slots: SecretSlot[]): string {
   ].join('\n');
 }
 
-function canonicalNoteText(value: string): string {
+/**
+ * Aicoo stores Markdown notes as rich text and can collapse paragraph
+ * separators from a blank line to a single newline on readback. Empty-line
+ * layout is not part of the locked policy; every non-empty line still is.
+ */
+export function canonicalLockedNoteText(value: string): string {
   return value
     .replace(/^#+\s*/gm, '')
     .replace(/\r\n?/g, '\n')
     .split('\n')
     .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0)
     .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
@@ -214,7 +219,7 @@ function isCanonicalVault(content: string): boolean {
   const slots = parseVault(content);
   return (
     isSyntheticVault(slots) &&
-    canonicalNoteText(content) === canonicalNoteText(renderVault(slots))
+    canonicalLockedNoteText(content) === canonicalLockedNoteText(renderVault(slots))
   );
 }
 
@@ -462,8 +467,8 @@ async function validateLockedRole(
     await assertFolderShape(capsule.attackFolderId, [ATTACK_POLICY_TITLE]);
     const actual = await getNote(operatorKey(), capsule.attackPolicyNoteId);
     if (
-      canonicalNoteText(actual) !==
-      canonicalNoteText(renderAttackPolicy(player.attackPolicy))
+      canonicalLockedNoteText(actual) !==
+      canonicalLockedNoteText(renderAttackPolicy(player.attackPolicy))
     ) {
       throw new FighterWorldError(409, 'The locked attack policy changed unexpectedly.');
     }
@@ -475,14 +480,15 @@ async function validateLockedRole(
     getNote(operatorKey(), capsule.vaultNoteId),
   ]);
   if (
-    canonicalNoteText(actualPolicy) !==
-    canonicalNoteText(renderDefensePolicy(player.defensePolicy))
+    canonicalLockedNoteText(actualPolicy) !==
+    canonicalLockedNoteText(renderDefensePolicy(player.defensePolicy))
   ) {
     throw new FighterWorldError(409, 'The locked defense policy changed unexpectedly.');
   }
   if (
     !isCanonicalVault(actualVault) ||
-    canonicalNoteText(actualVault) !== canonicalNoteText(renderVault(player.secrets))
+    canonicalLockedNoteText(actualVault) !==
+      canonicalLockedNoteText(renderVault(player.secrets))
   ) {
     throw new FighterWorldError(409, 'The locked synthetic vault changed unexpectedly.');
   }
@@ -654,16 +660,17 @@ async function runMiniGame(gameId: string): Promise<boolean> {
     const links = new Map<string, { id: string; token: string }>();
     const roleLinks = await Promise.all(
       players.flatMap((player) =>
-        (['attack', 'defense'] as const).map(async (role) => ({
-          player,
-          role,
-          link: await createRoleLink(player, role, gameId),
-        }))
+        (['attack', 'defense'] as const).map(async (role) => {
+          const link = await createRoleLink(player, role, gameId);
+          // Record each capability as soon as it exists. If a sibling link
+          // fails during Promise.all, finally can still revoke this one.
+          createdLinkIds.push(link.id);
+          return { player, role, link };
+        })
       )
     );
     for (const { player, role, link } of roleLinks) {
-        createdLinkIds.push(link.id);
-        links.set(`${player.id}:${role}`, link);
+      links.set(`${player.id}:${role}`, link);
     }
 
     while (true) {

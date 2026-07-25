@@ -243,7 +243,14 @@ export async function createShareLink(
   }
 ): Promise<{ id: string; token: string; agentUrl: string }> {
   const res = await api<{
-    shareLink: { id: string; token: string; agentUrl?: string; url: string };
+    shareLink: {
+      id: string;
+      token: string;
+      agentUrl?: string;
+      url: string;
+      requireSignIn?: boolean;
+      requireSignInForced?: boolean;
+    };
   }>(bearer, 'POST', '/os/share', {
     scope: 'folders',
     access: 'read',
@@ -259,6 +266,21 @@ export async function createShareLink(
     tools: { allowedTools: args.allowedTools ?? [] },
     linkPolicy: args.linkPolicy,
   });
+  if (
+    args.requireSignIn === false &&
+    (res.shareLink.requireSignIn !== false ||
+      res.shareLink.requireSignInForced === true)
+  ) {
+    await api(
+      bearer,
+      'DELETE',
+      `/os/share/${encodeURIComponent(String(res.shareLink.id))}`
+    ).catch(() => undefined);
+    throw new AicooError(
+      403,
+      'Aicoo did not grant an anonymous isolated Fighter capability.'
+    );
+  }
   return {
     id: String(res.shareLink.id),
     token: res.shareLink.token,
@@ -293,10 +315,22 @@ export async function messageAnonymousScopedAgent(args: {
   token: string;
   message: string;
 }): Promise<GuestAgentReply> {
-  return aicooJson(null, 'POST', '/api/chat/guest-v04', {
+  const reply = await aicooJson<unknown>(null, 'POST', '/api/chat/guest-v04', {
     token: args.token,
     message: args.message,
     stream: false,
     mode: 'agent',
   });
+  if (
+    typeof reply !== 'object' ||
+    reply === null ||
+    typeof (reply as Record<string, unknown>).sessionKey !== 'string' ||
+    typeof (reply as Record<string, unknown>).agentName !== 'string' ||
+    typeof (reply as Record<string, unknown>).ownerName !== 'string' ||
+    typeof (reply as Record<string, unknown>).response !== 'string' ||
+    !(reply as Record<string, string>).response.trim()
+  ) {
+    throw new AicooError(502, 'Aicoo returned an invalid Fighter response.');
+  }
+  return reply as GuestAgentReply;
 }

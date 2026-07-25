@@ -2,6 +2,9 @@ import postgres from 'postgres';
 import { requireDatabaseUrl, runtimeDatabaseUrl } from './config.js';
 
 export type DatabaseClient = ReturnType<typeof postgres>;
+export type DatabaseQueryClient =
+  | DatabaseClient
+  | postgres.TransactionSql;
 
 let runtimeClient: DatabaseClient | null = null;
 

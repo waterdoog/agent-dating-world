@@ -20,7 +20,7 @@
     "hono": "^4.6.14",
     "jose": "^5.9.6",
     "lucide-react": "^0.468.0",
-    "postgres": "3.4.7",
+    "postgres": "3.4.9",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

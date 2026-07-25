@@ -1,4 +1,8 @@
-import { database, isDatabaseConfigured, type DatabaseClient } from './client.js';
+import {
+  database,
+  isDatabaseConfigured,
+  type DatabaseQueryClient,
+} from './client.js';
 import type { FighterUserRecord, MiniGameArchive } from './game-archive.js';
 
 export class DatabaseUnavailableError extends Error {
@@ -23,7 +27,7 @@ function isoValue(value: Date | string): string {
 }
 
 async function ensureUserWith(
-  sql: DatabaseClient,
+  sql: DatabaseQueryClient,
   user: FighterUserRecord
 ): Promise<void> {
   await sql`

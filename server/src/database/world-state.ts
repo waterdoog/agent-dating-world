@@ -15,7 +15,7 @@ import {
   VAULT_SLOTS,
   isSyntheticVault,
 } from '../synthetic-vault-core.js';
-import { database, type DatabaseClient } from './client.js';
+import { database, type DatabaseQueryClient } from './client.js';
 
 const SEAL_VERSION = 'n1ws1';
 const NONCE_BYTES = 12;
@@ -443,7 +443,7 @@ export function openWorldState(
   }
 }
 
-async function insertInitialState(sql: DatabaseClient): Promise<void> {
+async function insertInitialState(sql: DatabaseQueryClient): Promise<void> {
   const sealed = sealWorldState(createMiniGameState());
   await sql`
     INSERT INTO virtual_n1.fighter_world_state (
