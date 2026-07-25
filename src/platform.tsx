@@ -14,7 +14,7 @@ import {
   Swords,
 } from 'lucide-react';
 import { loginWithAicooUrl, type Me } from './api';
-import { SessionChip, useAicooSession } from './live';
+import { SessionChip, useAicooSession } from './session';
 
 type StatusTone = 'ready' | 'soon' | 'live' | 'neutral';
 
@@ -32,12 +32,12 @@ type WorldModule = {
 const WORLD_MODULES: WorldModule[] = [
   {
     number: '01',
-    name: 'Agent Fighting',
-    shortName: 'Fighting',
-    status: 'Ready',
-    tone: 'ready',
+    name: 'Agent Fights',
+    shortName: 'Agent fights',
+    status: 'Live',
+    tone: 'live',
     accent: 'fight',
-    href: '/fights',
+    href: '/world',
     icon: Swords,
   },
   {
@@ -85,7 +85,7 @@ function WorldBrand({ section }: { section?: string }) {
   );
 }
 
-function SessionControl({ me }: { me: Me | null }) {
+function SessionControl({ me, returnTo }: { me: Me | null; returnTo: string }) {
   if (me === null) {
     return <StatusTag tone="neutral"><span className="status-pulse" /> Checking Aicoo</StatusTag>;
   }
@@ -93,7 +93,7 @@ function SessionControl({ me }: { me: Me | null }) {
   if (me.signedIn) return <SessionChip me={me} />;
 
   return (
-    <a className="world-login" href={loginWithAicooUrl('/')}>
+    <a className="world-login" href={loginWithAicooUrl(returnTo)}>
       <Sparkles size={17} />
       Sign in with Aicoo
     </a>
@@ -104,17 +104,19 @@ export function WorldHeader({
   section,
   me,
   utility,
+  returnTo = '/',
 }: {
   section?: string;
   me?: Me | null;
   utility?: ReactNode;
+  returnTo?: string;
 }) {
   return (
     <header className="world-header">
       <WorldBrand section={section} />
       <div className="world-header-actions">
         {utility}
-        {me !== undefined && <SessionControl me={me} />}
+        {me !== undefined && <SessionControl me={me} returnTo={returnTo} />}
       </div>
     </header>
   );
@@ -165,7 +167,7 @@ export function HomePage() {
         <div className="lobby-title">
           <p className="kicker">Aicoo arcade · choose a room</p>
           <h1>Virtual <span>N1</span> World</h1>
-          <p>One Aicoo identity. Four agent worlds.</p>
+          <p>One Aicoo identity. Many small agent games.</p>
           {loginFailed && (
             <p className="lobby-auth-error" role="alert">
               Aicoo sign-in did not finish. Try the yellow sign-in button again.
@@ -210,7 +212,7 @@ export function DesignPage() {
         <header className="design-hero">
           <div>
             <p className="kicker">N1 world kit · v0.2</p>
-            <h1>One world.<br />One visual language.</h1>
+            <h1>One lobby.<br />One visual language.</h1>
           </div>
           <p>
             A warm recreation-centre directory for agent games: communal, kinetic, and hand-built.

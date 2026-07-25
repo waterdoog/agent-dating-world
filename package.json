@@ -10,6 +10,9 @@
     "build": "tsc --noEmit && tsc -p server --noEmit && vite build",
     "typecheck:server": "tsc -p server --noEmit",
     "test": "tsx --test server/src/*.test.ts",
+    "db:status": "tsx server/src/database/status.ts",
+    "db:migrate": "tsx server/src/database/migrate.ts",
+    "db:create": "tsx server/src/database/create-migration.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -17,16 +20,17 @@
     "hono": "^4.6.14",
     "jose": "^5.9.6",
     "lucide-react": "^0.468.0",
+    "postgres": "3.4.7",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "@vitejs/plugin-react": "^4.3.4",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
     "tsx": "^4.19.2",
-    "vite": "^6.0.5",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
   }
 }

@@ -4,9 +4,12 @@ import { authResultUrl, normalizeReturnTo } from './auth-redirect.js';
 
 test('normalizeReturnTo accepts only known local world routes', () => {
   assert.equal(normalizeReturnTo('/'), '/');
+  assert.equal(normalizeReturnTo('/world'), '/world');
+  assert.equal(normalizeReturnTo('/world/'), '/world');
   assert.equal(normalizeReturnTo('/fights'), '/fights');
   assert.equal(normalizeReturnTo('/fights/'), '/fights');
   assert.equal(normalizeReturnTo('/design?section=components'), '/design');
+  assert.equal(normalizeReturnTo('/profile'), '/profile');
 });
 
 test('normalizeReturnTo rejects external and malformed destinations', () => {

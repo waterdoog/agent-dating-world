@@ -1,8 +1,8 @@
 /**
- * Thin client for the Aicoo v1 REST surface. Every call authenticates with a
- * bearer credential — either the user's OAuth access token ("Login with
- * Aicoo") or an Aicoo API key (BYOK / arena operator). Aicoo notes are the
- * database; snapshots are the audit log.
+ * Thin client for the Aicoo v1 REST surface. Operator workspace calls use the
+ * dedicated Virtual N1 credential. Encounter turns intentionally use an
+ * anonymous, short-lived share capability so no player identity or relationship
+ * memory can enter the runtime.
  */
 import { config } from './config.js';
 
@@ -39,7 +39,7 @@ async function api<T>(bearer: string, method: string, apiPath: string, body?: un
 }
 
 async function aicooJson<T>(
-  bearer: string,
+  bearer: string | null,
   method: string,
   absolutePath: string,
   body?: unknown
@@ -47,11 +47,14 @@ async function aicooJson<T>(
   const res = await fetch(`${config.aicooBaseUrl}${absolutePath}`, {
     method,
     headers: {
-      Authorization: `Bearer ${bearer}`,
+      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(90_000),
+    // Fighter rounds run inside a 300s serverless invocation. Both attacks and
+    // both defenses are parallelized per round; cap each model wave so link
+    // cleanup and durable finalization still have time to run.
+    signal: AbortSignal.timeout(25_000),
   });
   const text = await res.text();
   if (!res.ok) throw new AicooError(res.status, text);
@@ -70,11 +73,29 @@ export interface NoteSummary {
   updatedAt?: string;
 }
 
+export interface FolderSummary {
+  id: number;
+  name: string;
+  parentId: number | null;
+}
+
 export async function ensureFolder(bearer: string, pathSpec: string): Promise<number> {
   const res = await api<{ folder: { id: number } }>(bearer, 'POST', '/os/folders', {
     path: pathSpec,
   });
   return res.folder.id;
+}
+
+export async function listFoldersByParentId(
+  bearer: string,
+  parentId: number
+): Promise<FolderSummary[]> {
+  const res = await api<{ folders: FolderSummary[] }>(
+    bearer,
+    'GET',
+    `/os/folders?parentId=${parentId}`
+  );
+  return (res.folders ?? []).filter((folder) => Number(folder.parentId) === parentId);
 }
 
 export async function listNotes(bearer: string, folderName: string): Promise<NoteSummary[]> {
@@ -207,69 +228,7 @@ export async function listSnapshots(bearer: string, noteId: number): Promise<unk
   return api(bearer, 'GET', `/os/snapshots/${noteId}?limit=50`);
 }
 
-// ─── Own-COO chat (turn composition) ────────────────────────────────
-
-export interface CooChatReply {
-  conversationId: string;
-  response: string;
-}
-
-/** Ask the caller's own COO to compose a turn. */
-export async function cooChat(
-  bearer: string,
-  message: string,
-  conversationId?: string
-): Promise<CooChatReply> {
-  return api(bearer, 'POST', '/chat', {
-    message,
-    stream: false,
-    ...(conversationId ? { conversationId } : {}),
-  });
-}
-
-// ─── Agent messaging ────────────────────────────────────────────────
-
-export interface AgentReply {
-  success: boolean;
-  mode?: string;
-  agentName?: string;
-  ownerName?: string;
-  response: string | null;
-  conversationId?: number;
-}
-
-export async function messageAgent(
-  bearer: string,
-  to: string,
-  message: string,
-  intent: 'query' | 'inform' = 'query'
-): Promise<AgentReply> {
-  return api(bearer, 'POST', '/agent/message', { to, message, intent });
-}
-
-// ─── Scoped share links & signed-in guest agent ────────────────────
-
-export interface ShareLinkSummary {
-  id: string;
-  agentUrl: string;
-  label: string | null;
-  scope?: string;
-  access?: string;
-  notesAccess?: string;
-  requireSignIn: boolean;
-  isActive: boolean;
-  expiresAt: string | null;
-  identity?: { loadCoo?: boolean; loadUser?: boolean; loadPolicy?: boolean };
-}
-
-export async function listShareLinks(bearer: string): Promise<ShareLinkSummary[]> {
-  const res = await api<{ links?: ShareLinkSummary[] }>(
-    bearer,
-    'GET',
-    '/os/share/list?status=active&limit=50'
-  );
-  return res.links ?? [];
-}
+// ─── Scoped share links & anonymous guest agent ────────────────────
 
 export async function createShareLink(
   bearer: string,
@@ -277,6 +236,10 @@ export async function createShareLink(
     folderId: number;
     label: string;
     linkPolicy: string;
+    noteId?: number;
+    expiresIn?: string;
+    requireSignIn?: boolean;
+    allowedTools?: string[];
   }
 ): Promise<{ id: string; token: string; agentUrl: string }> {
   const res = await api<{
@@ -286,13 +249,14 @@ export async function createShareLink(
     access: 'read',
     notesAccess: 'read',
     folderIds: [args.folderId],
+    ...(args.noteId ? { noteId: args.noteId } : {}),
     label: args.label,
-    expiresIn: '7d',
-    requireSignIn: true,
+    expiresIn: args.expiresIn ?? '7d',
+    requireSignIn: args.requireSignIn ?? true,
     identity: { loadCoo: false, loadUser: false, loadPolicy: false },
     email: { read: false },
     todos: { read: false, create: false },
-    tools: { allowedTools: [] },
+    tools: { allowedTools: args.allowedTools ?? [] },
     linkPolicy: args.linkPolicy,
   });
   return {
@@ -302,23 +266,8 @@ export async function createShareLink(
   };
 }
 
-export async function restoreShareLinkScope(
-  bearer: string,
-  args: { linkId: string; folderId: number; label: string }
-): Promise<void> {
-  await api(bearer, 'PATCH', `/os/share/${encodeURIComponent(args.linkId)}`, {
-    scope: 'folders',
-    folderIds: [args.folderId],
-    access: 'read',
-    notesAccess: 'read',
-    label: args.label,
-    expiresIn: '7d',
-    requireSignIn: true,
-    identity: { loadCoo: false, loadUser: false, loadPolicy: false },
-    email: { read: false },
-    todos: { read: false, create: false },
-    tools: { allowedTools: [] },
-  });
+export async function revokeShareLink(bearer: string, linkId: string): Promise<void> {
+  await api(bearer, 'DELETE', `/os/share/${encodeURIComponent(linkId)}`);
 }
 
 export interface GuestAgentReply {
@@ -329,33 +278,25 @@ export interface GuestAgentReply {
   elapsedMs?: number;
 }
 
-export async function messageScopedAgent(
-  bearer: string,
-  args: { token: string; message: string; sessionKey?: string }
-): Promise<GuestAgentReply> {
-  return aicooJson(bearer, 'POST', '/api/chat/guest-v04', {
+/**
+ * Invoke a server-held, unlisted share capability without an Authorization
+ * header. This is intentional for Virtual N1 Fighter sessions: guest-v04
+ * currently attaches owner↔guest relationship memory whenever the caller is
+ * authenticated, even when every declared link capability is denied.
+ *
+ * The token must stay server-side. The link itself is read-only, restricted to
+ * one synthetic Fighter folder, short-lived, and contains no user identity
+ * files or integration capabilities. Aicoo ignores caller-provided session
+ * keys for anonymous guests, so callers must use a fresh token per encounter.
+ */
+export async function messageAnonymousScopedAgent(args: {
+  token: string;
+  message: string;
+}): Promise<GuestAgentReply> {
+  return aicooJson(null, 'POST', '/api/chat/guest-v04', {
     token: args.token,
     message: args.message,
     stream: false,
     mode: 'agent',
-    ...(args.sessionKey ? { sessionKey: args.sessionKey } : {}),
   });
-}
-
-// ─── Identity ───────────────────────────────────────────────────────
-
-export interface AicooIdentity {
-  success: boolean;
-  profile: {
-    userId: string;
-    username: string | null;
-    name: string;
-    agentName: string | null;
-    email: string | null;
-  };
-}
-
-/** Validate a bearer credential and resolve the caller's Aicoo identity. */
-export async function getIdentity(bearer: string): Promise<AicooIdentity> {
-  return api(bearer, 'GET', '/identity');
 }

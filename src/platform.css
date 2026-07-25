@@ -85,6 +85,38 @@
   gap: var(--space-md);
 }
 
+.session-profile-link {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.session-profile-link:hover,
+.session-profile-link[aria-current='page'] {
+  color: var(--red-dark);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
+.session-profile-name {
+  overflow: hidden;
+  max-width: 150px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-profile-action {
+  color: var(--red-dark);
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .header-back,
 .lobby-footer a,
 .login-world-link {
@@ -848,7 +880,7 @@ a.module-door .module-door-action {
   .world-header { min-height: 64px; padding-inline: var(--space-lg); }
   .world-brand-copy strong { font-size: 0.78rem; }
   .world-header .session-chip small,
-  .world-header .session-chip > span:nth-child(2) { display: none; }
+  .world-header .session-profile-name { display: none; }
   .world-header .world-login { padding-inline: var(--space-md); font-size: 0.68rem; }
   .module-doors,
   .design-hero,
@@ -878,10 +910,16 @@ a.module-door .module-door-action {
     width: 42px;
     padding: 0;
     overflow: hidden;
-    color: transparent;
+    color: var(--text);
+    font-size: 0;
     white-space: nowrap;
   }
-  .world-header .world-login svg { flex: 0 0 auto; color: var(--text); }
+  .world-header .world-login svg {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    color: var(--text);
+  }
   .lobby-main,
   .design-main { padding-inline: var(--space-lg); }
   .lobby-title h1 { font-size: clamp(3.4rem, 20vw, 5.4rem); }

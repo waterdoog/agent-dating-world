@@ -1,8 +1,9 @@
 /**
- * Virtual N1 World BFF. Agent Fights is the first playable room.
+ * Virtual N1 World BFF. Each pair gets an isolated Fighter mini-game.
  *
- * Aicoo handles identity, agent turns, scoped sharing, notes, and snapshots.
- * This server keeps credentials out of the browser and owns no database.
+ * Aicoo handles identity, scoped agent turns, notes, and snapshots. This
+ * server keeps credentials out of the browser, owns encrypted durable drafts,
+ * matchmaking, and round leases, and writes sanitized history to Postgres.
  */
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
@@ -11,9 +12,15 @@ import { cors } from 'hono/cors';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { AicooError, getIdentity } from './aicoo.js';
+import { AicooError } from './aicoo.js';
 import { authResultUrl, normalizeReturnTo } from './auth-redirect.js';
 import { config } from './config.js';
+import {
+  DatabaseUnavailableError,
+  FighterRateLimitError,
+  ensureFighterUser,
+  readFighterProfile,
+} from './database/repository.js';
 import {
   buildAuthorizeUrl,
   exchangeCode,
@@ -31,13 +38,16 @@ import {
   type Session,
 } from './session.js';
 import {
-  FightError,
-  getArenaView,
-  joinArena,
-  runAttack,
-  verifyGuess,
-  type FightIdentity,
-} from './fights.js';
+  FighterWorldError,
+  fighterUserRecordForIdentity,
+  getFighterWorldSnapshot,
+  joinFighterWorld,
+  playFighterWorldAgain,
+  readyFighterWorld,
+  resumeFighterWorld,
+  updateFighterWorldConfig,
+  type FighterIdentity,
+} from './fighter-world.js';
 
 export const app = new Hono();
 const isMainModule = Boolean(
@@ -62,10 +72,6 @@ async function resolveBearer(c: Context): Promise<{
   const session = await getSession(c);
   if (!session) return null;
 
-  if (session.authType === 'api-key' && session.apiKey) {
-    return { bearer: session.apiKey, session };
-  }
-
   if (session.authType === 'oauth' && session.accessToken) {
     // 15-minute access tokens: refresh when within 60s of expiry.
     const stale =
@@ -83,8 +89,8 @@ async function resolveBearer(c: Context): Promise<{
       };
       await setSession(c, updated);
       return { bearer: updated.accessToken!, session: updated };
-    } catch (error) {
-      console.warn('[auth] refresh failed:', error);
+    } catch {
+      console.warn('[auth] refresh failed.');
       return null;
     }
   }
@@ -96,17 +102,28 @@ function jsonError(c: Context, status: number, message: string) {
   return c.json({ error: true, message }, status as ContentfulStatusCode);
 }
 
-function fightError(c: Context, error: unknown) {
-  if (error instanceof FightError) return jsonError(c, error.status, error.message);
-  if (error instanceof AicooError) {
-    console.warn(`[agent-fights] Aicoo request failed (${error.status}):`, error.body.slice(0, 500));
-    if (error.status === 401) return jsonError(c, 401, 'Your Aicoo session expired. Sign in again.');
-    if (error.status === 403) return jsonError(c, 403, 'Aicoo did not grant a required capability.');
-    if (error.status === 429) return jsonError(c, 429, 'Aicoo is rate limiting the arena. Try again shortly.');
-    return jsonError(c, 502, 'Aicoo could not complete the arena request.');
+function worldError(c: Context, error: unknown) {
+  if (error instanceof FighterWorldError) return jsonError(c, error.status, error.message);
+  if (error instanceof DatabaseUnavailableError) {
+    return jsonError(c, 503, error.message);
   }
-  console.error('[agent-fights] request failed:', error);
-  return jsonError(c, 500, 'Agent Fights could not complete the request.');
+  if (error instanceof FighterRateLimitError) {
+    return jsonError(c, 429, error.message);
+  }
+  if (error instanceof AicooError) {
+    console.warn(`[fighter-world] Aicoo request failed (${error.status}).`);
+    if (error.status === 401) {
+      return jsonError(c, 503, 'The isolated Fighter runtime credential is unavailable.');
+    }
+    if (error.status === 403) {
+      return jsonError(c, 502, 'Aicoo rejected the isolated Fighter capability.');
+    }
+    if (error.status === 429) return jsonError(c, 429, 'Aicoo is rate limiting the world. Try again shortly.');
+    return jsonError(c, 502, 'Aicoo could not complete the world request.');
+  }
+  // Driver/provider errors can carry connection or request metadata.
+  console.error('[fighter-world] request failed.');
+  return jsonError(c, 500, 'Virtual N1 World could not complete the request.');
 }
 
 async function requireBearer(c: Context): Promise<{ bearer: string; session: Session } | Response> {
@@ -150,57 +167,30 @@ app.get('/auth/callback', async (c) => {
     const tokens = await exchangeCode(code, flow.codeVerifier);
     const info = await fetchUserInfo(tokens.access_token);
 
-    // UserInfo proves the OIDC login and supplies standards-based profile
-    // fields. Identity supplies one canonical user id shared with API-key
-    // sessions, preventing the same account from enrolling twice.
-    const aicooIdentity = await getIdentity(tokens.access_token);
-
+    // OIDC UserInfo proves identity without touching the user's Aicoo
+    // workspace or loading COO/USER/POLICY files.
     await setSession(c, {
       authType: 'oauth',
-      sub: aicooIdentity.profile.userId,
-      username: aicooIdentity.profile.username ?? info.preferred_username,
-      displayName:
-        aicooIdentity.profile.name ?? info.name ?? info.preferred_username ?? 'Aicoo player',
+      sub: info.sub,
+      username: info.preferred_username,
+      displayName: info.name ?? info.preferred_username ?? 'Aicoo player',
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
       accessTokenExpiresAt: Date.now() + tokens.expires_in * 1000,
     });
 
     return c.redirect(authResultUrl(config.spaUrl, flow.returnTo, { login: 'ok' }));
-  } catch (error) {
-    console.error('[auth] callback failed:', error);
+  } catch {
+    console.error('[auth] callback failed.');
     return c.redirect(
       authResultUrl(config.spaUrl, flow.returnTo, { loginError: 'token_exchange_failed' })
     );
   }
 });
 
-app.post('/auth/apikey', async (c) => {
-  const body = await c.req.json().catch(() => ({}));
-  const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
-  if (!/^(aicoo|pulse)_sk_/.test(apiKey)) {
-    return jsonError(c, 400, 'Provide an Aicoo API key (aicoo_sk_...).');
-  }
-
-  try {
-    const identity = await getIdentity(apiKey);
-    await setSession(c, {
-      authType: 'api-key',
-      sub: identity.profile.userId,
-      username: identity.profile.username ?? undefined,
-      displayName: identity.profile.name,
-      apiKey,
-    });
-    return c.json({ ok: true, username: identity.profile.username, name: identity.profile.name });
-  } catch (error) {
-    const status = error instanceof AicooError ? error.status : 500;
-    return jsonError(c, status === 401 ? 401 : 502, 'Aicoo rejected that API key.');
-  }
-});
-
 app.post('/auth/logout', async (c) => {
   const session = await getSession(c);
-  if (session?.authType === 'oauth') {
+  if (session) {
     const tokens = [session.refreshToken, session.accessToken].filter(
       (token): token is string => Boolean(token)
     );
@@ -221,10 +211,7 @@ app.get('/api/me', async (c) => {
   });
 });
 
-async function fightIdentityFor(
-  _c: Context,
-  auth: { bearer: string; session: Session }
-): Promise<FightIdentity> {
+function fighterIdentityFor(auth: { session: Session }): FighterIdentity {
   return {
     subject: auth.session.sub,
     username: auth.session.username,
@@ -232,65 +219,114 @@ async function fightIdentityFor(
   };
 }
 
-// ─── Agent Fights ───────────────────────────────────────────────────
-
-app.get('/api/fights', async (c) => {
+app.get('/api/profile', async (c) => {
   const auth = await requireBearer(c);
   if (auth instanceof Response) return auth;
+  const identity = fighterIdentityFor(auth);
+  const user = fighterUserRecordForIdentity(identity);
   try {
-    return c.json(await getArenaView(await fightIdentityFor(c, auth)));
+    // Signup credit creation and profile-name refresh are idempotent.
+    await ensureFighterUser(user);
+    return c.json(await readFighterProfile(user.id));
   } catch (error) {
-    return fightError(c, error);
+    if (error instanceof DatabaseUnavailableError) {
+      return jsonError(c, 503, error.message);
+    }
+    // Do not print driver errors: they can contain connection metadata.
+    console.error('[profile] database request failed.');
+    return jsonError(c, 503, 'Your persistent Fighter profile is temporarily unavailable.');
   }
 });
 
-app.post('/api/fights/join', async (c) => {
-  const auth = await requireBearer(c);
-  if (auth instanceof Response) return auth;
-  try {
-    return c.json(await joinArena(auth.bearer, await fightIdentityFor(c, auth)));
-  } catch (error) {
-    return fightError(c, error);
-  }
-});
+// ─── Symmetric Virtual N1 Fighter World ────────────────────────────
 
-app.post('/api/fights/attack', async (c) => {
-  const auth = await requireBearer(c);
-  if (auth instanceof Response) return auth;
-  const body = await c.req.json().catch(() => ({}));
+app.get('/api/world', async (c) => {
+  const session = await getSession(c);
   try {
     return c.json(
-      await runAttack(auth.bearer, await fightIdentityFor(c, auth), {
-        targetId: typeof body.targetId === 'string' ? body.targetId : '',
-        tactic: typeof body.tactic === 'string' ? body.tactic : '',
-        attackerConversationId:
-          typeof body.attackerConversationId === 'string'
-            ? body.attackerConversationId
-            : undefined,
-        defenderSessionKey:
-          typeof body.defenderSessionKey === 'string' ? body.defenderSessionKey : undefined,
-        previousDefenderReply:
-          typeof body.previousDefenderReply === 'string' ? body.previousDefenderReply : undefined,
+      await getFighterWorldSnapshot(
+        session
+          ? {
+              subject: session.sub,
+              username: session.username,
+              displayName: session.displayName,
+            }
+          : null
+      )
+    );
+  } catch (error) {
+    return worldError(c, error);
+  }
+});
+
+app.post('/api/world/join', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  try {
+    // The user's bearer proves identity only. Join creates an encrypted
+    // database draft; Aicoo is touched only when it is explicitly locked.
+    return c.json(await joinFighterWorld(fighterIdentityFor(auth)));
+  } catch (error) {
+    return worldError(c, error);
+  }
+});
+
+app.put('/api/world/config', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return jsonError(c, 400, 'Request body must be valid JSON.');
+  }
+  if (!body || typeof body !== 'object') {
+    return jsonError(c, 400, 'Attack and defense policies are required.');
+  }
+  const input = body as Record<string, unknown>;
+  try {
+    return c.json(
+      await updateFighterWorldConfig(fighterIdentityFor(auth), {
+        attackPolicy: input.attackPolicy,
+        defensePolicy: input.defensePolicy,
       })
     );
   } catch (error) {
-    return fightError(c, error);
+    return worldError(c, error);
   }
 });
 
-app.post('/api/fights/verify', async (c) => {
+app.post('/api/world/ready', async (c) => {
   const auth = await requireBearer(c);
   if (auth instanceof Response) return auth;
-  const body = await c.req.json().catch(() => ({}));
   try {
-    return c.json(
-      await verifyGuess(await fightIdentityFor(c, auth), {
-        targetId: typeof body.targetId === 'string' ? body.targetId : '',
-        guess: typeof body.guess === 'string' ? body.guess : '',
-      })
-    );
+    // Policies and the synthetic vault are persisted and snapshotted in
+    // separate role folders before this Fighter can enter matchmaking.
+    return c.json(await readyFighterWorld(fighterIdentityFor(auth)));
   } catch (error) {
-    return fightError(c, error);
+    return worldError(c, error);
+  }
+});
+
+app.post('/api/world/run', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  try {
+    // The browser supplies no round text. It only asks the server scheduler
+    // to claim or resume this player's current deterministic match.
+    return c.json(await resumeFighterWorld(fighterIdentityFor(auth)));
+  } catch (error) {
+    return worldError(c, error);
+  }
+});
+
+app.post('/api/world/play-again', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  try {
+    return c.json(await playFighterWorldAgain(fighterIdentityFor(auth)));
+  } catch (error) {
+    return worldError(c, error);
   }
 });
 

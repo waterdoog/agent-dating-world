@@ -1,7 +1,4 @@
-/**
- * BFF configuration. Everything comes from env — the server keeps no
- * database; Aicoo is the backend.
- */
+/** BFF configuration. Credentials and connection details come from env. */
 import { loadEnvFile } from 'node:process';
 
 try {
@@ -41,8 +38,11 @@ export const config = {
   /** Secret for encrypting the session cookie (any long random string). */
   sessionSecret,
 
-  /** Pepper for player ids and vault commitments. Use a separate secret in production. */
-  arenaSecret: process.env.ARENA_SECRET ?? sessionSecret,
+  /** Secret for opaque player ids. Use a separate value in production. */
+  arenaSecret: required(
+    'ARENA_SECRET',
+    process.env.NODE_ENV === 'production' ? undefined : sessionSecret
+  ),
 
   /** Operator Aicoo account API key — owns the roster and proof ledger. */
   operatorApiKey: process.env.AICOO_OPERATOR_API_KEY ?? '',
@@ -61,14 +61,13 @@ export const redirectUri = process.env.AICOO_REDIRECT_URI ?? `${config.publicUrl
 /** RFC 8707 resource: makes Aicoo mint a JWT access token audienced to /api/v1. */
 export const v1Resource = `${config.aicooBaseUrl}/api/v1`;
 
-/** Least-privilege scopes used by Agent Fights. */
+/**
+ * Login proves who owns the public Fighter; it does not grant Virtual N1
+ * access to the user's workspace. Synthetic capsules and encounter links live
+ * in the dedicated operator account.
+ */
 export const APP_SCOPES = [
   'openid',
   'profile',
   'offline_access',
-  'os.notes:read',
-  'os.notes:write',
-  'os.snapshots:read',
-  'os.snapshots:write',
-  'agent.message:send',
 ] as const;
