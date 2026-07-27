@@ -58,6 +58,7 @@ export interface DatingLook {
   mood?: string;
   accessory?: string;
   seed?: string;
+  avatar?: string;
 }
 
 export interface ReleaseInput {

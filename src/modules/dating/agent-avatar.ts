@@ -20,6 +20,7 @@ export interface AgentAppearance {
   mood: Mood;
   accessory?: Accessory;
   seed?: string;
+  avatar?: string;   // explicit Kenney avatar URL chosen in the wizard (wins over form)
 }
 
 const INK = 'oklch(0.24 0.04 45)';

@@ -25,6 +25,7 @@ export interface Appearance {
   accessory?: string;
   mood?: string;
   seed?: string;
+  avatar?: string;
 }
 
 export interface Dimensions {

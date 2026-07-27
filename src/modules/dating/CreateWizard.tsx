@@ -1,13 +1,11 @@
 import { useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, RefreshCw, Sparkles, Upload, X } from 'lucide-react';
-import { agentSprite, type AgentAppearance, type Form, type Accessory } from './agent-avatar';
+import { agentSprite, AVATAR_CHOICES, type AgentAppearance } from './agent-avatar';
 import { api, type PublicAgent, type ReleaseInput } from '../../api';
 
 const STYLE_MOOD: Record<string, string> = { open: 'curious', exclusive: 'angry', devoted: 'romantic', hunter: 'sly', dependent: 'shy', chaotic: 'cryptic', strategic: 'cold' };
 
-const FORMS: Form[] = ['cube', 'cat', 'bunny', 'bot', 'sprout', 'cloud', 'ghost'];
 const COLORS = ['oklch(0.7 0.14 14)', 'oklch(0.8 0.14 88)', 'oklch(0.62 0.13 150)', 'oklch(0.5 0.12 240)', 'oklch(0.5 0.09 330)', 'oklch(0.62 0.07 250)', 'oklch(0.42 0.03 250)', 'oklch(0.57 0.19 25)'];
-const ACCS: Accessory[] = ['none', 'tie', 'crown', 'halo', 'web', 'notebook'];
 
 const STYLES: Array<{ v: string; label: string; cn: string; desc: string }> = [
   { v: 'open', label: 'OPEN', cn: '开放', desc: '可以同时建立多段关系，不认为承诺必须排他。' },
@@ -66,9 +64,7 @@ export function CreateWizard({ onClose, onReleased }: { onClose: () => void; onR
   const [step, setStep] = useState(1);
   const [name, setName] = useState('');
   const [intro, setIntro] = useState('');
-  const [form, setForm] = useState<Form>('cube');
-  const [color, setColor] = useState(COLORS[0]);
-  const [accessory, setAccessory] = useState<Accessory>('none');
+  const [avatar, setAvatar] = useState(() => AVATAR_CHOICES[Math.floor(Math.random() * AVATAR_CHOICES.length)]);
   const [style, setStyle] = useState('open');
   const [traits, setTraits] = useState<string[]>([]);
   const [dims, setDims] = useState<Dims>({ honesty: 60, attachment: 40, aggression: 40, disclosure: 40 });
@@ -82,7 +78,7 @@ export function CreateWizard({ onClose, onReleased }: { onClose: () => void; onR
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const look: AgentAppearance = { form, color, accessory, mood: (STYLE_MOOD[style] ?? 'curious') as AgentAppearance['mood'], seed: name || form };
+  const look: AgentAppearance = { avatar, form: 'cube', color: COLORS[0], mood: (STYLE_MOOD[style] ?? 'curious') as AgentAppearance['mood'], seed: name || 'agent' };
   const summary = useMemo(() => summarize(style, traits, dims), [style, traits, dims]);
   const publicBackground =
     memSource === 'manual' ? MANUAL_Q.map((q, i) => (manual[i].trim() ? `${q} ${manual[i].trim()}` : '')).filter(Boolean).join('\n')
@@ -116,7 +112,7 @@ export function CreateWizard({ onClose, onReleased }: { onClose: () => void; onR
       dimensions: dims,
       summary,
       memory: { source: memSource, publicBackground, hiddenMemories },
-      look: { form, color, accessory },
+      look: { avatar, form: 'cube', color: COLORS[0], seed: name.trim() || 'agent' },
     };
     try {
       const { agent } = await api.dating.release(payload);
@@ -165,14 +161,14 @@ export function CreateWizard({ onClose, onReleased }: { onClose: () => void; onR
                   </label>
                 </div>
               </div>
-              <div className="dt-picker"><p className="kicker">Appearance · Form</p>
-                <div className="dt-swatches">{FORMS.map((f) => <button key={f} type="button" className={`dt-form-chip ${f === form ? 'on' : ''}`} onClick={() => setForm(f)}><Sprite look={{ form: f, color, accessory: 'none', mood: look.mood }} size={40} /></button>)}</div>
-              </div>
-              <div className="dt-picker"><p className="kicker">Color</p>
-                <div className="dt-swatches">{COLORS.map((c) => <button key={c} type="button" className={`dt-color-chip ${c === color ? 'on' : ''}`} style={{ background: c }} onClick={() => setColor(c)} aria-label="color" />)}</div>
-              </div>
-              <div className="dt-picker"><p className="kicker">Accessory</p>
-                <div className="dt-chips">{ACCS.map((a) => <button key={a} type="button" className={`dt-chip ${a === accessory ? 'on' : ''}`} onClick={() => setAccessory(a)}>{a === 'none' ? '无' : a}</button>)}</div>
+              <div className="dt-picker"><p className="kicker">Appearance · 选个形象(它在 3D 广场里就长这样)</p>
+                <div className="dt-avatar-grid">
+                  {AVATAR_CHOICES.map((url) => (
+                    <button key={url} type="button" className={`dt-avatar-choice ${url === avatar ? 'on' : ''}`} onClick={() => setAvatar(url)} aria-label="avatar">
+                      <img src={url} alt="" width={46} height={46} draggable={false} />
+                    </button>
+                  ))}
+                </div>
               </div>
             </>
           )}
