@@ -103,6 +103,40 @@ export interface DatingTickEvent {
   at?: number;
 }
 
+export interface StoryThreadInfo {
+  id: string;
+  cast: string[];
+  title: string;
+  arc: string;
+  openQuestion: string;
+  runId?: string;
+  updatedAt: number;
+  beats: Array<{
+    actor: string; target: string; move: string; headline: string;
+    message: string; reply: string;
+    attraction: number; trust: number; tension: number; at: number;
+  }>;
+}
+
+export interface WorldDigestInfo {
+  lines: Array<{ headline: string; shift: string; detail: string }>;
+  runId?: string;
+  at: number;
+}
+
+export interface YearbookInfo {
+  agent: string;
+  year: number;
+  headline: string;
+  story: string;
+  verdicts: Array<{ who: string; line: string }>;
+  dramas: string[];
+  stillWaiting: string;
+  spent: Array<{ target: string; turns: number }>;
+  runId?: string;
+  at: number;
+}
+
 export interface ModelRunInfo {
   id: string;
   provider: string;
@@ -157,6 +191,8 @@ export const api = {
     encounter: (target: string) => request<{ event: DatingTickEvent | null }>('POST', '/api/dating/encounter', { target }),
     feed: () => request<{ events: DatingTickEvent[] }>('GET', '/api/dating/feed'),
     run: (id: string) => request<{ run: ModelRunInfo }>('GET', `/api/dating/runs?id=${encodeURIComponent(id)}`),
+    threads: () => request<{ threads: StoryThreadInfo[]; digest: WorldDigestInfo | null }>('GET', '/api/dating/threads'),
+    yearbooks: () => request<{ yearbooks: YearbookInfo[] }>('GET', '/api/dating/yearbooks'),
     budget: () => request<{ dailyTurnBudget: number; agents: Array<{ agent: string; used: number; left: number; top?: string }> }>('GET', '/api/dating/budget'),
   },
 };

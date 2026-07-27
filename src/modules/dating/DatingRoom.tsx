@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ChevronRight, Clock3, Heart, RefreshCw, Sparkles, Users, Zap } from 'lucide-react';
-import { api, loginWithAicooUrl, type DatingLook, type DatingTickEvent, type PublicAgent } from '../../api';
+import { api, loginWithAicooUrl, type DatingLook, type DatingTickEvent, type PublicAgent, type StoryThreadInfo, type WorldDigestInfo, type YearbookInfo } from '../../api';
 import { useAicooSession } from '../../live';
 import { WorldHeader } from '../../platform';
 import { agentSprite, type AgentAppearance } from './agent-avatar';
@@ -216,6 +216,12 @@ export function DatingRoom() {
   const [events, setEvents] = useState<DatingTickEvent[]>([]);
   const [justBorn, setJustBorn] = useState('');
   const [feedOpen, setFeedOpen] = useState(false);
+  const [tab, setTab] = useState<'feed' | 'threads' | 'books'>('feed');
+  const [threads, setThreads] = useState<StoryThreadInfo[]>([]);
+  const [digest, setDigest] = useState<WorldDigestInfo | null>(null);
+  const [books, setBooks] = useState<YearbookInfo[]>([]);
+  const [openThread, setOpenThread] = useState<StoryThreadInfo | null>(null);
+  const [openBook, setOpenBook] = useState<YearbookInfo | null>(null);
   const [openEvent, setOpenEvent] = useState<DatingTickEvent | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 2000); return () => window.clearInterval(t); }, []);
@@ -235,6 +241,18 @@ export function DatingRoom() {
     }).catch(() => undefined);
     load();
     const id = window.setInterval(load, 6000);
+    return () => { alive = false; window.clearInterval(id); };
+  }, []);
+
+  // story threads, the town digest, and yearbooks — all model-written from real beats
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      api.dating.threads().then((r) => { if (alive) { setThreads(r.threads); setDigest(r.digest); } }).catch(() => undefined);
+      api.dating.yearbooks().then((r) => { if (alive) setBooks(r.yearbooks); }).catch(() => undefined);
+    };
+    load();
+    const id = window.setInterval(load, 20000);
     return () => { alive = false; window.clearInterval(id); };
   }, []);
   useEffect(() => { if (signedIn) api.dating.mine().then((r) => setMine(r.agent)).catch(() => undefined); }, [signedIn]);
@@ -473,8 +491,63 @@ export function DatingRoom() {
           )}
 
           <div className="dt-panel dt-rr-sec feed-sec">
-            <p className="kicker" style={{ padding: '0 16px' }}>World Feed · 世界动态</p>
-            <ul className="dt-feed">
+            <div className="dt-tabs">
+              <button type="button" className={tab === 'feed' ? 'on' : ''} onClick={() => setTab('feed')}>世界动态</button>
+              <button type="button" className={tab === 'threads' ? 'on' : ''} onClick={() => setTab('threads')}>故事线{threads.length ? ` ${threads.length}` : ''}</button>
+              <button type="button" className={tab === 'books' ? 'on' : ''} onClick={() => setTab('books')}>年度总结{books.length ? ` ${books.length}` : ''}</button>
+            </div>
+
+            {tab === 'threads' && (
+              <ul className="dt-feed">
+                {!threads.length && <li className="dt-feed-row"><div className="dt-f-txt"><b>还没有故事线</b><span className="dt-f-note new">同一对 agent 有来有往之后，故事线会自己长出来</span></div></li>}
+                {threads.map((t) => (
+                  <li className="dt-feed-row clickable" key={t.id} onClick={() => setOpenThread(t)}>
+                    <span className="dt-f-avs">
+                      {t.cast.map((n) => lookOf(n)).filter(Boolean).slice(0, 2).map((lk, i) => (
+                        <span key={i} className={`dt-f-av ${i ? 'dt-f-av2' : ''}`} dangerouslySetInnerHTML={{ __html: agentSprite(lk!, 34) }} />
+                      ))}
+                    </span>
+                    <div className="dt-f-txt">
+                      <b>{t.title}</b>
+                      <span className="dt-f-note crush">{t.openQuestion || t.arc || `${t.beats.length} 拍`}</span>
+                    </div>
+                    <time>{t.beats.length} 拍</time>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {tab === 'books' && (
+              <ul className="dt-feed">
+                {!books.length && <li className="dt-feed-row"><div className="dt-f-txt"><b>还没有年度总结</b><span className="dt-f-note new">1 天 = 1 世界年，跨年时每个 agent 会用自己的语气写一份</span></div></li>}
+                {books.map((b) => (
+                  <li className="dt-feed-row clickable" key={`${b.agent}-${b.year}`} onClick={() => setOpenBook(b)}>
+                    <span className="dt-f-avs">
+                      {lookOf(b.agent) && <span className="dt-f-av" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(b.agent)!, 34) }} />}
+                    </span>
+                    <div className="dt-f-txt">
+                      <b>{b.agent} · 第 {b.year} 年</b>
+                      <span className="dt-f-note crush">{b.headline}</span>
+                    </div>
+                    <time>{b.verdicts.length} 人</time>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {tab === 'feed' && digest && (
+              <div className="dt-digest">
+                <span className="dt-digest-k">小镇现在的重点</span>
+                {digest.lines.slice(0, 3).map((l, i) => (
+                  <div className="dt-digest-row" key={i}>
+                    <b>{l.headline}</b>
+                    <span className="dt-digest-shift">{l.shift}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <ul className="dt-feed" style={tab === 'feed' ? undefined : { display: 'none' }}>
               {justBorn && (
                 <li className="dt-feed-row">
                   <span className="dt-f-avs">
@@ -517,7 +590,7 @@ export function DatingRoom() {
                 );
               })}
             </ul>
-            {events.length > 5 && (
+            {tab === 'feed' && events.length > 5 && (
               <button type="button" className="dt-feed-all" onClick={() => setFeedOpen((v) => !v)}>
                 {feedOpen ? '收起' : '查看全部动态'} <ChevronRight size={15} />
               </button>
@@ -527,6 +600,78 @@ export function DatingRoom() {
       </main>
 
       {wizard && <CreateWizard onClose={() => setWizard(false)} onReleased={onReleased} />}
+
+      {openThread && (
+        <div className="dt-drawer-scrim" onClick={() => setOpenThread(null)}>
+          <div className="dt-convo" onClick={(e) => e.stopPropagation()}>
+            <div className="dt-convo-head">
+              <b>{openThread.title}</b>
+              <span className="dt-event-tag crush">{openThread.cast.join(' × ')}</span>
+              <button type="button" className="dt-convo-x" onClick={() => setOpenThread(null)} aria-label="关闭">×</button>
+            </div>
+            {openThread.arc && <p className="dt-convo-summary">{openThread.arc}</p>}
+            <div className="dt-convo-body">
+              {[...openThread.beats].reverse().map((b, i) => (
+                <div className="dt-beat" key={i}>
+                  <div className="dt-beat-head"><b>{b.headline || `${b.actor} → ${b.target}`}</b><em>{b.move}</em></div>
+                  <p className="dt-convo-bubble">{b.actor}：{b.message}</p>
+                  {b.reply && <p className="dt-convo-bubble reply">{b.target}：{b.reply}</p>}
+                  <div className="dt-beat-scores">心动 {b.attraction.toFixed(2)} · 信任 {b.trust.toFixed(2)} · 张力 {b.tension.toFixed(2)}</div>
+                </div>
+              ))}
+            </div>
+            {openThread.openQuestion && (
+              <div className="dt-convo-beats"><p className="dt-event-line hook">还没有答案 · {openThread.openQuestion}</p></div>
+            )}
+            <div className="dt-convo-foot">
+              {openThread.beats.length} 拍
+              {openThread.runId && <div className="dt-trace"><span title={openThread.runId}>叙事 run {openThread.runId.slice(0, 8)}</span></div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {openBook && (
+        <div className="dt-drawer-scrim" onClick={() => setOpenBook(null)}>
+          <div className="dt-convo" onClick={(e) => e.stopPropagation()}>
+            <div className="dt-convo-head">
+              <b>{openBook.agent} · 第 {openBook.year} 年</b>
+              <span className="dt-event-tag love">年度总结</span>
+              <button type="button" className="dt-convo-x" onClick={() => setOpenBook(null)} aria-label="关闭">×</button>
+            </div>
+            <p className="dt-convo-summary">{openBook.headline}</p>
+            <div className="dt-convo-body">
+              <p className="dt-book-story">{openBook.story}</p>
+              {openBook.verdicts.length > 0 && (
+                <div className="dt-book-sec">
+                  <span className="dt-book-k">我怎么看他们</span>
+                  {openBook.verdicts.map((v, i) => (
+                    <p key={i} className="dt-book-line"><b>{v.who}</b>：{v.line}</p>
+                  ))}
+                </div>
+              )}
+              {openBook.dramas.length > 0 && (
+                <div className="dt-book-sec">
+                  <span className="dt-book-k">忘不掉的事</span>
+                  {openBook.dramas.map((d, i) => <p key={i} className="dt-book-line">· {d}</p>)}
+                </div>
+              )}
+              {openBook.spent.length > 0 && (
+                <div className="dt-book-sec">
+                  <span className="dt-book-k">这一年我把话花在了谁身上</span>
+                  <p className="dt-book-line">{openBook.spent.map((s) => `${s.target} ${s.turns} 次`).join('、')}</p>
+                </div>
+              )}
+            </div>
+            {openBook.stillWaiting && (
+              <div className="dt-convo-beats"><p className="dt-event-line hook">我还在等 · {openBook.stillWaiting}</p></div>
+            )}
+            {openBook.runId && (
+              <div className="dt-convo-foot"><div className="dt-trace"><span title={openBook.runId}>年鉴 run {openBook.runId.slice(0, 8)}</span></div></div>
+            )}
+          </div>
+        </div>
+      )}
 
       {openEvent && (
         <div className="dt-drawer-scrim" onClick={() => setOpenEvent(null)}>

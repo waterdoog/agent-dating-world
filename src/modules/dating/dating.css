@@ -366,3 +366,25 @@ img.agent-sprite { display: block; object-fit: contain; }
   border: 2px solid oklch(0.72 0.08 224 / 0.7); border-radius: 50%; animation: dt-ripple 2.4s ease-out infinite;
 }
 @keyframes dt-ripple { 0% { transform: scale(0.3); opacity: 0.85; } 100% { transform: scale(1.5); opacity: 0; } }
+
+/* ── town panel: feed / story threads / yearbooks ── */
+.dt-tabs { display: flex; gap: 4px; padding: 0 12px var(--space-md); border-bottom: 1px solid var(--paper-dark); }
+.dt-tabs button { flex: 1; padding: 6px 4px; border: 1.5px solid transparent; background: transparent; cursor: pointer; font-size: 0.68rem; font-weight: 800; color: var(--ink-soft); }
+.dt-tabs button:hover { color: var(--ink); }
+.dt-tabs button.on { border-color: var(--ink); background: var(--yellow); color: var(--ink); box-shadow: 2px 2px 0 var(--ink); }
+.dt-digest { padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--paper-dark); background: var(--paper); }
+.dt-digest-k { display: block; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 6px; }
+.dt-digest-row { margin-bottom: 6px; }
+.dt-digest-row b { display: block; font-size: 0.72rem; line-height: 1.35; }
+.dt-digest-shift { font-size: 0.66rem; font-weight: 800; color: var(--red); }
+.dt-beat { padding: var(--space-md) 0; border-bottom: 1px dashed var(--paper-dark); }
+.dt-beat:last-child { border-bottom: 0; }
+.dt-beat-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.dt-beat-head b { font-size: 0.78rem; }
+.dt-beat-head em { font-style: normal; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.06em; color: var(--ink-soft); }
+.dt-beat-scores { margin-top: 4px; font-size: 0.6rem; font-weight: 700; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.dt-convo-bubble.reply { background: var(--paper); }
+.dt-book-story { margin: 0 0 var(--space-md); font-size: 0.86rem; line-height: 1.6; font-style: italic; }
+.dt-book-sec { margin-top: var(--space-md); }
+.dt-book-k { display: block; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 5px; }
+.dt-book-line { margin: 3px 0; font-size: 0.78rem; line-height: 1.5; }
