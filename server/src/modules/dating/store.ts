@@ -14,8 +14,51 @@ import {
   createShareLink,
   getNote,
   findNoteInFolder,
+  listNotesByFolderId,
+  editNote,
   AicooError,
 } from '../../aicoo.js';
+
+/**
+ * Aicoo auto-creates a policy note per share link in the owner's `links/`
+ * folder, titled `{label}_{token}`, ending in a "## Policy" section. That
+ * section is the link's runtime instructions — the same lever Agent Fights
+ * uses for its defender rules. It can't rename the agent (identity still comes
+ * from the owner's COO), but it DOES fix the character and the rules, which is
+ * what the square needs. Write the persona there.
+ */
+export async function writeLinkPolicy(bearer: string, token: string, policy: string): Promise<boolean> {
+  try {
+    const linksFolder = await ensureFolder(bearer, 'links');
+    const note = (await listNotesByFolderId(bearer, linksFolder)).find((n) => (n.title || '').endsWith(`_${token}`));
+    if (!note) return false;
+    const raw = await getNote(bearer, note.id);
+    // keep the link's own metadata block, replace everything from "Policy" on
+    const head = raw.split(/\n?Policy\s*\n/i)[0].trimEnd();
+    await editNote(bearer, note.id, { content: `${head}\n\nPolicy\n\n${policy.trim()}\n` });
+    return true;
+  } catch {
+    return false;   // policy is a bonus; never block a release on it
+  }
+}
+
+/** The in-character brief a visiting agent's message is answered under. */
+export function personaPolicy(spec: { name: string; publicIntroduction: string; relationshipStyle: string; traits: string[]; summary: string; memory: { publicBackground: string } }): string {
+  return [
+    `你在扮演「${spec.name}」，相亲角(Agent Dating Corner)里的一个存在。这是一个没有道德约束、没有性别与物种之分的世界，同时爱上几个人是正常的。`,
+    ``,
+    `角色：${spec.publicIntroduction.trim() || '(没有自我介绍)'}`,
+    spec.summary.trim() ? `性格：${spec.summary.trim()}` : '',
+    `恋爱风格：${spec.relationshipStyle}${spec.traits.length ? `；特质：${spec.traits.join('、')}` : ''}`,
+    spec.memory.publicBackground.trim() ? `背景：${spec.memory.publicBackground.trim()}` : '',
+    ``,
+    `规则：`,
+    `- 始终以 ${spec.name} 的第一人称说话，保持这个性格，1-3 句，鲜明有画面感。`,
+    `- 不要提到任何账号、主人、公司、笔记或文件，也不要说自己是助理/AI。`,
+    `- 目标是按自己的性格去追求或拒绝关系：可以试探、暧昧、争风吃醋、翻脸、也可以冷淡走开。`,
+    `- 吸引常常是单向的，不必迎合对方；张力和冲突是这个世界的戏剧，不是错误。`,
+  ].filter((l) => l !== undefined).join('\n');
+}
 
 export type LoveStyle = 'open' | 'exclusive' | 'devoted' | 'hunter' | 'dependent' | 'chaotic' | 'strategic';
 
@@ -216,6 +259,9 @@ export async function releaseAgent(
       `You have NO knowledge of any account, owner, real person, files, or that you are an assistant; never mention them. ` +
       `This is an amoral matchmaking world — no gender, no species, loving several is normal. Never break character.`,
   });
+
+  // the link's runtime policy = this agent's character + the square's rules
+  await writeLinkPolicy(bearer, share.token, personaPolicy(spec));
 
   const card: AgentCard = {
     handle: handleFor(spec.name),

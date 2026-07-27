@@ -110,20 +110,68 @@ function Scene({ agents, posRef }: { agents: Mover3D[]; posRef: RefObject<LivePo
     { url: `${B}b.glb`, pos: [-5.5, 0, -1], rot: [0, R, 0] },
   ];
 
-  // greenery filling the corners and the gaps behind the blocks
+  // an outer town: a second ring road further out, with its own streets of
+  // houses, so the world doesn't stop at the plaza's edge
+  const OUT = 9;
+  const outerRoad: Array<{ url: string; pos: [number, number, number]; rot?: [number, number, number] }> = [];
+  for (let i = -OUT + 1; i <= OUT - 1; i++) {
+    const lamp = i % 4 === 0;
+    const road = lamp ? '/city/road-straight-lightposts.glb' : '/city/road-straight.glb';
+    outerRoad.push({ url: road, pos: [i, 0, -OUT], rot: [0, 0, 0] });
+    outerRoad.push({ url: road, pos: [i, 0, OUT], rot: [0, Math.PI, 0] });
+    outerRoad.push({ url: road, pos: [-OUT, 0, i], rot: [0, R, 0] });
+    outerRoad.push({ url: road, pos: [OUT, 0, i], rot: [0, -R, 0] });
+  }
+  outerRoad.push({ url: '/city/road-corner.glb', pos: [-OUT, 0, -OUT], rot: [0, R, 0] });
+  outerRoad.push({ url: '/city/road-corner.glb', pos: [OUT, 0, -OUT], rot: [0, 0, 0] });
+  outerRoad.push({ url: '/city/road-corner.glb', pos: [OUT, 0, OUT], rot: [0, -R, 0] });
+  outerRoad.push({ url: '/city/road-corner.glb', pos: [-OUT, 0, OUT], rot: [0, Math.PI, 0] });
+  // four spokes connecting the inner ring to the outer one
+  for (let i = 5; i <= OUT - 1; i++) {
+    outerRoad.push({ url: '/city/road-straight.glb', pos: [0, 0, -i], rot: [0, R, 0] });
+    outerRoad.push({ url: '/city/road-straight.glb', pos: [0, 0, i], rot: [0, R, 0] });
+    outerRoad.push({ url: '/city/road-straight.glb', pos: [-i, 0, 0], rot: [0, 0, 0] });
+    outerRoad.push({ url: '/city/road-straight.glb', pos: [i, 0, 0], rot: [0, 0, 0] });
+  }
+  outerRoad.push({ url: '/city/road-intersection.glb', pos: [0, 0, -OUT] });
+  outerRoad.push({ url: '/city/road-intersection.glb', pos: [0, 0, OUT] });
+  outerRoad.push({ url: '/city/road-intersection.glb', pos: [-OUT, 0, 0] });
+  outerRoad.push({ url: '/city/road-intersection.glb', pos: [OUT, 0, 0] });
+
+  // houses lining the outer streets (deterministic variety, both sides)
+  const KINDS = [`${B}a.glb`, `${B}b.glb`, `${B}c.glb`, `${B}d.glb`, '/city/building-garage.glb'];
+  const outerBlocks: Array<{ url: string; pos: [number, number, number]; rot?: [number, number, number] }> = [];
+  let k = 0;
+  for (let i = -7; i <= 7; i += 2) {
+    if (Math.abs(i) < 2) continue;                       // leave the spokes clear
+    outerBlocks.push({ url: KINDS[k++ % 5], pos: [i, 0, -OUT - 1.4], rot: [0, Math.PI, 0] });
+    outerBlocks.push({ url: KINDS[k++ % 5], pos: [i, 0, OUT + 1.4], rot: [0, 0, 0] });
+    outerBlocks.push({ url: KINDS[k++ % 5], pos: [-OUT - 1.4, 0, i], rot: [0, -R, 0] });
+    outerBlocks.push({ url: KINDS[k++ % 5], pos: [OUT + 1.4, 0, i], rot: [0, R, 0] });
+    // a second row set back from the street, so the town has depth
+    if (i % 4 === 1) {
+      outerBlocks.push({ url: KINDS[k++ % 5], pos: [i + 1, 0, -OUT - 3.2], rot: [0, Math.PI, 0] });
+      outerBlocks.push({ url: KINDS[k++ % 5], pos: [-OUT - 3.2, 0, i + 1], rot: [0, -R, 0] });
+    }
+  }
+
+  // greenery: between the two rings, and scattered through the outer town
   const greens: Array<[number, number, string]> = [
     [-6.5, -3, 'grass-trees'], [-6.5, 0, 'grass-trees-tall'], [-6.5, 4, 'grass-trees'],
     [6.5, -3.5, 'grass-trees-tall'], [6.5, -0.5, 'grass-trees'], [6.5, 3.5, 'grass-trees'],
-    [-3.5, 6.5, 'grass-trees'], [0, 6.5, 'grass-trees-tall'], [3.8, 6.5, 'grass-trees'],
-    [-4, -6.8, 'grass-trees'], [0.5, -6.8, 'grass-trees'], [4.2, -6.8, 'grass-trees-tall'],
-    [-7.5, -6, 'grass'], [7.5, 6, 'grass'], [7.5, -6.5, 'grass'], [-7.5, 6.5, 'grass'],
+    [-3.5, 6.5, 'grass-trees'], [2.5, 6.5, 'grass-trees-tall'], [3.8, 6.5, 'grass-trees'],
+    [-4, -6.8, 'grass-trees'], [2.2, -6.8, 'grass-trees'], [4.2, -6.8, 'grass-trees-tall'],
+    [-7.6, -7.6, 'grass-trees'], [7.6, 7.6, 'grass-trees'], [7.6, -7.6, 'grass-trees-tall'], [-7.6, 7.6, 'grass-trees'],
+    [-11, -4, 'grass-trees'], [11, 4, 'grass-trees-tall'], [-11, 5, 'grass'], [11, -5, 'grass'],
+    [-4, -11.5, 'grass-trees'], [4.5, 11.5, 'grass-trees'], [-9, 11.5, 'grass'], [9, -11.5, 'grass'],
+    [12.5, 0, 'grass'], [-12.5, 0, 'grass'], [0, 12.5, 'grass-trees'], [0, -12.5, 'grass'],
   ];
 
   return (
     <>
-      {/* ground — sized to the block, so there's no empty desert around it */}
+      {/* ground — covers the whole town, not just the plaza */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
-        <planeGeometry args={[26, 26]} />
+        <planeGeometry args={[40, 40]} />
         <meshStandardMaterial color="#cfd8ae" />
       </mesh>
       {pavement.map(([x, z], i) => (
