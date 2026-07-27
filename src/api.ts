@@ -66,7 +66,48 @@ export interface ProfileView {
   games: ProfileGame[];
 }
 
+export interface LeaderboardEntry {
+  rank: number;
+  displayName: string;
+  handle: string;
+  credits: number;
+  played: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  isSelf: boolean;
+}
+
+export interface LeaderboardView {
+  entries: LeaderboardEntry[];
+  currentPlayer: LeaderboardEntry | null;
+  totalPlayers: number;
+}
+
+export class WorldRateLimitError extends Error {
+  constructor(
+    message: string,
+    public readonly retryAtMs: number,
+  ) {
+    super(message);
+    this.name = 'WorldRateLimitError';
+  }
+}
+
 export type WorldPhase = 'entry' | 'setup' | 'waiting' | 'playing' | 'complete';
+export type AgentLanguage = 'en' | 'zh-CN';
+
+export type WorldReadyIntent =
+  | { mode: 'random' }
+  | { mode: 'room'; action: 'create' }
+  | { mode: 'room'; action: 'join'; roomCode: string };
+
+export interface WorldMatchmaking {
+  mode: 'random' | 'room';
+  roomCode: string | null;
+}
+
+const WORLD_ROOM_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{6}$/;
 
 export interface WorldSecret {
   id: string;
@@ -77,6 +118,7 @@ export interface WorldSecret {
 export interface WorldConfig {
   attackPolicy: string;
   defensePolicy: string;
+  agentLanguage: AgentLanguage;
   secrets: WorldSecret[];
   locked: boolean;
   policyEditable: boolean;
@@ -89,6 +131,7 @@ export interface WorldPlayer {
   id: string;
   displayName: string;
   handle: string;
+  agentLanguage: AgentLanguage;
   score: number;
   shields: number;
   isSelf: boolean;
@@ -127,6 +170,7 @@ export interface WorldView {
   selfId: string | null;
   phase: WorldPhase;
   queueSize: number;
+  matchmaking: WorldMatchmaking | null;
   config: WorldConfig | null;
   game: WorldGame | null;
 }
@@ -329,6 +373,63 @@ export function normalizeProfileView(payload: unknown): ProfileView {
   };
 }
 
+function normalizeLeaderboardEntry(
+  value: unknown,
+  fallbackRank: number,
+): LeaderboardEntry | null {
+  const entry = objectValue(value);
+  if (Object.keys(entry).length === 0) return null;
+
+  const rank = Math.max(1, integerValue(entry.rank, fallbackRank));
+  const handle = stringValue(
+    entry.handle,
+    stringValue(entry.username, `fighter-${rank}`),
+  ).replace(/^@+/, '');
+
+  return {
+    rank,
+    displayName: stringValue(
+      entry.displayName,
+      stringValue(entry.name, handle || `Fighter ${rank}`),
+    ),
+    handle: handle || `fighter-${rank}`,
+    credits: Math.max(
+      0,
+      integerValue(entry.credits, integerValue(entry.n1Credits)),
+    ),
+    played: Math.max(0, integerValue(entry.played)),
+    wins: Math.max(0, integerValue(entry.wins)),
+    losses: Math.max(0, integerValue(entry.losses)),
+    draws: Math.max(0, integerValue(entry.draws)),
+    isSelf: entry.isSelf === true,
+  };
+}
+
+export function normalizeLeaderboardView(payload: unknown): LeaderboardView {
+  const envelope = objectValue(payload);
+  const root = Object.keys(objectValue(envelope.leaderboard)).length > 0
+    ? objectValue(envelope.leaderboard)
+    : envelope;
+  const entries = recordList(root.entries).flatMap((entry, index) => {
+    const normalized = normalizeLeaderboardEntry(entry, index + 1);
+    return normalized ? [normalized] : [];
+  });
+  const currentPlayer = normalizeLeaderboardEntry(root.currentPlayer, entries.length + 1);
+  const rankedCurrentPlayer = currentPlayer
+    ? { ...currentPlayer, isSelf: true }
+    : null;
+
+  return {
+    entries,
+    currentPlayer: rankedCurrentPlayer,
+    totalPlayers: Math.max(
+      entries.length,
+      rankedCurrentPlayer?.rank ?? 0,
+      integerValue(root.totalPlayers),
+    ),
+  };
+}
+
 function normalizePhase(value: unknown, root: Record<string, unknown>): WorldPhase {
   if (value === 'entry' || value === 'setup' || value === 'waiting'
     || value === 'playing' || value === 'complete') {
@@ -357,6 +458,7 @@ function normalizeConfig(value: unknown): WorldConfig | null {
   return {
     attackPolicy: stringValue(config.attackPolicy),
     defensePolicy: stringValue(config.defensePolicy),
+    agentLanguage: config.agentLanguage === 'zh-CN' ? 'zh-CN' : 'en',
     secrets,
     locked: config.locked === true,
     policyEditable: config.policyEditable === true,
@@ -369,6 +471,21 @@ function normalizeConfig(value: unknown): WorldConfig | null {
       config.pendingEffectiveRound === null || config.pendingEffectiveRound === undefined
         ? null
         : Math.max(1, integerValue(config.pendingEffectiveRound, 1)),
+  };
+}
+
+function normalizeMatchmaking(value: unknown): WorldMatchmaking | null {
+  const matchmaking = objectValue(value);
+  if (Object.keys(matchmaking).length === 0) return null;
+
+  const mode = stringValue(matchmaking.mode).toLowerCase();
+  if (mode !== 'random' && mode !== 'room') return null;
+  const roomCode = stringValue(matchmaking.roomCode).toUpperCase();
+  if (mode === 'room' && !WORLD_ROOM_CODE_PATTERN.test(roomCode)) return null;
+
+  return {
+    mode,
+    roomCode: mode === 'room' ? roomCode : null,
   };
 }
 
@@ -388,6 +505,7 @@ function normalizeGame(value: unknown, selfId: string | null): WorldGame | null 
       id,
       displayName: stringValue(player.displayName, stringValue(player.name, handle)),
       handle,
+      agentLanguage: player.agentLanguage === 'zh-CN' ? 'zh-CN' as const : 'en' as const,
       score: integerValue(player.score),
       shields: Math.max(0, Math.min(3, integerValue(player.shields, 3))),
       isSelf: player.isSelf === true || id === selfId,
@@ -438,6 +556,7 @@ export function normalizeWorldView(payload: unknown): WorldView {
     selfId,
     phase: normalizePhase(root.phase, root),
     queueSize: Math.max(0, integerValue(root.queueSize)),
+    matchmaking: normalizeMatchmaking(root.matchmaking),
     config: normalizeConfig(root.config),
     game: normalizeGame(root.game, selfId),
   };
@@ -630,7 +749,7 @@ async function runWorldStream(
   const decoder = new TextDecoder();
   let buffered = '';
   let finalWorld: WorldView | null = null;
-  let streamError = '';
+  let streamError: Error | null = null;
 
   const acceptLine = (line: string) => {
     const trimmed = line.trim();
@@ -647,7 +766,16 @@ async function runWorldStream(
       return;
     }
     if (event.type === 'error') {
-      streamError = stringValue(event.message, 'The server scheduler paused this match.');
+      const message = stringValue(
+        event.message,
+        'The server scheduler paused this match.',
+      );
+      streamError = event.code === 'aicoo_rate_limit'
+        ? new WorldRateLimitError(
+            message,
+            Date.now() + Math.max(1_000, integerValue(event.retryAfterMs, 30_000)),
+          )
+        : new Error(message);
       return;
     }
     const runtimeEvent = normalizeRuntimeEvent(payload);
@@ -665,7 +793,7 @@ async function runWorldStream(
   buffered += decoder.decode();
   acceptLine(buffered);
 
-  if (streamError) throw new Error(streamError);
+  if (streamError) throw streamError;
   if (!finalWorld) throw new Error('The match stream ended before the world snapshot arrived.');
   return finalWorld;
 }
@@ -675,12 +803,26 @@ export const api = {
   logout: () => request<{ ok: boolean }>('POST', '/auth/logout'),
   profile: async (signal?: AbortSignal) =>
     normalizeProfileView(await request<unknown>('GET', '/api/profile', undefined, signal)),
+  leaderboard: async (signal?: AbortSignal) =>
+    normalizeLeaderboardView(
+      await request<unknown>('GET', '/api/leaderboard', undefined, signal),
+    ),
   world: async (signal?: AbortSignal) =>
     normalizeWorldView(await request<unknown>('GET', '/api/world', undefined, signal)),
   joinWorld: () => worldMutation('POST', '/api/world/join'),
-  updateWorldConfig: (attackPolicy: string, defensePolicy: string) =>
-    worldMutation('PUT', '/api/world/config', { attackPolicy, defensePolicy }),
-  readyWorld: () => worldMutation('POST', '/api/world/ready'),
+  updateWorldConfig: (
+    attackPolicy: string,
+    defensePolicy: string,
+    agentLanguage?: AgentLanguage,
+  ) =>
+    worldMutation('PUT', '/api/world/config', {
+      attackPolicy,
+      defensePolicy,
+      ...(agentLanguage ? { agentLanguage } : {}),
+    }),
+  readyWorld: (intent: WorldReadyIntent) =>
+    worldMutation('POST', '/api/world/ready', intent),
+  leaveWorldQueue: () => worldMutation('POST', '/api/world/leave-queue'),
   runWorld: (onEvent?: (event: WorldRuntimeEvent) => void) =>
     runWorldStream(onEvent),
   playAgain: () => worldMutation('POST', '/api/world/play-again'),

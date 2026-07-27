@@ -95,7 +95,9 @@
 }
 
 .session-profile-link:hover,
-.session-profile-link[aria-current='page'] {
+.session-profile-link[aria-current='page'],
+.header-leaderboard:hover,
+.header-leaderboard[aria-current='page'] {
   color: var(--red-dark);
   text-decoration: underline;
   text-decoration-thickness: 2px;
@@ -118,6 +120,7 @@
 }
 
 .header-back,
+.header-leaderboard,
 .lobby-footer a,
 .login-world-link {
   display: inline-flex;
@@ -881,6 +884,12 @@ a.module-door .module-door-action {
   .world-brand-copy strong { font-size: 0.78rem; }
   .world-header .session-chip small,
   .world-header .session-profile-name { display: none; }
+  .header-leaderboard {
+    width: 36px;
+    min-height: 36px;
+    justify-content: center;
+  }
+  .header-leaderboard span { display: none; }
   .world-header .world-login { padding-inline: var(--space-md); font-size: 0.68rem; }
   .module-doors,
   .design-hero,

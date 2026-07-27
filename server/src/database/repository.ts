@@ -471,6 +471,145 @@ export interface FighterProfileView {
   }>;
 }
 
+export interface N1LeaderboardEntry {
+  rank: number;
+  displayName: string;
+  handle: string;
+  credits: number;
+  played: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  isSelf: boolean;
+}
+
+export interface N1LeaderboardView {
+  entries: N1LeaderboardEntry[];
+  currentPlayer: N1LeaderboardEntry | null;
+  totalPlayers: number;
+}
+
+const DEFAULT_LEADERBOARD_LIMIT = 25;
+const MAX_LEADERBOARD_LIMIT = 100;
+
+export function normalizeLeaderboardLimit(value: unknown): number {
+  if (value === null || value === undefined || value === '') {
+    return DEFAULT_LEADERBOARD_LIMIT;
+  }
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_LEADERBOARD_LIMIT;
+  return Math.min(
+    MAX_LEADERBOARD_LIMIT,
+    Math.max(1, Math.trunc(parsed))
+  );
+}
+
+export async function readN1CreditLeaderboard(
+  currentFighterId: string,
+  requestedLimit?: unknown
+): Promise<N1LeaderboardView> {
+  if (!isDatabaseConfigured()) throw new DatabaseUnavailableError();
+  const limit = normalizeLeaderboardLimit(requestedLimit);
+  try {
+    const rows = await database()<
+      Array<{
+        id: string;
+        handle: string;
+        display_name: string;
+        n1_credits: string | number;
+        played: string | number;
+        wins: string | number;
+        losses: string | number;
+        draws: string | number;
+        position: string | number;
+        total_players: string | number;
+      }>
+    >`
+      WITH participant_stats AS (
+        SELECT
+          participant.fighter_id,
+          COUNT(*) AS played,
+          COUNT(*) FILTER (WHERE participant.result = 'win') AS wins,
+          COUNT(*) FILTER (WHERE participant.result = 'loss') AS losses,
+          COUNT(*) FILTER (WHERE participant.result = 'draw') AS draws
+        FROM virtual_n1.fighter_game_participants participant
+        JOIN virtual_n1.fighter_games game
+          ON game.id = participant.game_id
+          AND game.status = 'complete'
+        WHERE participant.result IN ('win', 'loss', 'draw')
+        GROUP BY participant.fighter_id
+      ),
+      entries AS (
+        SELECT
+          fighter.id,
+          fighter.handle,
+          fighter.display_name,
+          fighter.n1_credits,
+          fighter.created_at,
+          COALESCE(stats.played, 0) AS played,
+          COALESCE(stats.wins, 0) AS wins,
+          COALESCE(stats.losses, 0) AS losses,
+          COALESCE(stats.draws, 0) AS draws
+        FROM virtual_n1.fighter_users fighter
+        LEFT JOIN participant_stats stats
+          ON stats.fighter_id = fighter.id
+      ),
+      ranked AS (
+        SELECT
+          entries.*,
+          ROW_NUMBER() OVER (
+            ORDER BY
+              n1_credits DESC,
+              wins DESC,
+              losses ASC,
+              played DESC,
+              created_at ASC,
+              id ASC
+          ) AS position,
+          COUNT(*) OVER () AS total_players
+        FROM entries
+      )
+      SELECT
+        id,
+        handle,
+        display_name,
+        n1_credits,
+        played,
+        wins,
+        losses,
+        draws,
+        position,
+        total_players
+      FROM ranked
+      WHERE position <= ${limit}
+        OR id = ${currentFighterId}
+      ORDER BY position
+    `;
+
+    const mapped = rows.map((row): N1LeaderboardEntry => ({
+      rank: numberValue(row.position),
+      displayName: row.display_name,
+      handle: row.handle,
+      credits: numberValue(row.n1_credits),
+      played: numberValue(row.played),
+      wins: numberValue(row.wins),
+      losses: numberValue(row.losses),
+      draws: numberValue(row.draws),
+      isSelf: row.id === currentFighterId,
+    }));
+    const currentPlayer = mapped.find((entry) => entry.isSelf) ?? null;
+
+    return {
+      entries: mapped.filter((entry) => entry.rank <= limit),
+      currentPlayer,
+      totalPlayers: numberValue(rows[0]?.total_players),
+    };
+  } catch (error) {
+    if (error instanceof DatabaseUnavailableError) throw error;
+    throw new DatabaseUnavailableError('The N1 Credits leaderboard is unavailable.');
+  }
+}
+
 export async function readFighterProfile(
   fighterId: string
 ): Promise<FighterProfileView> {

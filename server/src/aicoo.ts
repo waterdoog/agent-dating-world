@@ -10,10 +10,33 @@ export class AicooError extends Error {
   constructor(
     public status: number,
     public body: string,
-    message?: string
+    message?: string,
+    public retryAfterMs?: number
   ) {
     super(message ?? `Aicoo API error ${status}: ${body.slice(0, 300)}`);
   }
+}
+
+/**
+ * Parse the standard Retry-After response header. Aicoo may return either a
+ * number of seconds or an HTTP date, so normalize both forms for callers.
+ */
+export function parseRetryAfterMs(
+  retryAfter: string | null,
+  nowMs = Date.now()
+): number | undefined {
+  const value = retryAfter?.trim();
+  if (!value) return undefined;
+
+  if (/^\d+(?:\.\d+)?$/.test(value)) {
+    const seconds = Number(value);
+    return Number.isFinite(seconds) ? Math.ceil(seconds * 1_000) : undefined;
+  }
+
+  const retryAtMs = Date.parse(value);
+  return Number.isFinite(retryAtMs)
+    ? Math.max(0, retryAtMs - nowMs)
+    : undefined;
 }
 
 async function api<T>(bearer: string, method: string, apiPath: string, body?: unknown): Promise<T> {
@@ -29,7 +52,12 @@ async function api<T>(bearer: string, method: string, apiPath: string, body?: un
 
   const text = await res.text();
   if (!res.ok) {
-    throw new AicooError(res.status, text);
+    throw new AicooError(
+      res.status,
+      text,
+      undefined,
+      parseRetryAfterMs(res.headers.get('retry-after'))
+    );
   }
   try {
     return JSON.parse(text) as T;
@@ -57,7 +85,14 @@ async function aicooJson<T>(
     signal: AbortSignal.timeout(25_000),
   });
   const text = await res.text();
-  if (!res.ok) throw new AicooError(res.status, text);
+  if (!res.ok) {
+    throw new AicooError(
+      res.status,
+      text,
+      undefined,
+      parseRetryAfterMs(res.headers.get('retry-after'))
+    );
+  }
   try {
     return JSON.parse(text) as T;
   } catch {
@@ -486,7 +521,12 @@ export async function streamAnonymousScopedAgent(args: {
     signal: AbortSignal.timeout(25_000),
   });
   if (!res.ok) {
-    throw new AicooError(res.status, await res.text());
+    throw new AicooError(
+      res.status,
+      await res.text(),
+      undefined,
+      parseRetryAfterMs(res.headers.get('retry-after'))
+    );
   }
   if (!res.body) {
     throw new AicooError(502, '', 'Aicoo returned an empty Fighter stream.');

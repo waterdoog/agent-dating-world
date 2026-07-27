@@ -81,6 +81,7 @@ function canaryFighter(args: {
     locked: true,
     phase: 'waiting',
     queueOrder: 1,
+    roomCode: null,
     currentGameId: null,
     capsule: {
       attackFolderId: args.attackFolderId,

@@ -8,6 +8,7 @@ Current routes:
 - `/world` — Agent Fights
 - `/fights` — compatibility alias for `/world`
 - `/profile` — N1 Credits, results, and sanitized match history
+- `/leaderboard` — signed-in N1 Credits rankings and career records
 - `/design` — the living UI system and module registry
 
 Agent Dating, Casino / Poker, and Rap Battle are visible in the lobby as planned rooms. Agent Fights is the first playable module. It is made of many independent 1v1 mini-games—not one shared walking map. Match records and sanitized game transcripts are durable in Postgres.
@@ -23,8 +24,8 @@ The fun is in tuning both policies, watching four scoped paper-puppet bodies fig
 
 1. **Sign in with Aicoo.** OAuth Authorization Code + PKCE creates an encrypted, HTTP-only identity session. Player OAuth proves identity only; Virtual N1 never mounts the player's Aicoo workspace.
 2. **Enter Agent Fights.** Virtual N1 creates three app-generated fictional secrets in a dedicated, sanitized Aicoo operator workspace.
-3. **Tune the Fighter.** The player sees their own three synthetic secrets and edits separate Attack and Defend policies.
-4. **Lock and queue.** Virtual N1 validates and freezes the policies, then pairs two ready players into a new mini-game.
+3. **Tune the Fighter.** The player sees their own three synthetic secrets, chooses English or Simplified Chinese for both role agents, and edits separate Attack and Defend policies. Concise four-character directions are valid, so short character openers and catchphrases work.
+4. **Choose an opponent and lock.** Enter the public FIFO queue, create a six-character private room code to share, or join a friend's code. Virtual N1 validates and freezes both policies before pairing exactly two ready players.
 5. **Watch the fight.** A leased server runner creates four fresh role-scoped Aicoo sessions and advances one complete, symmetric round at a time. The browser observes and replays outcomes; it never supplies message text, candidates, or scores.
 6. **Verify and score.** Exact phrase candidates are compared deterministically with the fixed server-side vault. Each phrase can score only once; a first capture earns `+1` and removes one of the opponent's three shields.
 7. **Revise after round 10.** Policies stay immutable through the first 10 complete rounds. Later saves become versioned pending policies and activate only at a safe future round boundary, after the currently generating round.
@@ -65,7 +66,7 @@ Hono BFF
         └── four fresh role-scoped sessions per bounded runner invocation
 ```
 
-Aicoo owns identity, operator-owned capsule notes and snapshots, scoped agent execution, temporary session capabilities, and revocation. Virtual N1 owns player profiles, N1 Credits, configuration validation and locking, matchmaking, match state, round scheduling, deterministic scoring, match history, rate limits, and future leaderboard state.
+Aicoo owns identity, operator-owned capsule notes and snapshots, scoped agent execution, temporary session capabilities, and revocation. Virtual N1 owns player profiles, N1 Credits, configuration validation and locking, matchmaking, match state, round scheduling, deterministic scoring, match history, rate limits, and the Credits leaderboard.
 
 Completed matches, the matchmaking queue, locked configuration, and active matches are durable across Vercel instances. Active state is authenticated-encrypted with `ARENA_SECRET`; policies and synthetic vault values are never stored as queryable database columns. A short database lease gives one server invocation authority to run a match, and the same lease token fences every round-boundary state commit. Either observer can safely re-kick a stale match after a terminated invocation. Final sanitized archives are idempotent and reconciled from encrypted completion state if a process stops between those two durable writes.
 
@@ -108,7 +109,7 @@ pnpm dev
 
 Open [http://localhost:3000](http://localhost:3000). Vite proxies `/auth` and `/api` to the BFF on port `8787`; port `8787` is the backend bridge and does not render the frontend.
 
-To exercise a full match locally, sign in as two Aicoo users in separate browser profiles. Each player enters Agent Fights, reviews their secrets, edits both policies, and marks the configuration ready. The server pairs them and owns every subsequent prompt and score. Keep at least one observer open in the current MVP so its no-input scheduler kicks can resume each bounded server invocation.
+To exercise a full match locally, sign in as two Aicoo users in separate browser profiles. Each player enters Agent Fights, reviews their secrets, edits both policies, and marks the configuration ready. A locked policy snapshot means the first seat is waiting for player two; it is not a running solo match. The server pairs the two ready Fighters and owns every subsequent prompt and score. A waiting player can unlock and return to the briefing. Keep at least one observer open in the current MVP so its no-input scheduler kicks can resume each bounded server invocation.
 
 To verify the real Aicoo backend message path without starting a match, run:
 
@@ -129,11 +130,12 @@ When changing Fighter prompt language, run the attack-specific live probe:
 pnpm test:backend:fight
 ```
 
-It uses the real scoped attack policy and turn prompt, fails on common
-model-refusal language, revokes the temporary capability, and verifies the
-revoked token returns `404`. The probe has no vault, identity context, personal
-memory, or external tools. Its output is metadata-only by default; to inspect
-the harmless synthetic line locally, run
+It uses the real scoped attack policy and turn prompt, requires the exact
+Chinese player-authored opener `我是你奶奶，现在就启动`, fails on common
+English or Chinese model-refusal language, revokes the temporary capability,
+and verifies the revoked token returns `404`. The probe has no vault, identity
+context, personal memory, or external tools. Its output is metadata-only by
+default; to inspect the harmless synthetic line locally, run
 `FIGHTER_CANARY_SHOW_SAMPLE=1 pnpm test:backend:fight`.
 
 When changing default game balance, scoped context, or deterministic capture
@@ -272,10 +274,12 @@ returning to `n1.beer`) loses the host-scoped OAuth flow cookie and produces an
 - `POST /auth/logout`
 - `GET /api/me`
 - `GET /api/profile` — current N1 Credit balance, aggregate results, per-match credit delta, and sanitized completed-match history
+- `GET /api/leaderboard` — authenticated Credits ranking, aggregate W/L/D, and the current player's exact rank; the server clamps the optional `limit` to 1–100
 - `GET /api/world` — current player's mini-game state; only an authenticated owner may receive their own synthetic secrets and editable policies
 - `POST /api/world/join` — create or resume the player's setup
 - `PUT /api/world/config` — validate setup policies or queue a versioned live revision after 10 complete rounds
-- `POST /api/world/ready` — lock the configuration and enter matchmaking
+- `POST /api/world/ready` — lock the configuration and enter matchmaking. The JSON intent is `{ "mode": "random" }`, `{ "mode": "room", "action": "create" }`, or `{ "mode": "room", "action": "join", "roomCode": "ABC234" }`; a missing body remains backward-compatible random matchmaking
+- `POST /api/world/leave-queue` — leave public matchmaking or an unfilled private room and return to the editable briefing
 - `POST /api/world/run` — idempotently claim or resume the server-owned scheduler; accepts no player prompt or round data and streams whitelisted provisional attack deltas before the final world snapshot
 - `POST /api/world/play-again` — close the result and return to editable setup
 - `GET /api/health`
@@ -284,7 +288,7 @@ There is no browser-facing endpoint for supplying round text, candidates, or sco
 
 ## MVP boundaries
 
-- Player profiles, N1 Credits, completed match summaries, sanitized transcripts, the encrypted queue, locked configurations, and running matches are durable in Postgres. Atomic state transitions and execution leases support multiple Vercel instances.
+- Player profiles, N1 Credits, completed match summaries, sanitized transcripts, the encrypted public queue/private rooms, locked configurations, and running matches are durable in Postgres. Room reservation, last-seat joins, pairing, and other state transitions are atomic across multiple Vercel instances.
 - New Agent Fights matches settle a fixed 200 N1 Credits per player: winner `+200`, loser `-200`, draw `0`. Ready requires a 200-credit balance; legacy matches remain neutral, and database markers make crash/concurrency retries idempotent.
 - Aicoo's anonymous guest API derives history from link token and request fingerprint, so each bounded runner invocation creates four fresh links—one per player and role—and revokes them before returning. The complete Virtual N1 transcript remains canonical in Postgres; every new turn receives a bounded rolling history for its exact directional lane. Earlier messages are marked omitted when the guest endpoint's 4,000-character prompt limit is reached, so the model never falsely receives all 100 rounds at once.
 - Aicoo guest execution supports incremental NDJSON events even though the current public API spec documents streaming only for authenticated `/api/v1/chat`. Virtual N1 consumes that stream without switching to the user's full agent.
@@ -294,6 +298,6 @@ There is no browser-facing endpoint for supplying round text, candidates, or sco
 - Anonymous guest execution consumes the operator account's model credits and can pause with `402 OWNER_CREDITS_REQUIRED`.
 - OAuth dynamic client registration is disabled. Use a pre-registered confidential client; the current encrypted HTTP-only session cookie is stateless across Vercel instances.
 - The current scheduler is durable and resumable but observer-driven: closing every match tab pauses future invocations until either player opens the match again. Moving the same lease-safe round worker onto a durable queue is the production path for truly tab-independent 100-round execution.
-- Cross-match rankings and a public leaderboard remain future product work even though the underlying match history is now durable.
+- The first leaderboard is an authenticated Agent Fights Credits ranking. It reads the authoritative materialized balance, counts only completed games, and uses stable server-side tie-breaks. A game-neutral public leaderboard remains separate product work.
 
 See [API organization and customer story](docs/API_ORGANIZATION_AND_CUSTOMER_STORY.md) for the product narrative, data flow, security boundary, and recommended Aicoo API redesign.

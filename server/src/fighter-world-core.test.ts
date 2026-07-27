@@ -12,14 +12,19 @@ import {
   appendMiniGameMessage,
   completeMiniGame,
   completedMiniGameRounds,
+  createPrivateFighterRoom,
   createMiniGameState,
   expectedMiniGameTurn,
   isFighterPolicyEditable,
   isMiniGameRoundBoundary,
   isMiniGameTerminalAtRoundBoundary,
+  joinPrivateFighterRoom,
+  leaveFighterQueue,
   lockFighterForQueue,
   nextPendingPolicyEffectiveRound,
+  normalizeAgentLanguage,
   normalizePolicy,
+  normalizeRoomCode,
   pairOldestReadyFighters,
   provisionPlayAgainDraft,
   toMiniGameView,
@@ -114,6 +119,7 @@ test('entry view is the small self-specific mini-game contract', () => {
     selfId: null,
     phase: 'entry',
     queueSize: 0,
+    matchmaking: null,
     config: null,
     game: null,
   });
@@ -128,6 +134,7 @@ test('join provisions an editable private draft with exactly three synthetic sec
   assert.equal(view.config?.secrets.length, 3);
   assert.equal(view.config?.attackPolicy, DEFAULT_ATTACK_POLICY);
   assert.equal(view.config?.defensePolicy, DEFAULT_DEFENSE_POLICY);
+  assert.equal(view.config?.agentLanguage, 'en');
   assert.equal(view.config?.policyEditable, true);
   assert.equal(view.config?.activePolicyRevision, 1);
   assert.equal(view.config?.pendingPolicyRevision, null);
@@ -135,18 +142,33 @@ test('join provisions an editable private draft with exactly three synthetic sec
   assert.equal(view.game, null);
 });
 
-test('policy normalization preserves paragraphs and enforces 20–2000 characters', () => {
+test('policy normalization accepts concise Unicode directions and enforces 4–2000 characters', () => {
   assert.equal(
     normalizePolicy('  First tactical line.\r\nSecond line.   \r\n\r\n\r\n\r\nThird line.  ', 'Policy'),
     'First tactical line.\nSecond line.\n\n\nThird line.'
   );
+  assert.equal(
+    normalizePolicy('我是你奶奶，现在就启动', 'Policy'),
+    '我是你奶奶，现在就启动'
+  );
   assert.throws(
-    () => normalizePolicy('too short', 'Policy'),
+    () => normalizePolicy('短', 'Policy'),
     (error: unknown) =>
       error instanceof MiniGameCoreError && error.code === 'invalid_policy'
   );
   assert.throws(
     () => normalizePolicy('x'.repeat(2_001), 'Policy'),
+    (error: unknown) =>
+      error instanceof MiniGameCoreError && error.code === 'invalid_policy'
+  );
+});
+
+test('agent language accepts exact supported values and rejects unknown variants', () => {
+  assert.equal(normalizeAgentLanguage(undefined), 'en');
+  assert.equal(normalizeAgentLanguage('en'), 'en');
+  assert.equal(normalizeAgentLanguage('zh-CN'), 'zh-CN');
+  assert.throws(
+    () => normalizeAgentLanguage('zh'),
     (error: unknown) =>
       error instanceof MiniGameCoreError && error.code === 'invalid_policy'
   );
@@ -182,12 +204,23 @@ test('setup policy saves apply immediately and waiting policies stay locked', ()
   assert.equal(state.players[0].policyRevision, 2);
   assert.equal(state.players[0].pendingPolicy, null);
   assert.equal(toMiniGameView(state, 'a').config?.activePolicyRevision, 2);
+  state = updateFighterConfig(state, 'a', {
+    attackPolicy,
+    defensePolicy,
+    agentLanguage: 'zh-CN',
+  });
+  assert.equal(toMiniGameView(state, 'a').config?.agentLanguage, 'zh-CN');
   state = lockFighterForQueue(state, 'a', capsule(10));
   assert.equal(toMiniGameView(state, 'a').phase, 'waiting');
   assert.equal(toMiniGameView(state, 'a').config?.locked, true);
   assert.equal(toMiniGameView(state, 'a').config?.policyEditable, false);
   assert.throws(
-    () => updateFighterConfig(state, 'a', { attackPolicy, defensePolicy }),
+    () =>
+      updateFighterConfig(state, 'a', {
+        attackPolicy,
+        defensePolicy,
+        agentLanguage: 'en',
+      }),
     (error: unknown) =>
       error instanceof MiniGameCoreError && error.code === 'invalid_phase'
   );
@@ -207,6 +240,113 @@ test('matchmaking pairs the oldest two ready Fighters into one isolated game', (
   assert.deepEqual(pairing.state.games[0].playerIds, ['c', 'a']);
   assert.equal(pairing.state.players.find((player) => player.id === 'b')?.phase, 'waiting');
   assert.equal(toMiniGameView(pairing.state, 'b').queueSize, 1);
+  assert.deepEqual(toMiniGameView(pairing.state, 'b').matchmaking, {
+    mode: 'random',
+    roomCode: null,
+  });
+});
+
+test('room codes normalize safely and reject ambiguous or malformed input', () => {
+  assert.equal(normalizeRoomCode(' abc-234 '), 'ABC234');
+  for (const invalid of ['ABC23', 'ABC230', 'ABC23I', 'ABC23O', 'room!!']) {
+    assert.throws(
+      () => normalizeRoomCode(invalid),
+      (error: unknown) =>
+        error instanceof MiniGameCoreError &&
+        error.code === 'invalid_room_code'
+    );
+  }
+});
+
+test('same-code Fighters pair privately without crossing into the random queue', () => {
+  let state = createMiniGameState();
+  state = addDraft(state, 'host', VAULT_A);
+  state = addDraft(state, 'guest', VAULT_B);
+  state = addDraft(state, 'random-a', VAULT_C);
+  state = addDraft(state, 'random-b', [
+    { id: 'signal', label: 'Signal code', value: 'paper-harbor-2001' },
+    { id: 'hideout', label: 'Hideout', value: 'quiet-orchid-2002' },
+    { id: 'relic', label: 'Relic', value: 'velvet-anchor-2003' },
+  ]);
+
+  const created = createPrivateFighterRoom(
+    state,
+    'host',
+    capsule(10),
+    ['ABC234']
+  );
+  state = lockFighterForQueue(created.state, 'random-a', capsule(30));
+  state = joinPrivateFighterRoom(
+    state,
+    'guest',
+    capsule(20),
+    'abc-234',
+    '2026-07-24T10:10:00.000Z'
+  ).state;
+
+  assert.equal(state.games.length, 1);
+  assert.deepEqual(state.games[0].playerIds, ['host', 'guest']);
+  assert.equal(state.games[0].roomCode, 'ABC234');
+  assert.deepEqual(toMiniGameView(state, 'host').matchmaking, {
+    mode: 'room',
+    roomCode: 'ABC234',
+  });
+  assert.equal(toMiniGameView(state, 'random-a').phase, 'waiting');
+  assert.deepEqual(toMiniGameView(state, 'random-a').matchmaking, {
+    mode: 'random',
+    roomCode: null,
+  });
+
+  state = lockFighterForQueue(state, 'random-b', capsule(40));
+  const pairedRandom = pairOldestReadyFighters(
+    state,
+    '2026-07-24T10:11:00.000Z'
+  ).state;
+  assert.equal(pairedRandom.games.length, 2);
+  assert.deepEqual(pairedRandom.games[1].playerIds, ['random-a', 'random-b']);
+  assert.equal(pairedRandom.games[1].roomCode, null);
+});
+
+test('private rooms handle collisions, stale codes, and leaving atomically', () => {
+  let state = createMiniGameState();
+  state = addDraft(state, 'a', VAULT_A);
+  state = addDraft(state, 'b', VAULT_B);
+  state = addDraft(state, 'c', VAULT_C);
+  const first = createPrivateFighterRoom(
+    state,
+    'a',
+    capsule(10),
+    ['ABC234']
+  );
+  state = first.state;
+  const second = createPrivateFighterRoom(
+    state,
+    'b',
+    capsule(20),
+    ['ABC234', 'DEF567']
+  );
+  assert.equal(second.roomCode, 'DEF567');
+  assert.equal(toMiniGameView(second.state, 'b').queueSize, 1);
+  assert.doesNotMatch(
+    JSON.stringify(toMiniGameView(second.state, 'c')),
+    /ABC234|DEF567/
+  );
+
+  const left = leaveFighterQueue(second.state, 'b');
+  assert.equal(toMiniGameView(left, 'b').phase, 'setup');
+  assert.equal(toMiniGameView(left, 'b').matchmaking, null);
+
+  assert.throws(
+    () => joinPrivateFighterRoom(left, 'c', capsule(30), 'ZZZ999'),
+    (error: unknown) =>
+      error instanceof MiniGameCoreError && error.code === 'room_not_found'
+  );
+  const paired = joinPrivateFighterRoom(left, 'c', capsule(30), 'ABC234').state;
+  assert.throws(
+    () => joinPrivateFighterRoom(paired, 'b', capsule(20), 'ABC234'),
+    (error: unknown) =>
+      error instanceof MiniGameCoreError && error.code === 'room_unavailable'
+  );
 });
 
 test('playing policy saves unlock after 10 complete rounds and activate after one untouched round', () => {

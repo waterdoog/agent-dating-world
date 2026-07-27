@@ -2,7 +2,7 @@
 
 Virtual N1 World uses Supabase-hosted Postgres for durable player profiles, N1 Credits, matchmaking, running games, completed games, and sanitized match transcripts. Aicoo OAuth remains the identity authority; Postgres stores the game records associated with that identity.
 
-One authenticated-encrypted world snapshot contains the FIFO queue, editable/locked configurations, synthetic vaults, and active game state. Database transactions serialize joins, configuration locks, and pairing across Vercel instances. A separate short lease ensures only one invocation runs a match at a time; a stale match can be resumed from its deterministic next turn.
+One authenticated-encrypted world snapshot contains the public FIFO queue, private room codes, editable/locked configurations, synthetic vaults, and active game state. Database transactions serialize room creation, last-seat joins, configuration locks, and pairing across Vercel instances. Private room members are paired only with the same code; they never spill into the public queue. A separate short lease ensures only one invocation runs a match at a time; a stale match can be resumed from its deterministic next turn.
 
 ## Connection configuration
 
@@ -90,6 +90,20 @@ Agent Fights uses a fixed **200 N1 Credit** settlement:
 The settlement marker and ledger idempotency constraints are authoritative.
 Retrying completion, resuming after a crash, or reconciling from two Vercel
 instances must never pay or charge a player twice.
+
+## Credits leaderboard read model
+
+The first leaderboard needs no additional table or migration. Its server-only
+query ranks `fighter_users.n1_credits` and left-joins aggregate results from
+participants whose game status is `complete`. Wallet holders with no completed
+games remain eligible with a `0–0–0` record.
+
+The order is Credits descending, wins descending, losses ascending, completed
+games descending, account creation ascending, then immutable Fighter ID. This
+produces one deterministic champion and stable positions after ties. The
+authenticated endpoint returns only display name, handle, balance, aggregate
+record, and rank; it never returns OAuth identity, ledger rows, connection
+details, policies, or secret values.
 
 ## Match and transcript retention
 
@@ -233,6 +247,6 @@ Before promoting a database change, confirm:
 - logs do not print connection strings, query parameters containing secrets, policies, vault values, or transcript contents;
 - match completion and credit writes are idempotent;
 - the `virtual_n1` schema is absent from Supabase's exposed schemas and `PUBLIC`, `anon`, and `authenticated` have no privileges on it;
-- concurrent Ready calls pair each Fighter once, and expired execution leases can resume without duplicating turns.
+- concurrent Ready calls pair each Fighter once, concurrent guests cannot claim the same private seat, different room codes never cross-pair, and expired execution leases can resume without duplicating turns.
 
 For application contribution conventions, see [CONTRIBUTING.md](../CONTRIBUTING.md).
