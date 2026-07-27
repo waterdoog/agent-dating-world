@@ -13,6 +13,7 @@
 .dt-shell {
   display: grid;
   grid-template-columns: 250px minmax(0, 1fr) 280px;
+  grid-template-rows: minmax(0, 1fr);   /* the single row fills the locked height so columns stretch to the bottom */
   gap: var(--space-xl);
   align-items: stretch;   /* three columns share one height; the feed scrolls inside */
   width: min(1320px, 100%);
@@ -190,7 +191,7 @@
 .dt-more { display: block; width: 100%; padding: var(--space-md); border: 0; border-top: 1px solid var(--paper-dark); background: transparent; text-align: center; font-size: 0.72rem; font-weight: 800; color: var(--ink); }
 
 @media (max-width: 1120px) {
-  .dt-shell { grid-template-columns: 1fr; align-items: start; height: auto; overflow: visible; }   /* stack — page scrolls on mobile */
+  .dt-shell { grid-template-columns: 1fr; grid-template-rows: auto; align-items: start; height: auto; overflow: visible; }   /* stack — page scrolls on mobile */
   .dt-plaza { flex: none; height: 460px; }
   .dt-feed { flex: none; max-height: 60vh; }
   .dt-legend { margin: var(--space-lg) var(--space-lg) 0; }        /* not pinned to bottom when stacked */
