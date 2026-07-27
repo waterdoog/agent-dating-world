@@ -428,7 +428,7 @@ export function DatingRoom() {
           <div className="dt-plaza">
             {plaza3d ? (
               <Suspense fallback={<div className="dt-plaza-loading">加载 3D 世界…</div>}>
-                <Plaza3D movers={frame.map((m) => ({ name: m.name, look: m.look, you: m.you, x: m.x, y: m.y, bubble: m.bubble }))} />
+                <Plaza3D agents={frame.map((m) => ({ name: m.name, look: m.look, you: m.you, x: m.x, y: m.y, bubble: m.bubble }))} posRef={simRef} />
               </Suspense>
             ) : (
               <>

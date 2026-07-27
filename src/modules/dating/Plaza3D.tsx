@@ -1,6 +1,6 @@
 import { Canvas, useFrame } from '@react-three/fiber';
 import { useGLTF, Clone, Html, OrbitControls, ContactShadows } from '@react-three/drei';
-import { Suspense, useRef } from 'react';
+import { Suspense, useRef, type RefObject } from 'react';
 import * as THREE from 'three';
 import type { DatingLook } from '../../api';
 import { avatar3dUrl, type AgentAppearance } from './agent-avatar';
@@ -9,11 +9,14 @@ import { avatar3dUrl, type AgentAppearance } from './agent-avatar';
 const PLAZA = 13;
 const map = (v: number) => (v / 100 - 0.5) * PLAZA;
 
+// live positions come from the sim ref (read every frame — React re-renders do
+// NOT reliably reach inside the r3f Canvas); identity + bubbles come from props.
+export interface LivePos { name: string; x: number; y: number }
 export interface Mover3D {
   name: string;
   look: DatingLook;
   you: boolean;
-  x: number;
+  x: number;   // snapshot for initial placement (before useFrame's first tick)
   y: number;
   bubble?: { text: string; kind: 'fight' | 'love' | 'new' };
 }
@@ -23,35 +26,41 @@ function Prop({ url, position, rotation, scale = 1 }: { url: string; position: [
   return <Clone object={scene} position={position} rotation={rotation} scale={scale} castShadow receiveShadow />;
 }
 
-function Agent({ mover }: { mover: Mover3D }) {
-  const { scene } = useGLTF(avatar3dUrl(mover.look as AgentAppearance));
+const _v = new THREE.Vector3();
+
+function Agent({ agent, posRef }: { agent: Mover3D; posRef: RefObject<LivePos[]> }) {
+  const { scene } = useGLTF(avatar3dUrl(agent.look as AgentAppearance));
   const g = useRef<THREE.Group>(null);
-  const target = new THREE.Vector3(map(mover.x), 0, map(mover.y));
+  const inited = useRef(false);
   useFrame(() => {
-    if (g.current) g.current.position.lerp(target, 0.16);
+    const p = posRef.current?.find((m) => m.name === agent.name);
+    if (!p || !g.current) return;
+    _v.set(map(p.x), 0, map(p.y));
+    if (inited.current) g.current.position.lerp(_v, 0.16);
+    else { g.current.position.copy(_v); inited.current = true; }
   });
   return (
-    <group ref={g} position={[map(mover.x), 0, map(mover.y)]}>
+    <group ref={g} position={[map(agent.x), 0, map(agent.y)]}>
       <Clone object={scene} scale={0.5} castShadow />
-      {mover.you && (
+      {agent.you && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
           <ringGeometry args={[0.42, 0.55, 24]} />
           <meshBasicMaterial color="#e0b53a" />
         </mesh>
       )}
       <Html position={[0, 1.6, 0]} center distanceFactor={11} zIndexRange={[10, 0]}>
-        <div className={`dt3d-tag ${mover.you ? 'you' : ''}`}>{mover.name}</div>
+        <div className={`dt3d-tag ${agent.you ? 'you' : ''}`}>{agent.name}</div>
       </Html>
-      {mover.bubble && (
+      {agent.bubble && (
         <Html position={[0, 2.25, 0]} center distanceFactor={10} zIndexRange={[20, 0]}>
-          <div className={`dt3d-bubble ${mover.bubble.kind}`}>{mover.bubble.text}</div>
+          <div className={`dt3d-bubble ${agent.bubble.kind}`}>{agent.bubble.text}</div>
         </Html>
       )}
     </group>
   );
 }
 
-function Scene({ movers }: { movers: Mover3D[] }) {
+function Scene({ agents, posRef }: { agents: Mover3D[]; posRef: RefObject<LivePos[]> }) {
   const pavement: [number, number][] = [];
   for (let x = -2; x <= 2; x++) for (let z = -2; z <= 2; z++) pavement.push([x, z]);
   return (
@@ -78,21 +87,21 @@ function Scene({ movers }: { movers: Mover3D[] }) {
       <Prop url="/city/grass-trees.glb" position={[-4, 0, 4]} />
       <Prop url="/city/road-straight-lightposts.glb" position={[-3, 0, 3]} />
       <Prop url="/city/road-straight-lightposts.glb" position={[3, 0, -2]} rotation={[0, Math.PI / 2, 0]} />
-      {movers.map((m) => (
-        <Agent key={m.name} mover={m} />
+      {agents.map((a) => (
+        <Agent key={a.name} agent={a} posRef={posRef} />
       ))}
     </>
   );
 }
 
-export default function Plaza3D({ movers }: { movers: Mover3D[] }) {
+export default function Plaza3D({ agents, posRef }: { agents: Mover3D[]; posRef: RefObject<LivePos[]> }) {
   return (
     <Canvas shadows dpr={[1, 2]} camera={{ position: [11, 10, 13], fov: 36 }} style={{ width: '100%', height: '100%' }}>
       <color attach="background" args={['#f2e8d0']} />
       <hemisphereLight args={['#fff6e0', '#b9a97e', 0.7]} />
       <directionalLight position={[9, 15, 6]} intensity={1.25} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-far={40} shadow-camera-left={-15} shadow-camera-right={15} shadow-camera-top={15} shadow-camera-bottom={-15} />
       <Suspense fallback={null}>
-        <Scene movers={movers} />
+        <Scene agents={agents} posRef={posRef} />
         <ContactShadows position={[0, 0.015, 0]} opacity={0.3} scale={34} blur={2.2} far={12} />
       </Suspense>
       <OrbitControls enablePan={false} minPolarAngle={0.5} maxPolarAngle={1.15} minDistance={9} maxDistance={26} target={[0, 0.6, 0]} makeDefault />
