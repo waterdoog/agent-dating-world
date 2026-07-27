@@ -199,6 +199,7 @@
 
 /* ── create drawer ── */
 .dt-sprite-slot { display: inline-flex; line-height: 0; }
+img.agent-sprite { display: block; object-fit: contain; }
 .dt-drawer-scrim {
   position: fixed; inset: 0; z-index: 40; display: grid; place-items: center;
   padding: var(--space-lg); background: oklch(0.2 0.03 45 / 0.55);

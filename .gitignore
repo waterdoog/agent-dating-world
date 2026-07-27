@@ -7,3 +7,6 @@ dist
 .env.*
 !.env.example
 .oauth-client.json
+/Starter-Kit-City-Builder-main/
+/kenney_blocky-characters_20/
+/kenney_cube-pets_1/

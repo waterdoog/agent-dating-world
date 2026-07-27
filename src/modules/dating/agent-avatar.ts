@@ -117,7 +117,41 @@ function accessory(kind: Accessory, color: string): string {
 }
 
 /** A self-contained <svg> for one square-head agent. */
+// ── Kenney 2D avatar art (blocky characters + cube pets) — replaces the
+//    old parametric squares the user found too ugly. ──────────────────────
+const PET_FILES = ['animal-beaver', 'animal-bee', 'animal-bunny', 'animal-cat', 'animal-caterpillar', 'animal-chick', 'animal-cow', 'animal-crab', 'animal-deer', 'animal-dog', 'animal-elephant', 'animal-fish', 'animal-fox', 'animal-giraffe', 'animal-hog', 'animal-koala', 'animal-lion', 'animal-monkey', 'animal-panda', 'animal-parrot'];
+const CHAR_FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r'];
+export const AVATAR_CHOICES = [
+  ...PET_FILES.map((f) => `/avatars/pets/${f}.png`),
+  ...CHAR_FILES.map((f) => `/avatars/characters/character-${f}.png`),
+];
+const FORM_AVATAR: Record<string, string> = {
+  cat: '/avatars/pets/animal-cat.png',
+  bunny: '/avatars/pets/animal-bunny.png',
+  sprout: '/avatars/pets/animal-caterpillar.png',
+  cloud: '/avatars/pets/animal-chick.png',
+  ghost: '/avatars/pets/animal-fox.png',
+  bot: '/avatars/characters/character-a.png',
+  cube: '/avatars/characters/character-b.png',
+};
+function hashStr(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h;
+}
+/** The picture an agent wears — an explicit `avatar`, else its form, else hashed from its seed. */
+export function avatarUrl(a: AgentAppearance): string {
+  const explicit = (a as { avatar?: string }).avatar;
+  if (explicit) return explicit;
+  if (a.form && FORM_AVATAR[a.form]) return FORM_AVATAR[a.form];
+  return AVATAR_CHOICES[hashStr(a.seed || a.color || a.form || 'x') % AVATAR_CHOICES.length];
+}
+
 export function agentSprite(a: AgentAppearance, size = 96): string {
+  return `<img src="${avatarUrl(a)}" width="${size}" height="${size}" class="agent-sprite" alt="" draggable="false" />`;
+}
+
+export function agentSpriteSvg(a: AgentAppearance, size = 96): string {
   const body = a.color;
   const top = withL(body, 0.12);
   const limb = withL(body, -0.09);
