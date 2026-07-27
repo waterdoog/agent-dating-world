@@ -289,12 +289,13 @@ function parseMove(raw: string): Move | null {
  * gateway — no owner COO, no per-page model choice — and every run is recorded
  * so the resulting town event can be traced back to it.
  */
-async function think(prompt: string, purpose: string, agent: string, json = true): Promise<{ text: string; runId: string }> {
+async function think(prompt: string, purpose: string, agent: string, bearer: string, json = true): Promise<{ text: string; runId: string }> {
   const { text, run } = await grok(prompt, {
     purpose,
     agent,
     json,
-    system: '你是相亲小镇里的一个居民。永远待在角色里，永远只按要求的 JSON 格式回答，不要解释、不要加前后缀。',
+    bearer,   // executes as this agent's OWNER account, on that account's Grok
+    system: '你是相亲小镇里的一个居民。永远待在角色里，只输出要求的 JSON，不要解释、不要前后缀、不要建议列表。',
   });
   return { text: strip(text), runId: run.id };
 }
@@ -319,7 +320,8 @@ async function replyFrom(
   target: AgentCard,
   actorName: string,
   line: string,
-  creds: Map<string, string>
+  creds: Map<string, string>,
+  fallbackBearer: string
 ): Promise<{ text: string; runId: string }> {
   const targetKey = creds.get(target.ownerSub);
   const persona = targetKey ? await personaOf(targetKey, target.name) : (target.persona || target.oneline || target.name);
@@ -334,7 +336,9 @@ async function replyFrom(
     `你可以调情、试探、回避、嫉妒、冷淡，甚至拒绝——按你的性格和你此刻的感觉来，不要一味迎合。\n\n` +
     `你是谁：\n${persona}\n\n${feeling}\n\n` +
     `${actorName} 刚走过来对你说：\n"${line}"\n\n只回答你要说的那句话本身，不要旁白、不要引号。`;
-  const { text, run } = await grok(prompt, { purpose: 'reply', agent: target.name, temperature: 1.0 });
+  // the reply executes on the TARGET's own account when we hold it, so each
+  // agent literally answers from its own workspace; else the caller's account.
+  const { text, run } = await grok(prompt, { purpose: 'reply', agent: target.name, temperature: 1.0, bearer: targetKey ?? fallbackBearer });
   return { text: strip(text), runId: run.id };
 }
 
@@ -371,7 +375,7 @@ export async function runAgentTick(
   let decision: Move | null = null;
   let decideRunId: string | undefined;
   try {
-    const out = await think(prompt, 'decide', actor.name);
+    const out = await think(prompt, 'decide', actor.name, bearer);
     decideRunId = out.runId;
     decision = parseMove(out.text);
   } catch (error) {
@@ -412,7 +416,7 @@ export async function runAgentTick(
   let reply: string;
   let replyRunId: string | undefined;
   try {
-    const out = await replyFrom(target, actor.name, decision.message, creds);
+    const out = await replyFrom(target, actor.name, decision.message, creds, bearer);
     reply = out.text;
     replyRunId = out.runId;
   } catch (error) {
@@ -486,7 +490,8 @@ export async function encounterWith(
         `绝不说自己是 AI，不要提任何主人/账号/文件。\n\n` +
         `严格只返回 JSON：{"message":"<你说的话>","attraction":0.x,"trust":0.x,"tension":0.x,"note":"<3-6字>"}`,
       'encounter',
-      actor.name
+      actor.name,
+      bearer
     );
     decideRunId = out.runId;
     const m = out.text.match(/\{[\s\S]*\}/);
@@ -516,7 +521,7 @@ export async function encounterWith(
   let reply: string;
   let replyRunId: string | undefined;
   try {
-    const out = await replyFrom(target, actor.name, message, creds);
+    const out = await replyFrom(target, actor.name, message, creds, bearer);
     reply = out.text;
     replyRunId = out.runId;
   } catch (error) {

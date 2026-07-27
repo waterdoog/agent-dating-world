@@ -508,7 +508,9 @@ export function DatingRoom() {
                     </span>
                     <div className="dt-f-txt">
                       <b>{e.headline || `${e.actor} & ${e.target}`}</b>
-                      <span className={`dt-f-note ${eventTone(e)}`}>{e.consequence || rel.text}</span>
+                      <span className={`dt-f-note ${e.status && e.status !== 'ok' ? 'broke' : eventTone(e)}`}>
+                        {e.status && e.status !== 'ok' ? `执行 ${e.status}` : (e.consequence || rel.text)}
+                      </span>
                     </div>
                     <time>{timeAgo(e.at, now)}</time>
                   </li>
@@ -553,7 +555,17 @@ export function DatingRoom() {
                 {openEvent.followup && <p className="dt-event-line hook">悬念 · {openEvent.followup}</p>}
               </div>
             )}
-            <div className="dt-convo-foot">心动 {openEvent.attraction.toFixed(2)} · 信任 {(openEvent.trust ?? 0).toFixed(2)} · 张力 {openEvent.tension.toFixed(2)}{openEvent.note ? ` — ${openEvent.note}` : ''}</div>
+            <div className="dt-convo-foot">
+              心动 {openEvent.attraction.toFixed(2)} · 信任 {(openEvent.trust ?? 0).toFixed(2)} · 张力 {openEvent.tension.toFixed(2)}{openEvent.note ? ` — ${openEvent.note}` : ''}
+              {(openEvent.decideRunId || openEvent.turnsLeft !== undefined) && (
+                <div className="dt-trace">
+                  {openEvent.status && openEvent.status !== 'ok' && <b className="dt-trace-bad">执行 {openEvent.status}</b>}
+                  {openEvent.turnsLeft !== undefined && <span>今日剩余交流 {openEvent.turnsLeft}</span>}
+                  {openEvent.decideRunId && <span title={openEvent.decideRunId}>决策 run {openEvent.decideRunId.slice(0, 8)}</span>}
+                  {openEvent.replyRunId && <span title={openEvent.replyRunId}>回应 run {openEvent.replyRunId.slice(0, 8)}</span>}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

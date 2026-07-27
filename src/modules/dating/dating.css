@@ -190,6 +190,9 @@
 .dt-convo-foot { padding: var(--space-md) var(--space-lg); border-top: 1px solid var(--paper-dark); font-size: 0.68rem; font-weight: 800; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .dt-convo-summary { margin: 0; padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--paper-dark); font-size: 0.84rem; line-height: 1.55; color: var(--ink); font-style: italic; }
 .dt-convo-beats { padding: var(--space-md) var(--space-lg) 0; }
+/* traceability strip: every town event points back at its real model runs */
+.dt-trace { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--paper-dark); font-size: 0.6rem; font-weight: 700; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.dt-trace-bad { color: var(--red); }
 
 /* ── severity + rich causal-event bits ── */
 .dt-event.sev-drama { border-color: var(--red); box-shadow: 3px 3px 0 var(--red); }

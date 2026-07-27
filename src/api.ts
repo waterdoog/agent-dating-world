@@ -96,7 +96,29 @@ export interface DatingTickEvent {
   summary?: string;
   consequence?: string;
   followup?: string;
+  decideRunId?: string;
+  replyRunId?: string;
+  turnsLeft?: number;
+  status?: string;
   at?: number;
+}
+
+export interface ModelRunInfo {
+  id: string;
+  provider: string;
+  model: string;
+  purpose: string;
+  agent?: string;
+  input: string;
+  output: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  status: string;
+  error?: string;
+  attempts: number;
+  elapsedMs: number;
+  at: number;
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -134,6 +156,8 @@ export const api = {
     tick: () => request<{ event: DatingTickEvent | null; note?: string }>('POST', '/api/dating/tick'),
     encounter: (target: string) => request<{ event: DatingTickEvent | null }>('POST', '/api/dating/encounter', { target }),
     feed: () => request<{ events: DatingTickEvent[] }>('GET', '/api/dating/feed'),
+    run: (id: string) => request<{ run: ModelRunInfo }>('GET', `/api/dating/runs?id=${encodeURIComponent(id)}`),
+    budget: () => request<{ dailyTurnBudget: number; agents: Array<{ agent: string; used: number; left: number; top?: string }> }>('GET', '/api/dating/budget'),
   },
 };
 

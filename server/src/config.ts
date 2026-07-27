@@ -55,11 +55,20 @@ export const config = {
    * anywhere else.
    */
   model: {
-    provider: 'xai' as const,
+    /**
+     * Grok, served through Aicoo's own /api/v1/chat (`model: "grok-4"`), so a
+     * town turn is a real Aicoo agent execution rather than a side-channel to
+     * another provider. Requires the calling account to have Grok access
+     * (Pro/Business tier, or BYOK in Aicoo Settings → API Keys); Free tier only
+     * offers GPT-5 Mini and returns MODEL_NOT_AVAILABLE.
+     * A direct xAI key stays supported as a fallback for accounts without it.
+     */
+    provider: 'aicoo' as const,
     name: process.env.GROK_MODEL ?? 'grok-4',
+    /** Optional direct-to-xAI fallback. When empty, calls go through Aicoo. */
     apiKey: process.env.XAI_API_KEY ?? process.env.GROK_API_KEY ?? '',
     baseUrl: (process.env.XAI_BASE_URL ?? 'https://api.x.ai/v1').replace(/\/$/, ''),
-    timeoutMs: Number(process.env.GROK_TIMEOUT_MS ?? 60_000),
+    timeoutMs: Number(process.env.GROK_TIMEOUT_MS ?? 90_000),
     maxRetries: Number(process.env.GROK_MAX_RETRIES ?? 2),
   },
 

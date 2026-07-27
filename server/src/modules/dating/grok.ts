@@ -64,6 +64,10 @@ export interface GrokOptions {
   temperature?: number;
   maxTokens?: number;
   json?: boolean;           // ask for a strict JSON object back
+  /** Aicoo bearer to execute this turn as — the account whose Grok access is used. */
+  bearer?: string;
+  /** Keep a turn in one Aicoo conversation thread. */
+  conversationId?: string;
 }
 
 export interface GrokResult {
@@ -81,30 +85,44 @@ export async function grok(prompt: string, opts: GrokOptions): Promise<GrokResul
     input: prompt, output: '', at: started,
   };
 
-  if (!apiKey) {
-    throw new ModelError('failed', 'XAI_API_KEY is not configured — the town cannot run.',
-      record({ ...base, status: 'failed', error: 'missing XAI_API_KEY', attempts: 0, elapsedMs: 0 }));
+  const viaAicoo = Boolean(opts.bearer);
+  if (!viaAicoo && !apiKey) {
+    throw new ModelError('failed', 'No Grok access: pass an Aicoo bearer with Grok enabled, or set XAI_API_KEY.',
+      record({ ...base, status: 'failed', error: 'no Aicoo bearer and no XAI_API_KEY', attempts: 0, elapsedMs: 0 }));
   }
+  const strip = (t: string) => t.split(/\n*<suggestions?>/i)[0].trim();
 
   let lastError = '';
   let lastStatus: RunStatus = 'failed';
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
     try {
-      const res = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages: [
-            ...(opts.system ? [{ role: 'system', content: opts.system }] : []),
-            { role: 'user', content: prompt },
-          ],
-          temperature: opts.temperature ?? 0.9,
-          ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
-          ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
-        }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      const res = viaAicoo
+        ? await fetch(`${config.aicooBaseUrl}/api/v1/chat`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${opts.bearer}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: opts.system ? `${opts.system}\n\n${prompt}` : prompt,
+              model,
+              stream: false,
+              ...(opts.conversationId ? { conversationId: opts.conversationId } : {}),
+            }),
+            signal: AbortSignal.timeout(timeoutMs),
+          })
+        : await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model,
+              messages: [
+                ...(opts.system ? [{ role: 'system', content: opts.system }] : []),
+                { role: 'user', content: prompt },
+              ],
+              temperature: opts.temperature ?? 0.9,
+              ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
+              ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
+            }),
+            signal: AbortSignal.timeout(timeoutMs),
+          });
       const body = await res.text();
       if (!res.ok) {
         lastError = `HTTP ${res.status}: ${body.slice(0, 300)}`;
@@ -113,10 +131,20 @@ export async function grok(prompt: string, opts: GrokOptions): Promise<GrokResul
         continue;
       }
       const json = JSON.parse(body) as {
+        // Aicoo shape
+        response?: string; conversationId?: string; model?: string; deployment?: string;
+        type?: string; error?: string; message?: string;
+        // xAI shape
         choices?: Array<{ message?: { content?: string } }>;
         usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
       };
-      const text = (json.choices?.[0]?.message?.content ?? '').trim();
+      // Aicoo answers HTTP 200 with an error body for quota / model availability
+      if (json.type === 'error') {
+        lastError = `${json.error ?? 'AICOO_ERROR'}: ${(json.message ?? '').slice(0, 200)}`;
+        lastStatus = 'failed';
+        break;
+      }
+      const text = strip(String(json.response ?? json.choices?.[0]?.message?.content ?? ''));
       if (!text) {
         lastError = 'model returned an empty completion';
         lastStatus = 'failed';
@@ -127,6 +155,7 @@ export async function grok(prompt: string, opts: GrokOptions): Promise<GrokResul
         text,
         run: record({
           ...base, output: text, status: 'ok', attempts: attempt,
+          model: json.deployment ?? json.model ?? model,
           promptTokens: json.usage?.prompt_tokens,
           completionTokens: json.usage?.completion_tokens,
           totalTokens: json.usage?.total_tokens,
