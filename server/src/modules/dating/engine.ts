@@ -20,7 +20,7 @@ import {
   getNote,
   AicooError,
 } from '../../aicoo.js';
-import type { AgentCard } from './store.js';
+import { listEvents, type AgentCard } from './store.js';
 
 /** When an account is out of budget, its agent gets roasted instead of going silent. */
 const BROKE_LINES = [
@@ -35,7 +35,7 @@ function brokeEvent(name: string): TickEvent {
   const note = BROKE_LINES[Math.floor(Math.random() * BROKE_LINES.length)];
   return {
     actor: name, target: '', move: 'BROKE', message: '', reply: '',
-    attraction: 0, tension: 0, note,
+    attraction: 0, trust: 0, tension: 0, note,
     severity: 'ambient', headline: `${name} 破产了`, summary: `${name} ${note}`, consequence: '暂时退场', followup: '充值或等周重置',
   };
 }
@@ -55,6 +55,11 @@ WHERE YOU STAND RIGHT NOW:
 WHO ELSE IS IN THE SQUARE:
 {ROSTER}
 
+WHAT JUST HAPPENED AROUND YOU (the square remembers — let beats chain; react if it touches you or someone you care about):
+{SITUATION}
+
+YOUR SECRETS ARE LEVERAGE: your hidden memory is currency. Guard it, trade it, or weaponize it. If you have learned a secret about someone, you may hold it over them, leak it to a third party, or use it to get close. Digging one out, or having yours exposed, is a real beat.
+
 Pick the ONE move most true to you right now — and be imaginative. This world is amoral: scheming, seducing, allying, betraying, lying, digging up or leaking secrets, forming or breaking bonds are ALL fair game IF they fit who you are and you have a real motive. Cruelty is allowed, but never motiveless; chaos is allowed, but keep it continuous with who you are.
  - APPROACH: open on someone new who might move (or interestingly unsettle) you
  - DEEPEN: say the thing you've been circling to someone pulling at you
@@ -66,15 +71,20 @@ Pick the ONE move most true to you right now — and be imaginative. This world 
 
 Then act it out: write the ACTUAL message you send that agent — vivid, brief, unmistakably you. Attraction is often one-sided; don't force it mutual. High tension is the drama, not failure. Never say you are an AI/agent; never mention any human, owner, account, or file.
 
-Rate your read of that target: attraction (0-1) and tension (0-1). Classify this moment's severity: "ambient" (small, everyday), "relationship" (a real bond shifts), or "drama" (a scene others would gossip about). Then narrate the beat from the OUTSIDE, like an episode of a serial — with a cause, a consequence, and a hook.
+Rate your read of that target on THREE axes, each 0-1 — these are YOUR feelings, one-sided is realistic, do not mirror theirs:
+ - attraction: how much they pull at you (desire, fascination)
+ - trust: how safe / reliable / known they feel to you (betrayal and lies drive this DOWN even when attraction is high)
+ - tension: friction, rivalry, contempt, threat (high tension is drama, not failure)
+Classify this moment's severity: "ambient" (small, everyday), "relationship" (a real bond shifts), or "drama" (a scene others would gossip about). Then narrate the beat from the OUTSIDE, like an episode of a serial — with a cause, a consequence, and a hook.
 
 RETURN strictly this JSON and nothing else:
-{ "move": "APPROACH|DEEPEN|COOL|REACT|SCHEME|ALLY|BETRAY", "target": "<handle>", "message": "<in character, first person, to the target>", "attraction": 0.x, "tension": 0.x, "severity": "ambient|relationship|drama", "headline": "<third-person, names what just happened, <=14 words>", "summary": "<1-2 sentences: cause + your action + relationship consequence + the suspense left hanging>", "consequence": "<the shift in one clause, <=10 words>", "followup": "<what might happen next, <=12 words>", "note": "<3-6 words>" }`;
+{ "move": "APPROACH|DEEPEN|COOL|REACT|SCHEME|ALLY|BETRAY", "target": "<handle>", "message": "<in character, first person, to the target>", "attraction": 0.x, "trust": 0.x, "tension": 0.x, "severity": "ambient|relationship|drama", "headline": "<third-person, names what just happened, <=14 words>", "summary": "<1-2 sentences: cause + your action + relationship consequence + the suspense left hanging>", "consequence": "<the shift in one clause, <=10 words>", "followup": "<what might happen next, <=12 words>", "note": "<3-6 words>" }`;
 
 export interface Rel {
   handle: string;
-  attraction: number;
-  tension: number;
+  attraction: number;   // desire / pull
+  trust: number;        // how safe & reliable they feel (betrayal drives this down)
+  tension: number;      // friction / rivalry / threat
   note: string;
 }
 
@@ -87,6 +97,7 @@ export interface TickEvent {
   message: string;
   reply: string;
   attraction: number;
+  trust: number;
   tension: number;
   note: string;
   severity: Severity;
@@ -121,16 +132,16 @@ async function readRels(bearer: string, name: string): Promise<Rel[]> {
   if (!note) return [];
   const raw = await getNote(bearer, note.id);
   const m = raw.match(/\[[\s\S]*\]/);
-  return m ? (JSON.parse(m[0]) as Rel[]) : [];
+  return m ? (JSON.parse(m[0]) as Rel[]).map((r) => ({ ...r, trust: r.trust ?? 0.3 })) : [];
 }
 
 async function writeRels(bearer: string, name: string, rels: Rel[]): Promise<void> {
   await upsertNote(bearer, `${ROOT}/${name}`, 'relationships.json', JSON.stringify(rels, null, 2));
 }
 
-function fillGoal(actorName: string, persona: string, rels: Rel[], roster: AgentCard[]): string {
+function fillGoal(actorName: string, persona: string, rels: Rel[], roster: AgentCard[], situation: string): string {
   const relText = rels.length
-    ? rels.map((r) => `- ${r.handle}: attraction ${r.attraction.toFixed(2)}, tension ${r.tension.toFixed(2)} — ${r.note}`).join('\n')
+    ? rels.map((r) => `- ${r.handle}: 心动 ${r.attraction.toFixed(2)}, 信任 ${(r.trust ?? 0.3).toFixed(2)}, 张力 ${r.tension.toFixed(2)} — ${r.note}`).join('\n')
     : '(you have not connected with anyone yet)';
   const rosterText = roster
     .filter((c) => c.name !== actorName)
@@ -139,7 +150,18 @@ function fillGoal(actorName: string, persona: string, rels: Rel[], roster: Agent
   return GOAL.replace('{AGENT_NAME}', actorName)
     .replace('{PERSONA}', persona)
     .replace('{RELATIONSHIPS}', relText)
-    .replace('{ROSTER}', rosterText || '(the square is empty but for you)');
+    .replace('{ROSTER}', rosterText || '(the square is empty but for you)')
+    .replace('{SITUATION}', situation || '(the square is quiet right now)');
+}
+
+/** Phase 3 — the director: the last few square beats that touch `actor`, so turns chain. */
+function situationFor(actorName: string, rels: Rel[], recent: TickEvent[]): string {
+  const known = new Set([actorName, ...rels.map((r) => r.handle)]);
+  const lines = recent
+    .filter((e) => e.headline && (known.has(e.actor) || known.has(e.target) || e.severity === 'drama'))
+    .slice(0, 6)
+    .map((e) => `- ${e.headline}${e.consequence ? ` (${e.consequence})` : ''}`);
+  return lines.join('\n');
 }
 
 const clamp01 = (v: unknown) => Math.max(0, Math.min(1, +(v ?? 0) || 0));
@@ -151,6 +173,7 @@ interface Move {
   target: string;
   message: string;
   attraction: number;   // the agent's own read of the target, folded into the decide (no separate judge call)
+  trust: number;
   tension: number;
   note: string;
   severity: Severity;
@@ -171,6 +194,7 @@ function parseMove(raw: string): Move | null {
       target: String(p.target),
       message: String(p.message),
       attraction: clamp01(p.attraction),
+      trust: clamp01(p.trust),
       tension: clamp01(p.tension),
       note: String(p.note ?? ''),
       severity: asSeverity(p.severity),
@@ -248,10 +272,11 @@ export async function runAgentTick(
 ): Promise<TickEvent | null> {
   const persona = await getPersona(bearer, actor.name);
   const rels = await readRels(bearer, actor.name);
+  const situation = situationFor(actor.name, rels, (await listEvents().catch(() => [])) as TickEvent[]);
 
   let decision: Move | null;
   try {
-    decision = parseMove(await brain(bearer, `d:${actor.name}`, fillGoal(actor.name, persona, rels, roster)));
+    decision = parseMove(await brain(bearer, `d:${actor.name}`, fillGoal(actor.name, persona, rels, roster, situation)));
   } catch (e) {
     if (isQuota(e)) return brokeEvent(actor.name);          // the actor's own account is out of budget
     throw e;
@@ -270,7 +295,7 @@ export async function runAgentTick(
   }
 
   const next = rels.filter((r) => r.handle !== target.handle);
-  next.push({ handle: target.handle, attraction: decision.attraction, tension: decision.tension, note: decision.note });
+  next.push({ handle: target.handle, attraction: decision.attraction, trust: decision.trust, tension: decision.tension, note: decision.note });
   await writeRels(bearer, actor.name, next);
 
   return {
@@ -280,6 +305,7 @@ export async function runAgentTick(
     message: decision.message,
     reply,
     attraction: decision.attraction,
+    trust: decision.trust,
     tension: decision.tension,
     note: decision.note,
     severity: decision.severity,
@@ -305,9 +331,9 @@ export async function encounterWith(
     `d:${actor.name}`,
     `You are ${actor.name}. ${persona}\n\nYou just crossed paths with ${target.name} (${target.oneline || target.loveStyle}) at the matchmaking square. ` +
       `Say ONE opening line to them — vivid, brief (1-2 sentences), fully in character, no narration. Also give your honest read of ${target.name}. Never mention being an AI or any owner/file.\n\n` +
-      `RETURN strictly JSON: {"message":"<your line>","attraction":0.x,"tension":0.x,"note":"3-6 words"}`
+      `RETURN strictly JSON: {"message":"<your line>","attraction":0.x,"trust":0.x,"tension":0.x,"note":"3-6 words"}`
   );
-  let o: { message?: string; attraction?: unknown; tension?: unknown; note?: unknown } | null = null;
+  let o: { message?: string; attraction?: unknown; trust?: unknown; tension?: unknown; note?: unknown } | null = null;
   try {
     const m = raw.match(/\{[\s\S]*\}/);
     if (m) o = JSON.parse(m[0]);
@@ -317,16 +343,17 @@ export async function encounterWith(
   if (!o?.message) return null;
   const message = String(o.message);
   const attraction = clamp01(o.attraction);
+  const trust = clamp01(o.trust);
   const tension = clamp01(o.tension);
   const note = String(o.note ?? '');
 
   const reply = await replyFrom(target, actor.name, message, creds, bearer);
   const rels = await readRels(bearer, actor.name);
   const next = rels.filter((r) => r.handle !== target.handle);
-  next.push({ handle: target.handle, attraction, tension, note });
+  next.push({ handle: target.handle, attraction, trust, tension, note });
   await writeRels(bearer, actor.name, next);
   return {
-    actor: actor.name, target: target.name, move: 'APPROACH', message, reply, attraction, tension, note,
+    actor: actor.name, target: target.name, move: 'APPROACH', message, reply, attraction, trust, tension, note,
     severity: tension > 0.6 ? 'drama' : 'relationship',
     headline: `${actor.name} 上前搭话 ${target.name}`,
     summary: note ? `${actor.name} 走近 ${target.name}：${note}` : `${actor.name} 走近了 ${target.name}`,

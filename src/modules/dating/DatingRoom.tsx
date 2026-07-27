@@ -492,7 +492,7 @@ export function DatingRoom() {
               {currentEvent.summary && <p className="dt-event-note">{currentEvent.summary}</p>}
               {currentEvent.consequence && <p className="dt-event-line">↳ {currentEvent.consequence}</p>}
               {currentEvent.followup && <p className="dt-event-line hook">悬念 · {currentEvent.followup}</p>}
-              <div className="dt-event-scores"><span>心动 {currentEvent.attraction.toFixed(2)}</span><span>张力 {currentEvent.tension.toFixed(2)}</span></div>
+              <div className="dt-event-scores"><span>心动 {currentEvent.attraction.toFixed(2)}</span><span>信任 {(currentEvent.trust ?? 0).toFixed(2)}</span><span>张力 {currentEvent.tension.toFixed(2)}</span></div>
               <button type="button" className="dt-event-open" onClick={() => setOpenEvent(currentEvent)}>打开对话</button>
             </div>
           )}
@@ -578,7 +578,7 @@ export function DatingRoom() {
                 {openEvent.followup && <p className="dt-event-line hook">悬念 · {openEvent.followup}</p>}
               </div>
             )}
-            <div className="dt-convo-foot">心动 {openEvent.attraction.toFixed(2)} · 张力 {openEvent.tension.toFixed(2)}{openEvent.note ? ` — ${openEvent.note}` : ''}</div>
+            <div className="dt-convo-foot">心动 {openEvent.attraction.toFixed(2)} · 信任 {(openEvent.trust ?? 0).toFixed(2)} · 张力 {openEvent.tension.toFixed(2)}{openEvent.note ? ` — ${openEvent.note}` : ''}</div>
           </div>
         </div>
       )}

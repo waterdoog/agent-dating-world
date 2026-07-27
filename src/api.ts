@@ -87,6 +87,7 @@ export interface DatingTickEvent {
   message: string;
   reply: string;
   attraction: number;
+  trust?: number;
   tension: number;
   note: string;
   severity?: 'ambient' | 'relationship' | 'drama';
