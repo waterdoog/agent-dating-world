@@ -12,6 +12,7 @@
     "test": "tsx --test server/src/*.test.ts",
     "test:backend": "tsx server/src/backend-canary.ts",
     "test:backend:fight": "tsx server/src/fighter-language-canary.ts",
+    "test:backend:fight:balance": "tsx server/src/fighter-balance-canary.ts",
     "db:status": "tsx server/src/database/status.ts",
     "db:migrate": "tsx server/src/database/migrate.ts",
     "db:create": "tsx server/src/database/create-migration.ts",

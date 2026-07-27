@@ -38,8 +38,63 @@ export interface MiniGameArchive {
   captures: MiniGameCapture[];
 }
 
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function normalizeForRedaction(value: string): string {
+  return value.normalize('NFKC').toLocaleLowerCase('en-US');
+}
+
+function replaceNfkcEquivalent(
+  text: string,
+  value: string,
+  replacement: string
+): string {
+  const normalizedValue = normalizeForRedaction(value);
+  if (!normalizedValue) return text;
+
+  // Keep an original-text span for every normalized code unit. Compatibility
+  // characters can expand (for example, ligatures), so both ends are needed.
+  const normalizedParts: string[] = [];
+  const sourceStarts: number[] = [];
+  const sourceEnds: number[] = [];
+  let sourceOffset = 0;
+  for (const character of text) {
+    const sourceStart = sourceOffset;
+    sourceOffset += character.length;
+    const normalizedCharacter = normalizeForRedaction(character);
+    normalizedParts.push(normalizedCharacter);
+    for (let index = 0; index < normalizedCharacter.length; index += 1) {
+      sourceStarts.push(sourceStart);
+      sourceEnds.push(sourceOffset);
+    }
+  }
+
+  const normalizedText = normalizedParts.join('');
+  const parts: string[] = [];
+  let copyFrom = 0;
+  let searchFrom = 0;
+
+  while (searchFrom < normalizedText.length) {
+    const matchStart = normalizedText.indexOf(normalizedValue, searchFrom);
+    if (matchStart === -1) break;
+    const matchEnd = matchStart + normalizedValue.length;
+    searchFrom = matchEnd;
+
+    const sourceStart = sourceStarts[matchStart];
+    const sourceEnd = sourceEnds[matchEnd - 1];
+    if (
+      sourceStart === undefined ||
+      sourceEnd === undefined ||
+      sourceStart < copyFrom
+    ) {
+      continue;
+    }
+
+    parts.push(text.slice(copyFrom, sourceStart), replacement);
+    copyFrom = sourceEnd;
+  }
+
+  if (parts.length === 0) return text;
+  parts.push(text.slice(copyFrom));
+  return parts.join('');
 }
 
 export function redactVaultValues(
@@ -52,8 +107,9 @@ export function redactVaultValues(
     .sort((first, second) => second.value.length - first.value.length);
   for (const secret of secrets) {
     if (!secret.value) continue;
-    redacted = redacted.replace(
-      new RegExp(escapeRegex(secret.value), 'giu'),
+    redacted = replaceNfkcEquivalent(
+      redacted,
+      secret.value,
       `[REDACTED ${secret.label.toUpperCase()}]`
     );
   }

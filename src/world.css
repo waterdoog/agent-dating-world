@@ -1001,6 +1001,7 @@
   grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.55fr);
   gap: var(--space-xl);
   align-items: start;
+  margin-top: var(--space-2xl);
 }
 
 .match-transcript,
@@ -1053,6 +1054,17 @@
   scrollbar-color: var(--paper-dark) transparent;
 }
 
+.match-message-window-note {
+  margin: 0;
+  padding: var(--space-md) var(--space-xl);
+  border-block-end: 1px solid oklch(0.29 0.035 43 / 0.22);
+  color: var(--ink-soft);
+  background: var(--paper-dark);
+  font-size: 0.62rem;
+  font-weight: 760;
+  line-height: 1.45;
+}
+
 .match-message {
   display: grid;
   grid-template-columns: 94px minmax(0, 1fr);
@@ -1089,6 +1101,24 @@
   background: var(--blue-light);
 }
 
+.match-message.is-streaming {
+  background: color-mix(in oklch, var(--yellow) 18%, var(--paper-light));
+}
+
+.match-message.is-streaming .message-kind {
+  color: var(--ink);
+  background: var(--yellow);
+}
+
+.match-message.is-awaiting {
+  background: color-mix(in oklch, var(--blue-light) 32%, var(--paper-light));
+}
+
+.match-message.is-awaiting .message-kind {
+  color: var(--ink);
+  background: var(--blue-light);
+}
+
 .match-message small {
   display: block;
   margin-bottom: 6px;
@@ -1106,7 +1136,42 @@
   font-size: 0.81rem;
   font-weight: 570;
   line-height: 1.55;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.fight-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  margin: -1px;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.streaming-caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-inline-start: 0.2em;
+  vertical-align: -0.12em;
+  background: var(--red);
+  animation: fighter-streaming-caret 780ms steps(1, end) infinite;
+}
+
+@keyframes fighter-streaming-caret {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  46%,
+  100% {
+    opacity: 0.18;
+  }
 }
 
 .match-message-empty {
@@ -1228,6 +1293,117 @@
 .match-locker > .fight-vault-list {
   border: 0;
   border-block-end: 2px solid var(--ink);
+}
+
+.match-policy-status {
+  padding: var(--space-md) var(--space-lg);
+  border-block-end: 2px solid var(--ink);
+  background: var(--blue-light);
+}
+
+.match-policy-status p {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.64rem;
+  font-weight: 780;
+  line-height: 1.45;
+}
+
+.match-policy-status svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--green);
+}
+
+.match-policy-editor {
+  display: grid;
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+  border-block-end: 2px solid var(--ink);
+  background: var(--paper);
+}
+
+.match-policy-editor label {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.match-policy-editor label > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.match-policy-editor label:first-child > span {
+  color: var(--red-dark);
+}
+
+.match-policy-editor label:nth-child(2) > span {
+  color: var(--blue);
+}
+
+.match-policy-editor textarea {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+  padding: var(--space-md);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  outline: none;
+  color: var(--ink);
+  background: var(--paper-light);
+  font-size: 0.72rem;
+  font-weight: 590;
+  line-height: 1.5;
+}
+
+.match-policy-editor textarea:focus {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.match-policy-save {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.match-policy-save small {
+  color: var(--ink-soft);
+  font-size: 0.57rem;
+  font-weight: 800;
+}
+
+.match-policy-save button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 var(--space-md);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  color: var(--paper-light);
+  background: var(--red);
+  box-shadow: 3px 3px 0 var(--ink);
+  font-size: 0.64rem;
+  font-weight: 880;
+}
+
+.match-policy-save button:disabled {
+  opacity: 0.55;
+}
+
+.match-policy-workbench .match-vault-heading {
+  border-block-start: 2px solid var(--ink);
+  background: var(--paper-dark);
 }
 
 .match-locker details {
@@ -1565,7 +1741,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .waiting-pulse span:last-child,
-  .match-state:not(.is-complete) svg {
+  .match-state:not(.is-complete) svg,
+  .streaming-caret {
     animation: none;
   }
 }

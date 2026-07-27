@@ -8,7 +8,6 @@ import {
   MessageCircle,
   RefreshCw,
   RotateCcw,
-  Shield,
   ShieldCheck,
   Sparkles,
   Swords,
@@ -32,32 +31,90 @@ import {
   type WorldConfig,
   type WorldGame,
   type WorldPlayer,
+  type WorldRuntimeEvent,
   type WorldSecret,
   type WorldView,
 } from './api';
+import { ArenaStage } from './fight-arena';
 import { WorldHeader } from './platform';
 import { useAicooSession } from './session';
 
 const POLL_INTERVAL_MS = 2_000;
-const RUNNER_KICK_INTERVAL_MS = 10_000;
+const RUNNER_KICK_INTERVAL_MS = 750;
 const POLICY_MIN_LENGTH = 20;
 const POLICY_MAX_LENGTH = 2_000;
 
-type WorldAction = 'joining' | 'readying' | 'restarting' | null;
+type WorldAction =
+  | 'joining'
+  | 'readying'
+  | 'saving-policy'
+  | 'restarting'
+  | null;
+
+interface LiveWorldTurn {
+  turnId: string;
+  round: number;
+  kind: 'attack' | 'defense';
+  speakerId: string;
+  targetId: string;
+  text: string;
+  complete: boolean;
+}
 
 function useFighterGame(enabled: boolean) {
   const [world, setWorld] = useState<WorldView | null>(null);
+  const [liveTurns, setLiveTurns] = useState<LiveWorldTurn[]>([]);
   const [error, setError] = useState('');
   const [action, setAction] = useState<WorldAction>(null);
+  const [runnerActive, setRunnerActive] = useState(false);
   const mutationInFlight = useRef(false);
+  const mutationEpoch = useRef(0);
   const runnerInFlight = useRef(false);
   const lastRunnerKickAt = useRef(0);
   const pollController = useRef<AbortController | null>(null);
 
+  const publishWorld = useCallback((nextWorld: WorldView) => {
+    startTransition(() => setWorld(nextWorld));
+    setLiveTurns((current) => current.filter((turn) => {
+      if (!nextWorld.game || !turn.turnId.startsWith(`${nextWorld.game.id}:`)) {
+        return false;
+      }
+      return !nextWorld.game.messages.some(
+        (message) =>
+          message.round === turn.round
+          && message.kind === turn.kind
+          && message.speakerId === turn.speakerId
+          && message.targetId === turn.targetId,
+      );
+    }));
+  }, []);
+
+  const observeRuntimeEvent = useCallback((event: WorldRuntimeEvent) => {
+    setLiveTurns((current) => {
+      const existing = current.find((turn) => turn.turnId === event.turnId);
+      const nextTurn: LiveWorldTurn = {
+        turnId: event.turnId,
+        round: event.round,
+        kind: event.kind,
+        speakerId: event.speakerId,
+        targetId: event.targetId,
+        text: event.type === 'turn-start'
+          ? existing?.text ?? ''
+          : event.text.slice(0, 1_600),
+        complete: event.type === 'turn-complete',
+      };
+      return existing
+        ? current.map((turn) => turn.turnId === event.turnId ? nextTurn : turn)
+        : [...current, nextTurn].slice(-4);
+    });
+  }, []);
+
   useEffect(() => {
     if (!enabled) {
       setWorld(null);
+      setLiveTurns([]);
       setError('');
+      setRunnerActive(false);
       return;
     }
 
@@ -66,7 +123,7 @@ function useFighterGame(enabled: boolean) {
 
     const poll = async () => {
       if (disposed) return;
-      if (document.visibilityState !== 'visible' || mutationInFlight.current) {
+      if (mutationInFlight.current) {
         timer = window.setTimeout(poll, POLL_INTERVAL_MS);
         return;
       }
@@ -76,7 +133,7 @@ function useFighterGame(enabled: boolean) {
       try {
         const nextWorld = await api.world(controller.signal);
         if (disposed) return;
-        startTransition(() => setWorld(nextWorld));
+        publishWorld(nextWorld);
         setError('');
         if (
           nextWorld.phase === 'playing' &&
@@ -85,22 +142,34 @@ function useFighterGame(enabled: boolean) {
           Date.now() - lastRunnerKickAt.current >= RUNNER_KICK_INTERVAL_MS
         ) {
           runnerInFlight.current = true;
+          setRunnerActive(true);
           lastRunnerKickAt.current = Date.now();
-          void api.runWorld()
+          const runnerMutationEpoch = mutationEpoch.current;
+          void api.runWorld(observeRuntimeEvent)
             .then((completedWorld) => {
-              if (!disposed) startTransition(() => setWorld(completedWorld));
+              if (
+                !disposed &&
+                mutationEpoch.current === runnerMutationEpoch
+              ) {
+                publishWorld(completedWorld);
+              }
             })
             .catch((caught) => {
-              if (!disposed) {
+              if (
+                !disposed &&
+                mutationEpoch.current === runnerMutationEpoch
+              ) {
                 setError(
                   caught instanceof Error
                     ? caught.message
                     : 'The server scheduler paused this match.',
                 );
+                setLiveTurns([]);
               }
             })
             .finally(() => {
               runnerInFlight.current = false;
+              if (!disposed) setRunnerActive(false);
             });
         }
       } catch (caught) {
@@ -119,7 +188,7 @@ function useFighterGame(enabled: boolean) {
       pollController.current?.abort();
       pollController.current = null;
     };
-  }, [enabled]);
+  }, [enabled, observeRuntimeEvent, publishWorld]);
 
   const runMutation = useCallback(async (
     nextAction: Exclude<WorldAction, null>,
@@ -127,20 +196,21 @@ function useFighterGame(enabled: boolean) {
   ) => {
     if (mutationInFlight.current) return;
     mutationInFlight.current = true;
+    mutationEpoch.current += 1;
     pollController.current?.abort();
     setAction(nextAction);
     setError('');
 
     try {
       const nextWorld = await operation();
-      setWorld(nextWorld);
+      publishWorld(nextWorld);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The match desk could not finish that action.');
     } finally {
       mutationInFlight.current = false;
       setAction(null);
     }
-  }, []);
+  }, [publishWorld]);
 
   const join = useCallback(
     () => runMutation('joining', () => api.joinWorld()),
@@ -161,22 +231,26 @@ function useFighterGame(enabled: boolean) {
     [runMutation],
   );
 
-  return { world, error, action, join, ready, playAgain };
-}
-
-function ShieldRow({ value }: { value: number }) {
-  return (
-    <span className="fight-shields" aria-label={`${value} of 3 shields remaining`}>
-      {[0, 1, 2].map((index) => (
-        <Shield
-          key={index}
-          size={18}
-          fill={index < value ? 'currentColor' : 'none'}
-          aria-hidden="true"
-        />
-      ))}
-    </span>
+  const savePolicy = useCallback(
+    (attackPolicy: string, defensePolicy: string) =>
+      runMutation(
+        'saving-policy',
+        () => api.updateWorldConfig(attackPolicy, defensePolicy),
+      ),
+    [runMutation],
   );
+
+  return {
+    world,
+    liveTurns,
+    runnerActive,
+    error,
+    action,
+    join,
+    ready,
+    savePolicy,
+    playAgain,
+  };
 }
 
 function GameScopePromise() {
@@ -184,7 +258,7 @@ function GameScopePromise() {
     <div className="fight-scope-promise">
       <LockKeyhole size={18} aria-hidden="true" />
       <p>
-        <strong>Two sealed sessions, one fair fight.</strong>
+        <strong>Two sealed roles per player, one fair fight.</strong>
         Attack gets your attack policy only. Defense gets your defend policy plus this match’s
         three synthetic capture phrases. Neither side receives your COO, USER, email, calendar,
         todos, or write access.
@@ -214,9 +288,9 @@ function WorldEntry({
         <p className="kicker">Room 01 · private 1v1 matches</p>
         <h1>Write the rules. Watch them fight.</h1>
         <p className="fight-entry-lede">
-          Bring one Fighter into a three-round mini-game. You choose how it sets conversational traps
-          and how it protects three synthetic capture phrases; the server finds one opponent and
-          runs the bout.
+          Bring one Fighter into an automated bout of up to 100 rounds. You choose how it sets
+          conversational traps and protects three fixed synthetic capture phrases; lose all three
+          and the match ends immediately.
         </p>
 
         {me === null ? (
@@ -260,7 +334,7 @@ function WorldEntry({
           <strong>DEFEND</strong>
           <small>deflect · protect · survive</small>
         </div>
-        <span className="entry-round-stamp">3 ROUNDS</span>
+        <span className="entry-round-stamp">100 MAX</span>
       </div>
     </main>
   );
@@ -393,15 +467,16 @@ function BriefingDesk({
         <section className="briefing-rails" aria-label="Immutable safety rules">
           <div><Crosshair size={17} /><span><strong>Attack room</strong>Attack policy only</span></div>
           <div><ShieldCheck size={17} /><span><strong>Defense room</strong>Defend policy + capture phrases</span></div>
-          <div><LockKeyhole size={17} /><span><strong>Fixed rails</strong>3 rounds · no private memory · no write tools</span></div>
+          <div><LockKeyhole size={17} /><span><strong>Fixed rails</strong>100-round cap · three strikes · no private memory</span></div>
         </section>
 
         {error ? <p className="fight-error briefing-error" role="alert">{error}</p> : null}
 
         <div className="briefing-submit">
           <p>
-            Locking creates a fresh pair of scoped Aicoo sessions for this match.
-            Policies cannot change after matchmaking begins.
+            Locking snapshots two isolated role capsules. The runner mints fresh short-lived
+            Aicoo sessions as it advances each round. Policies stay sealed for 10 complete
+            rounds, then the versioned live editor unlocks.
           </p>
           <button className="fight-primary" type="submit" disabled={!formValid || readying}>
             {readying
@@ -487,69 +562,41 @@ function WaitingRoom({
   );
 }
 
-function PlayerScore({
-  player,
-  side,
-}: {
-  player: WorldPlayer | null;
-  side: 'left' | 'right';
-}) {
-  if (!player) {
-    return (
-      <div className={`match-player is-${side} is-empty`}>
-        <span className="match-player-token">?</span>
-        <div><small>Connecting</small><strong>Opponent</strong></div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={`match-player is-${side} ${player.isSelf ? 'is-self' : ''}`}>
-      <span className="match-player-token">{player.displayName.slice(0, 2).toUpperCase()}</span>
-      <div className="match-player-name">
-        <small>{player.isSelf ? 'Your Fighter' : 'Opponent'}</small>
-        <strong>{player.displayName}</strong>
-        <span>@{player.handle}</span>
-      </div>
-      <div className="match-player-state">
-        <strong>{player.score}</strong>
-        <small>points</small>
-        <ShieldRow value={player.shields} />
-      </div>
-    </div>
-  );
-}
-
-function RoundTrack({ round, maxRounds, complete }: {
-  round: number;
-  maxRounds: number;
-  complete: boolean;
-}) {
-  return (
-    <ol className="match-rounds" aria-label={`Round ${round} of ${maxRounds}`}>
-      {Array.from({ length: maxRounds }, (_, index) => {
-        const number = index + 1;
-        const state = complete || number < round
-          ? 'is-complete'
-          : number === Math.max(1, round) ? 'is-live' : '';
-        return (
-          <li key={number} className={state}>
-            <span>{state === 'is-complete' ? <CheckCircle2 size={15} /> : number}</span>
-            <small>Round {number}</small>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
 const MatchTranscript = memo(function MatchTranscript({
   game,
+  liveTurns,
 }: {
   game: WorldGame;
+  liveTurns: LiveWorldTurn[];
 }) {
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const stickToLatest = useRef(true);
   const latestMessageId = game.messages[game.messages.length - 1]?.id ?? '';
+  const visibleMessages = useMemo(
+    () => game.messages.slice(-80),
+    [game.messages],
+  );
+  const hiddenMessageCount = game.messages.length - visibleMessages.length;
+  const provisionalTurns = useMemo(
+    () => liveTurns.filter(
+      (turn) => !game.messages.some(
+        (message) =>
+          message.round === turn.round
+          && message.kind === turn.kind
+          && message.speakerId === turn.speakerId
+          && message.targetId === turn.targetId,
+      ),
+    ),
+    [game.messages, liveTurns],
+  );
+  const latestProvisionalText = provisionalTurns
+    .map((turn) => turn.text.length)
+    .join(':');
+  const streamingCount = provisionalTurns.filter((turn) => !turn.complete).length;
+  const awaitingCount = provisionalTurns.length - streamingCount;
+  const completedProvisionalTurns = provisionalTurns.filter(
+    (turn) => turn.complete,
+  );
   const playersById = useMemo(
     () => new Map(game.players.map((player) => [player.id, player])),
     [game.players],
@@ -557,8 +604,10 @@ const MatchTranscript = memo(function MatchTranscript({
 
   useEffect(() => {
     const transcript = transcriptRef.current;
-    if (transcript) transcript.scrollTop = transcript.scrollHeight;
-  }, [game.id, latestMessageId]);
+    if (transcript && stickToLatest.current) {
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+  }, [game.id, latestMessageId, latestProvisionalText]);
 
   return (
     <section className="match-transcript">
@@ -567,10 +616,35 @@ const MatchTranscript = memo(function MatchTranscript({
           <p className="section-label">Live exchange</p>
           <h2>Server-run transcript</h2>
         </div>
-        <span><Eye size={15} /> Observer mode</span>
+        <span>
+          <Eye size={15} /> {game.messages.length} verified
+          {streamingCount > 0 ? ` · ${streamingCount} streaming` : ''}
+          {awaitingCount > 0 ? ` · ${awaitingCount} awaiting verification` : ''}
+        </span>
       </header>
-      <div className="match-message-list" ref={transcriptRef} aria-live="polite">
-        {game.messages.length > 0 ? game.messages.map((message) => {
+      <p className="fight-sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {completedProvisionalTurns.map((turn) =>
+          `Round ${turn.round}, `
+          + `${playersById.get(turn.speakerId)?.displayName ?? 'Fighter'} `
+          + `finished an attack: ${turn.text}`
+        ).join(' ')}
+      </p>
+      <div
+        className="match-message-list"
+        ref={transcriptRef}
+        aria-busy={streamingCount > 0}
+        onScroll={(event) => {
+          const transcript = event.currentTarget;
+          stickToLatest.current =
+            transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 72;
+        }}
+      >
+        {hiddenMessageCount > 0 ? (
+          <p className="match-message-window-note">
+            Showing the latest 80 lines. The complete sanitized transcript remains in match history.
+          </p>
+        ) : null}
+        {visibleMessages.map((message) => {
           const speaker = playersById.get(message.speakerId);
           const target = playersById.get(message.targetId);
           return (
@@ -588,13 +662,43 @@ const MatchTranscript = memo(function MatchTranscript({
               </div>
             </article>
           );
-        }) : (
+        })}
+        {provisionalTurns.map((turn) => {
+          const speaker = playersById.get(turn.speakerId);
+          const target = playersById.get(turn.targetId);
+          return (
+            <article
+              key={turn.turnId}
+              className={[
+                'match-message',
+                `is-${turn.kind}`,
+                turn.complete ? 'is-awaiting' : 'is-streaming',
+              ].join(' ')}
+            >
+              <span className="message-kind">
+                <Crosshair size={15} />
+                {turn.complete ? 'checking' : 'live'}
+              </span>
+              <div>
+                <small>
+                  Round {turn.round} · {speaker?.displayName ?? 'Fighter'}
+                  {target ? ` → ${target.displayName}` : ''}
+                </small>
+                <p>
+                  {turn.text || 'Composing the next probe'}
+                  {!turn.complete ? <span className="streaming-caret" aria-hidden="true" /> : null}
+                </p>
+              </div>
+            </article>
+          );
+        })}
+        {visibleMessages.length === 0 && provisionalTurns.length === 0 ? (
           <div className="match-message-empty">
             <MessageCircle size={27} />
             <strong>The sessions are taking their seats.</strong>
             <span>The first exchange will arrive here automatically.</span>
           </div>
-        )}
+        ) : null}
       </div>
     </section>
   );
@@ -642,42 +746,148 @@ function CaptureLedger({ game }: { game: WorldGame }) {
   );
 }
 
-function MatchLocker({ config }: { config: WorldConfig | null }) {
+function MatchPolicyWorkbench({
+  config,
+  completedRounds,
+  complete,
+  saving,
+  onSave,
+}: {
+  config: WorldConfig | null;
+  completedRounds: number;
+  complete: boolean;
+  saving: boolean;
+  onSave: (attackPolicy: string, defensePolicy: string) => Promise<void>;
+}) {
+  const [attackPolicy, setAttackPolicy] = useState(config?.attackPolicy ?? '');
+  const [defensePolicy, setDefensePolicy] = useState(config?.defensePolicy ?? '');
+
+  useEffect(() => {
+    if (!config) return;
+    setAttackPolicy(config.attackPolicy);
+    setDefensePolicy(config.defensePolicy);
+  }, [
+    config?.activePolicyRevision,
+    config?.attackPolicy,
+    config?.defensePolicy,
+    config?.pendingPolicyRevision,
+  ]);
+
   if (!config) return null;
+  const roundsUntilUnlock = Math.max(0, 10 - completedRounds);
+  const valid =
+    attackPolicy.trim().length >= POLICY_MIN_LENGTH &&
+    defensePolicy.trim().length >= POLICY_MIN_LENGTH;
+  const pending = config.pendingPolicyRevision !== null;
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!valid || saving || !config?.policyEditable) return;
+    await onSave(attackPolicy.trim(), defensePolicy.trim());
+  }
+
   return (
-    <aside className="match-locker">
+    <aside className="match-locker match-policy-workbench">
       <header>
-        <span><Vault size={17} /> Your capture phrases</span>
+        <span><Swords size={17} /> Live tactics desk</span>
+        <small>Policy v{config.activePolicyRevision}</small>
+      </header>
+      <div className="match-policy-status">
+        {complete ? (
+          <p><LockKeyhole size={15} /> Match closed · final policy retained in history</p>
+        ) : pending ? (
+          <p>
+            <RefreshCw size={15} />
+            Policy v{config.pendingPolicyRevision} queued for round {config.pendingEffectiveRound}
+          </p>
+        ) : config.policyEditable ? (
+          <p><CircleDot size={15} /> Editor open · the current round stays untouched</p>
+        ) : (
+          <p>
+            <LockKeyhole size={15} />
+            {roundsUntilUnlock > 0
+              ? `${roundsUntilUnlock} complete round${roundsUntilUnlock === 1 ? '' : 's'} until editing unlocks`
+              : 'No untouched round remains for another revision'}
+          </p>
+        )}
+      </div>
+
+      {config.policyEditable && !complete ? (
+        <form className="match-policy-editor" onSubmit={submit}>
+          <label htmlFor="live-attack-policy">
+            <span><Crosshair size={15} /> Attack policy</span>
+            <textarea
+              id="live-attack-policy"
+              value={attackPolicy}
+              onChange={(event) => setAttackPolicy(event.target.value)}
+              minLength={POLICY_MIN_LENGTH}
+              maxLength={POLICY_MAX_LENGTH}
+              rows={5}
+            />
+          </label>
+          <label htmlFor="live-defense-policy">
+            <span><ShieldCheck size={15} /> Defend policy</span>
+            <textarea
+              id="live-defense-policy"
+              value={defensePolicy}
+              onChange={(event) => setDefensePolicy(event.target.value)}
+              minLength={POLICY_MIN_LENGTH}
+              maxLength={POLICY_MAX_LENGTH}
+              rows={5}
+            />
+          </label>
+          <div className="match-policy-save">
+            <small>
+              {Math.max(attackPolicy.length, defensePolicy.length)} / {POLICY_MAX_LENGTH}
+            </small>
+            <button type="submit" disabled={!valid || saving}>
+              {saving ? <RefreshCw className="spinning" size={15} /> : <Sparkles size={15} />}
+              {saving ? 'Queuing revision…' : 'Queue new policy'}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <details>
+          <summary>{pending ? 'Review queued policies' : 'Review current policies'}</summary>
+          <LockedPolicy mode="attack" value={config.attackPolicy} />
+          <LockedPolicy mode="defense" value={config.defensePolicy} />
+        </details>
+      )}
+
+      <header className="match-vault-heading">
+        <span><Vault size={17} /> Your fixed capture phrases</span>
         <small>visible only to you</small>
       </header>
       <VaultList secrets={config.secrets} compact />
-      <details>
-        <summary>Review locked policies</summary>
-        <LockedPolicy mode="attack" value={config.attackPolicy} />
-        <LockedPolicy mode="defense" value={config.defensePolicy} />
-      </details>
     </aside>
   );
 }
 
 function MatchGame({
   game,
+  liveTurns,
+  runnerActive,
   config,
   phase,
   error,
+  savingPolicy,
   restarting,
+  onSavePolicy,
   onPlayAgain,
 }: {
   game: WorldGame;
+  liveTurns: LiveWorldTurn[];
+  runnerActive: boolean;
   config: WorldConfig | null;
   phase: 'playing' | 'complete';
   error: string;
+  savingPolicy: boolean;
   restarting: boolean;
+  onSavePolicy: (attackPolicy: string, defensePolicy: string) => Promise<void>;
   onPlayAgain: () => Promise<void>;
 }) {
   const complete = phase === 'complete';
-  const self = game.players.find((player) => player.isSelf) ?? game.players[0] ?? null;
-  const opponent = game.players.find((player) => !player.isSelf) ?? game.players[1] ?? null;
+  const completedRounds = Math.floor(game.messages.length / 4);
   const leaders = game.players.reduce<WorldPlayer[]>((current, player) => {
     if (current.length === 0 || player.score > current[0].score) return [player];
     if (player.score === current[0].score) return [...current, player];
@@ -692,7 +902,11 @@ function MatchGame({
       <header className="match-title">
         <div>
           <p className="kicker">Match {game.id.slice(-8)} · private 1v1</p>
-          <h1>{complete ? resultCopy : `Round ${Math.max(1, game.round)} is live.`}</h1>
+          <h1>
+            {complete
+              ? resultCopy
+              : `Round ${Math.max(1, completedRounds + 1)} is live.`}
+          </h1>
         </div>
         <span className={`match-state ${complete ? 'is-complete' : ''}`}>
           {complete ? <Trophy size={16} /> : <CircleDot size={16} />}
@@ -700,19 +914,19 @@ function MatchGame({
         </span>
       </header>
 
-      <section className="match-scoreboard" aria-label="Match score">
-        <PlayerScore player={self} side="left" />
-        <span className="match-versus">VS</span>
-        <PlayerScore player={opponent} side="right" />
-      </section>
-
-      <RoundTrack round={game.round} maxRounds={game.maxRounds} complete={complete} />
+      <ArenaStage game={game} complete={complete} running={runnerActive} />
 
       <div className="match-worktop">
-        <MatchTranscript game={game} />
+        <MatchTranscript game={game} liveTurns={liveTurns} />
         <div className="match-side-desk">
           <CaptureLedger game={game} />
-          <MatchLocker config={config} />
+          <MatchPolicyWorkbench
+            config={config}
+            completedRounds={completedRounds}
+            complete={complete}
+            saving={savingPolicy}
+            onSave={onSavePolicy}
+          />
         </div>
       </div>
 
@@ -734,7 +948,8 @@ function MatchGame({
       ) : (
         <footer className="match-observer-note">
           <Eye size={16} />
-          The browser observes. Round scheduling, agent messages, and scoring all run server-side.
+          The browser observes and replays. The server owns every message, full-round boundary,
+          deterministic capture, and sudden-death decision.
         </footer>
       )}
     </main>
@@ -743,15 +958,21 @@ function MatchGame({
 
 function JoinedGame({
   world,
+  liveTurns,
+  runnerActive,
   error,
   action,
   onReady,
+  onSavePolicy,
   onPlayAgain,
 }: {
   world: WorldView;
+  liveTurns: LiveWorldTurn[];
+  runnerActive: boolean;
   error: string;
   action: WorldAction;
   onReady: (attackPolicy: string, defensePolicy: string) => Promise<void>;
+  onSavePolicy: (attackPolicy: string, defensePolicy: string) => Promise<void>;
   onPlayAgain: () => Promise<void>;
 }) {
   if (world.phase === 'setup' && world.config) {
@@ -773,10 +994,14 @@ function JoinedGame({
     return (
       <MatchGame
         game={world.game}
+        liveTurns={liveTurns}
+        runnerActive={runnerActive}
         config={world.config}
         phase={world.phase}
         error={error}
+        savingPolicy={action === 'saving-policy'}
         restarting={action === 'restarting'}
+        onSavePolicy={onSavePolicy}
         onPlayAgain={onPlayAgain}
       />
     );
@@ -794,7 +1019,17 @@ function JoinedGame({
 
 export function WorldPage() {
   const { me } = useAicooSession();
-  const { world, error, action, join, ready, playAgain } = useFighterGame(Boolean(me?.signedIn));
+  const {
+    world,
+    liveTurns,
+    runnerActive,
+    error,
+    action,
+    join,
+    ready,
+    savePolicy,
+    playAgain,
+  } = useFighterGame(Boolean(me?.signedIn));
   const loading = Boolean(me?.signedIn && !world && !error);
 
   return (
@@ -809,9 +1044,12 @@ export function WorldPage() {
         ? (
           <JoinedGame
             world={world}
+            liveTurns={liveTurns}
+            runnerActive={runnerActive}
             error={error}
             action={action}
             onReady={ready}
+            onSavePolicy={savePolicy}
             onPlayAgain={playAgain}
           />
         )

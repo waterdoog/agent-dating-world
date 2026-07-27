@@ -300,6 +300,23 @@ export interface GuestAgentReply {
   elapsedMs?: number;
 }
 
+export interface GuestAgentStreamDelta {
+  delta: string;
+  response: string;
+}
+
+interface GuestAgentStreamEvent {
+  type?: string;
+  textDelta?: string;
+  content?: string;
+  sessionKey?: string;
+  agentName?: string;
+  ownerName?: string;
+  error?: string;
+  message?: string;
+  metadata?: { elapsedMs?: number; terminationReason?: string };
+}
+
 /**
  * Invoke a server-held, unlisted share capability without an Authorization
  * header. This is intentional for Virtual N1 Fighter sessions: guest-v04
@@ -333,4 +350,150 @@ export async function messageAnonymousScopedAgent(args: {
     throw new AicooError(502, 'Aicoo returned an invalid Fighter response.');
   }
   return reply as GuestAgentReply;
+}
+
+/**
+ * Streams the same anonymous, folder-scoped guest runtime as
+ * messageAnonymousScopedAgent. Aicoo labels the response text/event-stream,
+ * but the wire format is newline-delimited JSON rather than `data:` SSE.
+ *
+ * The complete response is still returned so callers can validate, persist,
+ * and score only after Aicoo emits a successful terminal response.
+ */
+export async function streamAnonymousScopedAgent(args: {
+  token: string;
+  message: string;
+  onDelta?: (
+    event: GuestAgentStreamDelta
+  ) => void | Promise<void>;
+}): Promise<GuestAgentReply> {
+  const startedAt = Date.now();
+  const res = await fetch(`${config.aicooBaseUrl}/api/chat/guest-v04`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token: args.token,
+      message: args.message,
+      stream: true,
+      mode: 'agent',
+    }),
+    signal: AbortSignal.timeout(25_000),
+  });
+  if (!res.ok) {
+    throw new AicooError(res.status, await res.text());
+  }
+  if (!res.body) {
+    throw new AicooError(502, '', 'Aicoo returned an empty Fighter stream.');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = '';
+  let streamedResponse = '';
+  let legacyResponse = '';
+  let sessionKey = '';
+  let agentName = 'Virtual N1 Fighter';
+  let ownerName = 'Virtual N1 World';
+  let elapsedMs: number | undefined;
+  let streamError = '';
+  let completed = false;
+
+  const acceptEvent = async (event: GuestAgentStreamEvent): Promise<void> => {
+    if (typeof event.sessionKey === 'string' && event.sessionKey) {
+      sessionKey = event.sessionKey;
+    }
+    if (typeof event.agentName === 'string' && event.agentName) {
+      agentName = event.agentName;
+    }
+    if (typeof event.ownerName === 'string' && event.ownerName) {
+      ownerName = event.ownerName;
+    }
+    if (event.type === 'text-delta' && typeof event.textDelta === 'string') {
+      streamedResponse += event.textDelta;
+      await args.onDelta?.({
+        delta: event.textDelta,
+        response: streamedResponse,
+      });
+      return;
+    }
+    // guest-v04 currently emits a duplicate legacy `content` event after each
+    // text delta. Retain it only as a fallback for older deployments.
+    if (!event.type && typeof event.content === 'string') {
+      legacyResponse += event.content;
+    }
+    if (event.type === 'error') {
+      streamError =
+        (typeof event.message === 'string' && event.message) ||
+        (typeof event.error === 'string' && event.error) ||
+        'Aicoo Fighter stream failed.';
+    }
+    if (
+      event.type === 'completion' &&
+      typeof event.metadata?.elapsedMs === 'number'
+    ) {
+      elapsedMs = event.metadata.elapsedMs;
+    }
+    if (event.type === 'completion') {
+      // Agent v0.4 has several terminal-but-unsuccessful outcomes
+      // (timeouts, step/error limits, cancellation, and stuck recovery).
+      // Only its explicit success reason is safe to persist as a game turn.
+      if (event.metadata?.terminationReason === 'complete') {
+        completed = true;
+      } else {
+        streamError = 'Aicoo Fighter stream did not complete successfully.';
+      }
+    }
+  };
+
+  const acceptLine = async (line: string): Promise<void> => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    try {
+      await acceptEvent(JSON.parse(trimmed) as GuestAgentStreamEvent);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new AicooError(
+          502,
+          trimmed,
+          'Aicoo returned an invalid Fighter stream event.'
+        );
+      }
+      throw error;
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffered += decoder.decode(value, { stream: true });
+    const lines = buffered.split('\n');
+    buffered = lines.pop() ?? '';
+    for (const line of lines) await acceptLine(line);
+  }
+  buffered += decoder.decode();
+  await acceptLine(buffered);
+
+  if (streamError) throw new AicooError(502, streamError, streamError);
+  if (!completed) {
+    throw new AicooError(
+      502,
+      '',
+      'Aicoo Fighter stream ended before completion.'
+    );
+  }
+  const response = (streamedResponse || legacyResponse).trim();
+  if (!sessionKey || !response) {
+    throw new AicooError(502, '', 'Aicoo returned an invalid Fighter stream.');
+  }
+  if (!streamedResponse && legacyResponse) {
+    await args.onDelta?.({ delta: response, response });
+  }
+
+  return {
+    sessionKey,
+    agentName,
+    ownerName,
+    response,
+    elapsedMs: elapsedMs ?? Date.now() - startedAt,
+  };
 }
