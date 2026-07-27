@@ -1,4 +1,4 @@
-const SAFE_RETURN_PATHS = new Set(['/', '/fights', '/design']);
+const SAFE_RETURN_PATHS = new Set(['/', '/world', '/fights', '/design', '/profile']);
 
 export function normalizeReturnTo(value: string | null | undefined): string {
   if (!value?.trim()) return '/';

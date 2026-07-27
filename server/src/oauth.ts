@@ -1,20 +1,11 @@
 /**
  * "Login with Aicoo" — OAuth 2 authorization-code + PKCE client.
  *
- * The BFF is a confidential client. If no client credentials are configured,
- * it self-registers once via Aicoo's dynamic client registration endpoint and
- * caches the result in .oauth-client.json (config cache, not a database).
+ * The BFF is a pre-registered confidential client. Aicoo intentionally
+ * disables anonymous dynamic client registration.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 import { APP_SCOPES, config, oauthPaths, redirectUri, v1Resource } from './config.js';
-
-const CLIENT_CACHE = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../../.oauth-client.json'
-);
 
 interface ClientCredentials {
   clientId: string;
@@ -31,8 +22,6 @@ export interface TokenSet {
   scope?: string;
 }
 
-let cachedClient: ClientCredentials | null = null;
-
 export function base64url(input: Buffer): string {
   return input.toString('base64url');
 }
@@ -44,47 +33,15 @@ export function makePkcePair(): { verifier: string; challenge: string } {
 }
 
 /**
- * Resolve OAuth client credentials: env → cache file → dynamic registration.
+ * Resolve the OAuth client credentials configured by the operator.
  */
 export async function getClient(): Promise<ClientCredentials> {
   if (config.clientId && config.clientSecret) {
     return { clientId: config.clientId, clientSecret: config.clientSecret };
   }
-  if (cachedClient) return cachedClient;
-
-  try {
-    cachedClient = JSON.parse(readFileSync(CLIENT_CACHE, 'utf8')) as ClientCredentials;
-    return cachedClient;
-  } catch {
-    /* no cache yet */
-  }
-
-  // Aicoo only allows UNAUTHENTICATED dynamic registration for public
-  // clients, so self-registration uses PKCE with no client secret. Provide
-  // AICOO_CLIENT_ID/SECRET env vars to run as a seeded confidential client.
-  const res = await fetch(oauthPaths.register, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      client_name: 'Aicoo Agent Fights',
-      redirect_uris: [redirectUri],
-      grant_types: ['authorization_code', 'refresh_token'],
-      response_types: ['code'],
-      token_endpoint_auth_method: 'none',
-      scope: APP_SCOPES.join(' '),
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Dynamic client registration failed (${res.status}): ${await res.text()}`);
-  }
-
-  const registered = (await res.json()) as { client_id: string; client_secret?: string };
-  cachedClient = { clientId: registered.client_id, clientSecret: registered.client_secret ?? '' };
-  writeFileSync(CLIENT_CACHE, JSON.stringify(cachedClient, null, 2));
-  console.log(`[oauth] Registered as OAuth client ${cachedClient.clientId}`);
-  return cachedClient;
+  throw new Error(
+    'AICOO_CLIENT_ID and AICOO_CLIENT_SECRET are required; register the callback in Aicoo first.'
+  );
 }
 
 export async function buildAuthorizeUrl(state: string, codeChallenge: string): Promise<string> {

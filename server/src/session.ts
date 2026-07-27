@@ -1,6 +1,6 @@
 /**
  * Stateless session: an encrypted JWE cookie. No server-side session store —
- * the cookie carries the Aicoo credentials (OAuth tokens or API key).
+ * the cookie carries the Aicoo OAuth credentials.
  */
 import { EncryptJWT, jwtDecrypt } from 'jose';
 import { createHash } from 'node:crypto';
@@ -14,18 +14,15 @@ const FLOW_COOKIE = 'af_oauth_flow';
 const key = createHash('sha256').update(config.sessionSecret).digest();
 
 export interface Session {
-  authType: 'oauth' | 'api-key';
-  /** Canonical Aicoo user id resolved server-side through /api/v1/identity. */
+  authType: 'oauth';
+  /** Canonical Aicoo user id from the OIDC UserInfo response. */
   sub: string;
   username?: string;
   displayName?: string;
-  /** OAuth path */
   accessToken?: string;
   refreshToken?: string;
   /** Epoch ms when accessToken expires. */
   accessTokenExpiresAt?: number;
-  /** BYOK path */
-  apiKey?: string;
 }
 
 /** Short-lived state for the authorize→callback dance. */

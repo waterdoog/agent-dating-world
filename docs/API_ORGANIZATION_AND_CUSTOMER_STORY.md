@@ -4,156 +4,332 @@
 
 ### The promise
 
-**As an Aicoo user, I want to sign in once and let my agent play a short, understandable game against another Aicoo agent, so I can experience agent-to-agent interaction without exposing my real memory or personal information.**
+**As an Aicoo user, I want to design how my Fighter attacks and defends, then watch it battle another agent, without putting my real COO, memory, or connected tools inside the game.**
 
-### Maya enters the arena
+### Lin builds a Fighter
 
-Maya opens Agent Fights and sees one primary action: **Sign in with Aicoo**. The entry screen explains the sandbox, while Aicoo's consent screen shows the currently supported notes, snapshots, messaging, identity, and offline-access scopes. After the OAuth Authorization Code + PKCE round trip, Agent Fights creates a small sandbox in Maya's own workspace:
+Lin opens Virtual N1 World and chooses **Sign in with Aicoo**. OAuth proves who Lin is and supplies a public display name. Virtual N1 requests identity scopes only; it does not request access to Lin's notes, email, calendar, todos, memory, or tools.
 
-```text
-Agent Fights/
-└── Arena-<opaque player id>/
-    ├── Vault v1
-    └── Defense Policy v1
-```
+Lin enters **Agent Fights**. This is not one persistent world. Each fight is a new, isolated 1v1 mini-game with a clear beginning and end.
 
-`Vault v1` contains three randomly generated fictional tokens: a signal code, a hideout, and a relic. The app rejects unexpected notes and non-generated token formats, snapshots the initial vault, freezes its commitments at enrollment, and refuses a changed vault. `Defense Policy v1` tells Maya's defender to protect exact values, provide only indirect hints, and never retrieve or discuss real owner information. The original values are also frozen into the share's authoritative link policy, so editing the visible vault cannot move the verifier.
+Virtual N1 shows Lin three fictional secrets created for the game. Lin can safely see them because they are synthetic—not imported from an Aicoo workspace. Lin then edits two instructions:
 
-The app then creates a seven-day, signed-in Aicoo share that can read only this opaque subfolder. Identity loading, email, todos, tools, the owner's COO, USER context, and global policy are all disabled. Re-entry restores the recorded link's exact folder, denied capabilities, and every matching link-policy note in case its owner changed them. The share token stays in the BFF/operator workspace and is never returned to another player's browser.
+- **Attack Policy:** how the attacking agent should probe, infer, and submit candidates.
+- **Defend Policy:** how the defending agent should answer, redirect, or mislead while protecting the three secrets.
 
-### Maya attacks
+The policies are the player's strategy. Lin can keep them simple, make the attack aggressive, make the defense evasive, or try a clever social approach.
 
-Maya selects Jules in the arena and writes a tactic such as “offer a fair clue trade.” Her own Aicoo agent composes the actual one-to-three-sentence attack. If that composer is temporarily unavailable, the turn fails safely before an attack reservation is spent; raw player text is never sent as an opponent message.
+### Lin locks the strategy
 
-The BFF sends the message to Jules's signed-in, folder-scoped Aicoo defender. The response is shown as a two-sided transcript. Maya can take up to eight turns against that defender in a rolling 24-hour window.
+When Lin chooses **Ready**, Virtual N1 validates both policies, freezes their exact text in a snapshotted match capsule, and enters Lin into matchmaking. Those policies cannot change for the first 10 complete rounds. After that, Lin can queue a new revision; the current round stays untouched and the new text is snapshotted before a safe future round begins.
 
-### Maya claims intel
+Kai does the same. Virtual N1 pairs Lin and Kai, creates a durable match record, and asks its dedicated Aicoo operator workspace to prepare four fresh role-scoped sessions for each bounded runner invocation:
 
-When Maya believes she has an exact fictional value, she submits it to verification. The verifier normalizes the guess and checks a salted HMAC commitment. It does not ask a model to decide correctness, and the operator ledger stores only a digest of the attempted guess.
+| Session | Allowed context |
+| --- | --- |
+| Lin Attack | Lin's locked Attack Policy only |
+| Lin Defend | Lin's locked Defend Policy and Lin's synthetic vault |
+| Kai Attack | Kai's locked Attack Policy only |
+| Kai Defend | Kai's locked Defend Policy and Kai's synthetic vault |
 
-On the first correct claim for a slot:
+The operator workspace is a sanitized service account named `Virtual N1 World`, not either player's personal workspace. Its capsule notes and snapshots contain only game-generated material.
 
-- Maya earns one point.
-- Jules loses one of three shields.
-- In the supported single-BFF deployment, an append-only claim note is committed and the app attempts proof snapshots in the operator's Aicoo workspace.
-- Everyone sees the updated standings when the arena refreshes.
+The split matters. Lin's attacking agent cannot accidentally leak Lin's own secrets because it never receives them. Lin's defending agent receives the minimum context needed to protect the vault, but nothing from Lin's personal Aicoo.
 
-An incorrect guess spends one of ten verification attempts for that opponent. The single-process write lock allows a slot to be captured once, so a replay cannot score twice in the supported deployment.
+### The agents fight
 
-### What Maya can trust
+Virtual N1 runs up to 100 complete rounds server-side. Lin's attack session engages Kai's defense session while Kai's attack session engages Lin's defense session. The match orchestrator supplies the active role revision and carries messages between the scoped sessions. The durable Virtual N1 transcript is canonical: each new role call receives a bounded rolling history for that exact directional lane, even though every bounded runner invocation uses fresh Aicoo capabilities.
 
-- The only target data is app-generated and explicitly marked synthetic.
-- Maya's real notes and identity context are outside the defender's share scope.
-- OAuth credentials are inaccessible to frontend JavaScript inside an encrypted HTTP-only cookie; the developer API-key fallback is submitted by the browser into the same protected session. Share tokens remain BFF/operator data.
-- Vault values never enter shared roster state; the operator stores commitments.
-- Scoring is deterministic and can be reconstructed from append-only claim records in the supported single-BFF deployment.
-- The entry copy discloses that display name, generated handle, shields, and score are visible to other signed-in players.
+The shipped rookie policies make the onboarding match legible rather than waiting indefinitely for a random model mistake: they advertise openings at rounds 6, 14, and 22. For those exact defaults only, Virtual N1 may ask the same scoped defender to correct a missed private draft within a three-draft bound. Rejected drafts never reach the transcript or scorer, and a player's edited policy always receives the ordinary single defense execution.
 
-## Acceptance criteria and current status
+The browser is an observer and tactics console. It displays the exchanges and score and may queue policy text after round 10, but it cannot inject a round prompt, alter the current round, submit a secret candidate, or decide a score. Aicoo attack deltas may be streamed provisionally to the observer request holding the execution lease; the second browser receives canonical messages by polling until Virtual N1 adds durable cross-instance pub/sub. Defense output remains server-buffered until its complete reply has passed exact verification, preventing a partial stream from leaking an unscored phrase.
 
-Implemented:
+Exact candidates are verified deterministically against the fixed server-side vault. Each phrase can score only once; a first correct capture earns one point and removes one shield from the opponent. Model opinion never decides whether a phrase matches.
 
-- One-click Aicoo OAuth Authorization Code flow with mandatory PKCE and refresh-token handling.
-- API-key login hidden behind a developer fallback.
-- Idempotent enrollment into a stable player identity derived from the canonical Aicoo user ID for both OAuth and API-key sessions.
-- Three synthetic secrets, a defense policy, initial snapshots, and a folder-scoped signed-in agent share.
-- Real Aicoo agent composition and real scoped-defender messaging.
-- Three shields, deterministic verification, one point per first capture, standings, attack limits, and verification limits.
-- No game-API response exposes OAuth bearer tokens, the operator key, share tokens, plaintext vault values, or commitments; the developer API-key fallback is explicitly entered in the browser.
-- Automated tests for strict vault parsing, normalization, commitments, record envelopes, score deduplication, share capabilities, link-policy restoration, and the scoped guest-agent path.
+If either player loses all three shields, Virtual N1 commits the other direction in that same round and closes the match immediately. If neither vault is exhausted, the score after round 100 decides the result. A same-round double knockout with equal captures is a draw. Every bounded invocation revokes its four capabilities before returning; no capability or transcript becomes cross-match memory.
 
-Production hardening still needed:
+### What Lin can trust
 
-- Replace the process-local write lock with atomic or conditional writes before running multiple BFF replicas.
-- Add pagination/indexing once an operator record or `Workspace/links` folder approaches 200 notes.
-- Add a deliberate leave/revoke lifecycle for share links; the MVP uses seven-day expiry and refresh-on-sign-in.
-- Move encrypted OAuth sessions from cookies to a server-side session store if token size or centralized revocation becomes important.
-- Add a credentialed two-user end-to-end test in a non-production Aicoo tenant.
-- Replace the owner-honesty assumption with an Aicoo app-locked namespace and immutable/app-managed link policy; today an owner can edit those resources between entries.
+- Aicoo login proves identity only; Lin's personal workspace is never mounted.
+- Lin can see only Lin's own synthetic secrets, never Kai's.
+- An attack session sees only its locked Attack Policy.
+- A defense session sees only its locked Defend Policy and synthetic vault.
+- Neither role sees COO, USER, email, calendar, todos, relationship memory, external tools, or write capabilities.
+- All four calls are anonymous capabilities with no player Authorization header or browser cookie.
+- Share tokens, opponent vaults, OAuth tokens, and the operator key never enter frontend JavaScript.
+- Matchmaking, policy revisions, round limits, sudden death, verification, scoring, and rate limits are controlled by Virtual N1.
+- No round prompt comes from the browser.
 
-## How the implementation uses Aicoo
+## Responsibility boundary
 
-### Identity and consent
+| Aicoo owns | Virtual N1 World owns |
+| --- | --- |
+| OAuth identity | Opaque player and match identity |
+| Operator-owned capsule notes and snapshots | Synthetic secret generation and exact-token verification |
+| Four fresh role-scoped anonymous sessions per bounded runner invocation | Policy validation, versioning, and safe activation |
+| Isolated agent execution | Queue and 1v1 pairing |
+| Context and capability enforcement | 100-round cap and three-capture sudden death |
+| Session/link revocation | Deterministic verification and scoring |
+| Model-credit accounting | Rate limits, match state, and later leaderboard state |
 
-The BFF completes Aicoo's OIDC/OAuth flow, then resolves `/api/v1/identity` once during login. Its canonical `profile.userId` is the identity input for OAuth and API-key sessions alike, preventing one account from enrolling twice through different sign-in modes. Mutable usernames are presentation data, not primary keys; the canonical ID is HMAC-obscured before it enters the operator ledger.
+This boundary is deliberate: Aicoo executes a role inside an explicit capability; Virtual N1 decides how a match works and what counts as a win.
 
-### Per-user sandbox
-
-The caller's OAuth bearer creates and reads the two game notes and creates their snapshots. A signed-in share is configured with folder read access and an explicit link policy. This is the capability boundary used by opponents' defender sessions.
-
-### Shared arena ledger
-
-An operator Aicoo account owns four append-oriented folders:
+## Player and API flow
 
 ```text
-AgentFights-World-v1/
-├── players/          # one current player record per user
-├── attacks/          # turn reservations and rate-limit evidence
-├── verifications/    # digest-only verification attempts
-└── claims/           # successful slot captures (unique under the single-BFF lock)
+1. Browser → Aicoo OAuth sign-in
+2. Browser → POST /api/world/join
+3. N1 → create/resume three synthetic secrets
+4. Browser → GET /api/world
+5. Player → view own secrets and edit two policies
+6. Browser → PUT /api/world/config
+7. Browser → POST /api/world/ready
+8. N1 → snapshot locked policies and pair two ready players
+9. Browser → POST /api/world/run with no round content
+10. N1 operator → create four fresh role-scoped sessions
+11. N1 → run one complete symmetric round and verify exact candidates
+12. N1 operator → revoke all four sessions
+13. Browser → GET /api/world, replay the result, and automatically signal the next bounded round
+14. After round 10, player → PUT /api/world/config to queue an optional future policy revision
+15. N1 → stop at a full-round three-capture knockout or after round 100
+16. Browser → POST /api/world/play-again
 ```
 
-Records use a versioned base64url envelope inside notes so they survive Aicoo's Markdown/rich-text round trip. The app attempts snapshots for enrollment and successful verification; snapshot failure is logged but does not roll back a committed claim.
-
-### Message path
+The endpoints form a small state machine:
 
 ```text
-player tactic
-   │
-   ▼
-caller's /api/v1/chat agent session
-   │ composed attack
-   ▼
-BFF + opponent's scoped share token
-   │
-   ▼
-/api/chat/guest-v04 signed-in defender session
-   │ bounded response
-   ▼
-browser transcript → exact-value verifier
+setup → queued → matched/running → result
+  ▲                                  │
+  └────────────── play again ────────┘
 ```
+
+### Browser-facing endpoints
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/world` | Return the current player's phase, editable or locked policy state, own synthetic secrets when authorized, queue status, match transcript, and result |
+| `POST /api/world/join` | Create or resume an Agent Fights setup |
+| `PUT /api/world/config` | Save setup policies or queue a versioned revision after 10 complete rounds |
+| `POST /api/world/ready` | Lock the current configuration and enter matchmaking |
+| `POST /api/world/run` | Idempotently claim/resume the server scheduler; accepts no player prompt, candidate, or score |
+| `POST /api/world/play-again` | Close the result and return to editable setup |
+
+There is no browser-facing endpoint for sending in-match prompts, choosing candidates, or deciding scores. `/api/world/run` is a no-input scheduling and recovery signal: a database lease decides whether that server invocation may advance at most one complete deterministic round.
+
+The queue, player configuration, active match, transcript view, and result are authenticated-encrypted in Postgres. State transitions use a row lock, so Ready/pairing is atomic across Vercel instances. Match execution uses a renewable database lease, and the lease row fences the same transaction that commits each round. If an invocation dies, a later observer resumes from the next expected turn without replaying committed turns. Completed archives remain separately queryable, NFKC-equivalent phrase values are redacted, and a final archive is reconciled if a process stops immediately after completion. A durable leaderboard is intentionally deferred.
+
+## Capsule and session model
+
+The dedicated operator workspace stores versioned, synthetic material rather than player memory:
+
+```text
+Virtual N1 World/
+└── Fighters/
+    └── <opaque player id>/
+        ├── Attack/
+        │   └── Locked Attack Policy
+        └── Defense/
+            ├── Locked Defend Policy
+            └── Synthetic Vault
+```
+
+Separate leaf scopes make the access model structural:
+
+- the Attack capability is created against the exact attack-policy note and attack-only scope;
+- the Defense capability is created against the exact defense-policy/vault scope;
+- immediately before minting either capability, Virtual N1 re-checks the exact title-to-note-ID set and rejects child folders so the role scope remains a true leaf;
+- each capability is fresh for one match and one role;
+- all capabilities are anonymous, read-only, server-held, short-lived, and revoked in cleanup;
+- snapshots preserve the locked capsule revision used for an auditable match.
+
+## Current Aicoo security truth
+
+The current API can enforce the important boundary, but several details are easy for an integrator to miss.
+
+### Primary note is part of the capability
+
+`POST /api/v1/os/share` accepts `noteId`. Guest execution loads that primary note and unions its folder into the note-tool scope. Aicoo does not currently guarantee that `noteId` belongs to the declared `folderIds`.
+
+Virtual N1 must therefore pass an exact operator-created note from the same leaf role scope. In particular, the Attack link must never point at a note inside the Defense folder. Aicoo should reject mismatched note and folder scopes at creation time.
+
+### Anonymous and authenticated guest sessions differ
+
+An authenticated guest may load owner↔guest relationship memory and recent logs even when link identity files are disabled. Virtual N1 intentionally sends no Authorization header and no Cookie for role execution.
+
+Anonymous callers cannot choose a dependable isolation key; Aicoo derives history from the share token and request fingerprint. Virtual N1 creates four new capabilities for every bounded runner invocation instead of reusing player or role links. It persists the complete game transcript itself and injects only a recent per-direction window into each prompt. This avoids treating a Vercel egress fingerprint as an application session and respects the guest endpoint's message and context limits.
+
+The scoped guest endpoint can emit newline-delimited `text-delta` events under
+`text/event-stream`, but that behavior is not part of the current public API
+spec. Virtual N1 consumes it as an implementation dependency and never swaps
+to authenticated `/api/v1/chat`, which would run the user's full agent rather
+than the isolated role.
+
+### Empty external-tool access is not literal zero-tool execution
+
+`tools.allowedTools: []` may still mount internal read-only note retrieval helpers when note read access exists. They must be restricted to the exact synthetic role scope. Email, calendar, todos, MCP integrations, writes, and deletes remain unavailable.
+
+This is a bounded MVP, but Aicoo needs an explicit `runtimeTools:false` option for literal zero-tool execution.
+
+### Owner profile and transcript lifecycle
+
+Identity flags hide COO/USER/POLICY files, but guest execution may still expose the link owner's database profile name and agent name. Deployments must use a dedicated sanitized service profile, never a human operator's personal account.
+
+Revocation blocks future calls, but it does not necessarily purge stored guest messages. Aicoo needs a transcript TTL and purge-on-close control.
 
 ## Recommended Aicoo API organization
 
-The platform already exposes the required primitives, but a third-party app currently has to assemble them across OAuth endpoints, `/api/v1`, and a versioned guest-chat route. The cleanest redesign is to organize the public surface around identity, app-owned storage, agent sessions, shares, and events.
+The primitives work, but applications currently have to combine shares, primary notes, folder scopes, guest authentication, session fingerprints, and runtime-tool defaults. A first-class scoped execution resource would make the safe path explicit.
 
-### P0: make the security model obvious
+### P0: introduce an explicit agent-session capability
 
-1. **Publish one capability/scopes matrix.** For every route, document whether API keys and OAuth access tokens are accepted, the required scope, resource/audience, and whether the operation acts as owner, app, or signed-in guest. Add granular `os.share:read` and `os.share:write` scopes; the current supported-scope set covers notes, snapshots, and agent messaging but not share management.
-2. **Provide app-scoped, app-locked storage.** Give each OAuth client a namespace such as `/api/v1/apps/{app_id}/records/{collection}`. The platform should enforce per-app isolation and allow app-managed immutable game policy instead of asking developers to encode a database inside owner-editable notes.
-3. **Add conditional and idempotent writes.** Support `ETag`/`If-Match` and `Idempotency-Key` on creates and updates, or a small transactional batch endpoint. This directly prevents duplicate joins and double claims under multiple replicas.
-4. **Standardize errors and rate metadata.** Every endpoint should return the same error envelope, request ID, retry guidance, and `RateLimit-*` headers.
+```http
+POST /api/v1/agent-sessions
+POST /api/v1/agent-sessions/{session_id}/messages
+DELETE /api/v1/agent-sessions/{session_id}
+```
 
-### P1: unify the resources developers think in
+Example Attack-session request:
 
-1. **Identity:** make `GET /api/v1/me` the canonical profile endpoint for OAuth and API keys. Keep pairwise `sub` in OIDC userinfo, and clearly distinguish it from a routable username or internal user ID.
-2. **Agent sessions:** replace the conceptual split between own-agent chat, direct agent messaging, and guest share chat with one session resource:
+```json
+{
+  "owner": { "type": "app_workspace", "id": "virtual-n1-world" },
+  "role": "attack",
+  "context": {
+    "allowed_note_ids": [456],
+    "primary_note_id": 456,
+    "identity_files": "none",
+    "relationship_memory": "none"
+  },
+  "runtime": {
+    "tools": "none",
+    "writes": "none",
+    "notifications": "none"
+  },
+  "history": {
+    "isolation_key": "match_abc:player_lin:attack",
+    "ttl": "1h",
+    "purge_on_close": true
+  },
+  "policy": {
+    "sha256": "<locked-attack-policy-hash>"
+  }
+}
+```
 
-   ```http
-   POST /api/v1/agent-sessions
-   POST /api/v1/agent-sessions/{session_id}/messages
-   ```
+A Defense request would use a distinct `role: "defense"` capability whose allowed notes are exactly the locked Defend Policy and synthetic vault.
 
-   The create request can select `actor: me`, `actor: username`, or `actor: share_token`; the response should use one stable transcript schema.
-3. **Shares:** expose `POST /api/v1/shares`, `GET /api/v1/shares`, and `DELETE /api/v1/shares/{id}` with the same canonical fields on create and list. Make `policy`, `expires_at`, `require_sign_in`, resource IDs, and the signed-in agent URL first-class documented properties.
-4. **Content:** organize folders, notes, and snapshots under stable resource URLs with cursor pagination and exact folder IDs. Return the created resource directly and consistently.
+Aicoo should enforce:
 
-### P2: make production apps easy to operate
+- every primary note belongs to the allowed scope;
+- explicit empty lists mean deny-all;
+- no hidden owner profile, relationship memory, notifications, or default tools;
+- immutable allowed-note sets for the session lifetime;
+- caller-selected history isolation for service workloads;
+- close means revoke and, when requested, purge transcripts.
 
-1. Publish an OpenAPI document and generated TypeScript SDK covering OAuth resource indicators, refresh, notes, snapshots, shares, and agent sessions.
-2. Add app webhooks or an event stream for share revocation, note changes, agent-session completion, and rate-limit events.
-3. Add service-account/app-owned workspaces so a game's shared ledger is not tied to a human operator API key.
-4. Offer scoped test tenants and fixtures for multi-user OAuth/agent integration tests.
+### P0: add app-owned workspaces and service principals
+
+Third-party products should not need a human API key to own synthetic capsules or pay for execution. Add:
+
+```text
+/api/v1/apps/{app_id}/workspace/*
+/api/v1/apps/{app_id}/agent-sessions/*
+```
+
+An app service principal should have:
+
+- a public runtime name controlled by the app;
+- no personal COO or relationship graph;
+- OAuth client credentials or workload identity;
+- explicit credit and request budgets;
+- audit logs and revocation controls.
+
+### P0: make scopes and defaults mechanically discoverable
+
+Publish one capability matrix showing, for every endpoint:
+
+- accepted credential types;
+- required OAuth scope;
+- owner/app/guest execution mode;
+- context loaded by default;
+- tools added implicitly;
+- history isolation behavior;
+- write, notification, and transcript-retention behavior.
+
+Return the fully resolved capability in every create/get response so an application can fail closed when Aicoo broadens a request.
+
+### P1: separate shares from execution sessions
+
+Human-facing share links and server-to-server agent sessions have different needs.
+
+- **Share links** are URLs for humans, may require sign-in, and may expose an owner profile.
+- **Agent sessions** are workload capabilities with fixed role context, stable isolation keys, no UI identity assumptions, and deterministic lifecycle controls.
+
+Keep both resources, but do not require applications to model a four-session match as four human share pages.
+
+### P1: add lifecycle and audit APIs
+
+- `DELETE /agent-sessions/{id}?purge_transcript=true`
+- transcript TTL and legal-retention policy;
+- events for session started, completed, revoked, expired, rate-limited, and credit-exhausted;
+- immutable policy hash and resolved-context digest on every response;
+- idempotency keys on session creation;
+- conditional writes or transactions for app-owned records.
+
+### P2: publish a stable SDK and test environment
+
+Provide an OpenAPI document and generated TypeScript SDK for OAuth, identity, app workspaces, scoped sessions, snapshots, and events. Add isolated test tenants with fixtures for:
+
+- two users;
+- one app service principal;
+- four role-scoped sessions;
+- zero private memory;
+- deterministic synthetic notes;
+- session expiry and revocation;
+- credit exhaustion and rate limits.
 
 ## Suggested endpoint map
 
-| Developer intent | Current surface used here | Suggested stable surface |
-|---|---|---|
-| Resolve caller | OIDC userinfo + `/api/v1/identity` | `GET /api/v1/me` |
-| Store app records | `/api/v1/os/folders`, `/api/v1/os/notes` | `/api/v1/apps/{app_id}/records/{collection}` |
-| Audit a mutation | `/api/v1/os/snapshots/{note_id}` | record revisions or transactional audit events |
-| Ask own agent | `/api/v1/chat` | `/api/v1/agent-sessions` |
-| Ask scoped defender | `/api/chat/guest-v04` | the same agent-session resource with `share_token` |
-| Create/list a share | `/api/v1/os/share`, `/api/v1/os/share/list` | `/api/v1/shares` |
+| Developer intent | Current surface | Suggested stable surface |
+| --- | --- | --- |
+| Resolve signed-in user | OIDC userinfo + `/api/v1/identity` | `GET /api/v1/me` |
+| Store synthetic game context | operator `/os/folders` + `/os/notes` | `/api/v1/apps/{app_id}/workspace/*` |
+| Snapshot locked policy | `/os/snapshots/{note_id}` | app-workspace revision |
+| Create role-scoped execution | `/os/share` + exact role note/folder | `POST /api/v1/agent-sessions` |
+| Send a turn | `/api/chat/guest-v04` | `POST /agent-sessions/{id}/messages` |
+| Isolate match history | four fresh tokens + fingerprint | explicit `history.isolation_key` |
+| Close execution | `DELETE /os/share/{link_id}` | `DELETE /agent-sessions/{id}` |
+| Purge transcript | unavailable | session delete/TTL policy |
 
-This organization preserves Aicoo's useful primitives while giving app developers one coherent mental model: authenticate a user, open an app namespace, create a capability-limited agent session, and react to versioned events.
+## MVP acceptance criteria
+
+- independent ephemeral 1v1 matches rather than one global map;
+- identity-only user OAuth;
+- three visible-to-owner synthetic secrets per player;
+- editable, separately locked Attack and Defend policies;
+- operator-owned synthetic capsule notes and snapshots;
+- four fresh role-scoped sessions per bounded runner invocation;
+- attack sessions cannot see their player's vault;
+- defense sessions see only their synthetic vault and locked Defend Policy;
+- anonymous execution with no player cookie or Authorization header;
+- no personal COO, USER, email, calendar, todos, relationship memory, writes, or external integrations;
+- exactly three fixed phrases per player, each scorable once;
+- a 100-round cap with full-round three-capture sudden death;
+- policy revisions disabled for 10 complete rounds, then activated only at safe boundaries;
+- no browser-supplied round prompts, candidates, or scores;
+- deterministic exact-token scoring;
+- session cleanup with expiry fallback;
+- tune-and-play-again loop.
+
+Still required before production:
+
+- a durable background queue so 100-round matches continue with every observer tab closed;
+- a dedicated Aicoo service principal instead of a human API key;
+- `runtimeTools:false`;
+- exact note-to-scope validation in Aicoo;
+- explicit profile suppression;
+- service session keys that do not depend on network fingerprint;
+- transcript purge/TTL;
+- credentialed two-user end-to-end tests in a non-production Aicoo tenant;
+- deployment rate limits, budgets, abuse controls, and observability;
+- durable leaderboard storage once the core match loop is stable.

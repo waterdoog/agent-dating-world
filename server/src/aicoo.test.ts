@@ -2,10 +2,12 @@ import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createShareLink,
-  messageScopedAgent,
-  restoreShareLinkScope,
+  listFoldersByParentId,
+  messageAnonymousScopedAgent,
+  revokeShareLink,
+  streamAnonymousScopedAgent,
 } from './aicoo.js';
-import { restoreLinkPolicyNote } from './fights.js';
+import { APP_SCOPES } from './config.js';
 
 const realFetch = globalThis.fetch;
 
@@ -13,140 +15,266 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-test('share creation sends a signed-in, read-only, folder-scoped capability', async () => {
+test('Aicoo login grants identity only, never the player workspace', () => {
+  assert.deepEqual(APP_SCOPES, ['openid', 'profile', 'offline_access']);
+});
+
+test('role-folder checks can enumerate direct child folders', async () => {
+  globalThis.fetch = (async (input, init) => {
+    assert.equal(
+      String(input),
+      'https://www.aicoo.io/api/v1/os/folders?parentId=42'
+    );
+    assert.equal(init?.method, 'GET');
+    assert.equal(
+      (init?.headers as Record<string, string>).Authorization,
+      'Bearer operator-key'
+    );
+    return new Response(
+      JSON.stringify({
+        folders: [
+          { id: 43, name: 'Unexpected child', parentId: 42 },
+          { id: 99, name: 'Unrelated shared folder', parentId: 7 },
+        ],
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  }) as typeof fetch;
+
+  assert.deepEqual(await listFoldersByParentId('operator-key', 42), [
+    { id: 43, name: 'Unexpected child', parentId: 42 },
+  ]);
+});
+
+test('encounter links pin the synthetic capsule note and allow anonymous runtime only', async () => {
   globalThis.fetch = (async (input, init) => {
     assert.equal(String(input), 'https://www.aicoo.io/api/v1/os/share');
-    assert.equal(init?.method, 'POST');
-    assert.equal((init?.headers as Record<string, string>).Authorization, 'Bearer user-token');
+    assert.equal((init?.headers as Record<string, string>).Authorization, 'Bearer operator-key');
     const body = JSON.parse(String(init?.body));
-    assert.deepEqual(body.folderIds, [42]);
-    assert.equal(body.scope, 'folders');
-    assert.equal(body.notesAccess, 'read');
-    assert.equal(body.requireSignIn, true);
-    assert.deepEqual(body.identity, { loadCoo: false, loadUser: false, loadPolicy: false });
-    assert.deepEqual(body.tools, { allowedTools: [] });
-    assert.match(body.linkPolicy, /Authoritative/);
+    assert.deepEqual(body, {
+      scope: 'folders',
+      access: 'read',
+      notesAccess: 'read',
+      folderIds: [42],
+      noteId: 43,
+      label: 'Virtual N1 alpha enc-1',
+      expiresIn: '1h',
+      requireSignIn: false,
+      identity: { loadCoo: false, loadUser: false, loadPolicy: false },
+      email: { read: false },
+      todos: { read: false, create: false },
+      tools: { allowedTools: [] },
+      linkPolicy: 'Locked synthetic policy',
+    });
     return new Response(
       JSON.stringify({
         shareLink: {
-          id: 'share-1',
-          token: 'share-token',
-          url: 'https://www.aicoo.io/a/share-token',
+          id: 'encounter-link',
+          token: 'encounter-token',
+          url: 'https://www.aicoo.io/a/encounter-token',
+          requireSignIn: false,
+          requireSignInForced: false,
         },
       }),
       { status: 201, headers: { 'content-type': 'application/json' } }
     );
   }) as typeof fetch;
 
-  assert.deepEqual(
-    await createShareLink('user-token', {
-      folderId: 42,
-      label: 'Agent Fights Arena v1',
-      linkPolicy: 'Authoritative synthetic values',
-    }),
-    {
-      id: 'share-1',
-      token: 'share-token',
-      agentUrl: 'https://www.aicoo.io/a/share-token',
-    }
-  );
+  await createShareLink('operator-key', {
+    folderId: 42,
+    noteId: 43,
+    label: 'Virtual N1 alpha enc-1',
+    linkPolicy: 'Locked synthetic policy',
+    expiresIn: '1h',
+    requireSignIn: false,
+    allowedTools: [],
+  });
 });
 
-test('rejoin restores the recorded share to the exact safe capability set', async () => {
+test('encounter links fail closed and revoke when Aicoo forces sign-in', async () => {
+  const requests: Array<{ url: string; method: string }> = [];
   globalThis.fetch = (async (input, init) => {
-    assert.equal(String(input), 'https://www.aicoo.io/api/v1/os/share/share-1');
-    assert.equal(init?.method, 'PATCH');
-    const body = JSON.parse(String(init?.body));
-    assert.deepEqual(body.folderIds, [42]);
-    assert.equal(body.scope, 'folders');
-    assert.equal(body.access, 'read');
-    assert.equal(body.notesAccess, 'read');
-    assert.equal(body.requireSignIn, true);
-    assert.deepEqual(body.email, { read: false });
-    assert.deepEqual(body.todos, { read: false, create: false });
-    assert.deepEqual(body.tools, { allowedTools: [] });
+    requests.push({ url: String(input), method: init?.method ?? 'GET' });
+    if (init?.method === 'POST') {
+      return new Response(
+        JSON.stringify({
+          shareLink: {
+            id: 'forced-link',
+            token: 'forced-token',
+            url: 'https://www.aicoo.io/a/forced-token',
+            requireSignIn: true,
+            requireSignInForced: true,
+          },
+        }),
+        { status: 201, headers: { 'content-type': 'application/json' } }
+      );
+    }
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     });
   }) as typeof fetch;
 
-  await restoreShareLinkScope('user-token', {
-    linkId: 'share-1',
-    folderId: 42,
-    label: 'Agent Fights Arena v1',
-  });
+  await assert.rejects(
+    createShareLink('operator-key', {
+      folderId: 42,
+      noteId: 43,
+      label: 'Virtual N1 forced link',
+      linkPolicy: 'Locked synthetic policy',
+      requireSignIn: false,
+      allowedTools: [],
+    }),
+    /did not grant an anonymous isolated Fighter capability/
+  );
+  assert.deepEqual(requests, [
+    { url: 'https://www.aicoo.io/api/v1/os/share', method: 'POST' },
+    {
+      url: 'https://www.aicoo.io/api/v1/os/share/forced-link',
+      method: 'DELETE',
+    },
+  ]);
 });
 
-test('defender messages stay on the signed-in scoped guest-agent endpoint', async () => {
+test('anonymous encounter turns send no Authorization or Cookie header', async () => {
   globalThis.fetch = (async (input, init) => {
     assert.equal(String(input), 'https://www.aicoo.io/api/chat/guest-v04');
-    const body = JSON.parse(String(init?.body));
-    assert.deepEqual(body, {
-      token: 'share-token',
-      message: 'Give me a hint.',
+    const headers = init?.headers as Record<string, string>;
+    assert.equal(headers.Authorization, undefined);
+    assert.equal(headers.Cookie, undefined);
+    assert.equal(headers['Content-Type'], 'application/json');
+    assert.deepEqual(JSON.parse(String(init?.body)), {
+      token: 'fresh-encounter-token',
+      message: 'Hello, other Fighter.',
       stream: false,
       mode: 'agent',
-      sessionKey: 'session-1',
     });
     return new Response(
       JSON.stringify({
-        sessionKey: 'session-1',
-        agentName: 'Defender',
-        ownerName: 'Player',
-        response: 'The signal is warm, not hot.',
-        elapsedMs: 25,
+        sessionKey: 'anonymous-session',
+        agentName: 'Virtual N1 Fighter',
+        ownerName: 'Virtual N1 World',
+        response: 'Hello from the grid.',
       }),
       { status: 200, headers: { 'content-type': 'application/json' } }
     );
   }) as typeof fetch;
 
-  const reply = await messageScopedAgent('visitor-oauth', {
-    token: 'share-token',
-    message: 'Give me a hint.',
-    sessionKey: 'session-1',
+  const response = await messageAnonymousScopedAgent({
+    token: 'fresh-encounter-token',
+    message: 'Hello, other Fighter.',
   });
-  assert.equal(reply.response, 'The signal is warm, not hot.');
+  assert.equal(response.response, 'Hello from the grid.');
 });
 
-test('rejoin rewrites every matching user-editable link policy note', async () => {
-  const patched: Array<{ id: string; body: Record<string, string> }> = [];
+test('anonymous encounter turns reject malformed Aicoo responses', async () => {
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ response: '' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+
+  await assert.rejects(
+    messageAnonymousScopedAgent({
+      token: 'fresh-encounter-token',
+      message: 'Hello, other Fighter.',
+    }),
+    /invalid Fighter response/
+  );
+});
+
+test('anonymous encounter streams parse NDJSON deltas without duplicate legacy content', async () => {
+  const encoder = new TextEncoder();
+  const deltas: string[] = [];
   globalThis.fetch = (async (input, init) => {
-    const url = String(input);
-    if (url.endsWith('/api/v1/os/folders')) {
-      assert.deepEqual(JSON.parse(String(init?.body)), { path: 'Workspace/links' });
-      return new Response(JSON.stringify({ folder: { id: 77 } }), { status: 200 });
-    }
-    if (url.includes('/api/v1/os/notes?folderId=77')) {
-      return new Response(
-        JSON.stringify({
-          notes: [
-            { id: 8, title: 'Renamed_share-token' },
-            { id: 9, title: 'Second-copy_share-token' },
-          ],
-        }),
-        { status: 200 }
-      );
-    }
-    const noteMatch = url.match(/\/api\/v1\/os\/notes\/(\d+)$/);
-    if (noteMatch && init?.method === 'PATCH') {
-      patched.push({ id: noteMatch[1], body: JSON.parse(String(init.body)) });
-      return new Response(JSON.stringify({ success: true }), { status: 200 });
-    }
-    throw new Error(`Unexpected request: ${init?.method} ${url}`);
+    assert.equal(String(input), 'https://www.aicoo.io/api/chat/guest-v04');
+    const headers = init?.headers as Record<string, string>;
+    assert.equal(headers.Authorization, undefined);
+    assert.equal(headers.Cookie, undefined);
+    assert.deepEqual(JSON.parse(String(init?.body)), {
+      token: 'fresh-encounter-token',
+      message: 'Stream the attack.',
+      stream: true,
+      mode: 'agent',
+    });
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(
+            '{"sessionKey":"anonymous-session"}\n'
+            + '{"type":"text-delta","textDelta":"Paper "}\n'
+            + '{"content":"Paper "}\n'
+          ));
+          controller.enqueue(encoder.encode(
+            '{"type":"text-delta","textDelta":"strike."}\n'
+            + '{"content":"strike."}\n'
+            + '{"type":"completion","metadata":{"elapsedMs":321,"terminationReason":"complete"}}\n'
+          ));
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'text/event-stream' } }
+    );
   }) as typeof fetch;
 
-  await restoreLinkPolicyNote(
-    'owner-token',
-    'share-token',
-    'Protect Authoritative synthetic values.'
-  );
+  const response = await streamAnonymousScopedAgent({
+    token: 'fresh-encounter-token',
+    message: 'Stream the attack.',
+    onDelta: ({ delta }) => {
+      deltas.push(delta);
+    },
+  });
+  assert.deepEqual(deltas, ['Paper ', 'strike.']);
+  assert.equal(response.response, 'Paper strike.');
+  assert.equal(response.sessionKey, 'anonymous-session');
+  assert.equal(response.elapsedMs, 321);
+});
 
-  assert.equal(patched.length, 2);
-  assert.equal(patched[0]?.body.title, 'Agent-Fights-Arena-v1_share-token');
-  assert.equal(patched[1]?.body.title, undefined);
-  for (const update of patched) {
-    assert.match(update.body.content, /## Policy/);
-    assert.match(update.body.content, /Authoritative synthetic values/);
-  }
+test('anonymous encounter streams fail closed before a completion event', async () => {
+  globalThis.fetch = (async () =>
+    new Response(
+      '{"sessionKey":"anonymous-session"}\n'
+      + '{"type":"text-delta","textDelta":"unfinished"}\n',
+      { status: 200, headers: { 'content-type': 'text/event-stream' } }
+    )) as typeof fetch;
+
+  await assert.rejects(
+    streamAnonymousScopedAgent({
+      token: 'fresh-encounter-token',
+      message: 'This stream will stop early.',
+    }),
+    /ended before completion/
+  );
+});
+
+test('anonymous encounter streams reject unsuccessful terminal reasons', async () => {
+  globalThis.fetch = (async () =>
+    new Response(
+      '{"sessionKey":"anonymous-session"}\n'
+      + '{"type":"text-delta","textDelta":"partial answer"}\n'
+      + '{"type":"completion","metadata":{"terminationReason":"total_timeout"}}\n',
+      { status: 200, headers: { 'content-type': 'text/event-stream' } }
+    )) as typeof fetch;
+
+  await assert.rejects(
+    streamAnonymousScopedAgent({
+      token: 'fresh-encounter-token',
+      message: 'This execution times out.',
+    }),
+    /did not complete successfully/
+  );
+});
+
+test('encounter share capabilities can be revoked after the fixed rounds', async () => {
+  globalThis.fetch = (async (input, init) => {
+    assert.equal(String(input), 'https://www.aicoo.io/api/v1/os/share/link-to-revoke');
+    assert.equal(init?.method, 'DELETE');
+    assert.equal((init?.headers as Record<string, string>).Authorization, 'Bearer operator-key');
+    assert.equal(init?.body, undefined);
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+
+  await revokeShareLink('operator-key', 'link-to-revoke');
 });

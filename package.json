@@ -7,9 +7,16 @@
     "dev": "vite",
     "dev:server": "tsx watch server/src/index.ts",
     "start": "tsx server/src/index.ts",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && tsc -p server --noEmit && vite build",
     "typecheck:server": "tsc -p server --noEmit",
     "test": "tsx --test server/src/*.test.ts",
+    "test:backend": "tsx server/src/backend-canary.ts",
+    "test:backend:fight": "tsx server/src/fighter-language-canary.ts",
+    "test:backend:fight:balance": "tsx server/src/fighter-balance-canary.ts",
+    "db:status": "tsx server/src/database/status.ts",
+    "db:migrate": "tsx server/src/database/migrate.ts",
+    "db:create": "tsx server/src/database/create-migration.ts",
+    "db:test:wallet": "tsx server/src/database/wallet-canary.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -19,6 +26,7 @@
     "hono": "^4.6.14",
     "jose": "^5.9.6",
     "lucide-react": "^0.468.0",
+    "postgres": "3.4.9",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "three": "^0.185.1"

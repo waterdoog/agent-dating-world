@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ChevronRight, Clock3, Heart, RefreshCw, Sparkles, Users, Zap } from 'lucide-react';
 import { api, loginWithAicooUrl, type DatingLook, type DatingTickEvent, type PublicAgent, type StoryThreadInfo, type WorldDigestInfo, type YearbookInfo } from '../../api';
-import { useAicooSession } from '../../live';
+import { useAicooSession } from '../../session';
 import { WorldHeader } from '../../platform';
 import { agentSprite, type AgentAppearance } from './agent-avatar';
 import { CreateWizard } from './CreateWizard';

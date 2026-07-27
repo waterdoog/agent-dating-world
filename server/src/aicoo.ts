@@ -1,8 +1,8 @@
 /**
- * Thin client for the Aicoo v1 REST surface. Every call authenticates with a
- * bearer credential — either the user's OAuth access token ("Login with
- * Aicoo") or an Aicoo API key (BYOK / arena operator). Aicoo notes are the
- * database; snapshots are the audit log.
+ * Thin client for the Aicoo v1 REST surface. Operator workspace calls use the
+ * dedicated Virtual N1 credential. Encounter turns intentionally use an
+ * anonymous, short-lived share capability so no player identity or relationship
+ * memory can enter the runtime.
  */
 import { config } from './config.js';
 
@@ -39,7 +39,7 @@ async function api<T>(bearer: string, method: string, apiPath: string, body?: un
 }
 
 async function aicooJson<T>(
-  bearer: string,
+  bearer: string | null,
   method: string,
   absolutePath: string,
   body?: unknown
@@ -47,11 +47,14 @@ async function aicooJson<T>(
   const res = await fetch(`${config.aicooBaseUrl}${absolutePath}`, {
     method,
     headers: {
-      Authorization: `Bearer ${bearer}`,
+      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(90_000),
+    // Fighter rounds run inside a 300s serverless invocation. Both attacks and
+    // both defenses are parallelized per round; cap each model wave so link
+    // cleanup and durable finalization still have time to run.
+    signal: AbortSignal.timeout(25_000),
   });
   const text = await res.text();
   if (!res.ok) throw new AicooError(res.status, text);
@@ -70,11 +73,29 @@ export interface NoteSummary {
   updatedAt?: string;
 }
 
+export interface FolderSummary {
+  id: number;
+  name: string;
+  parentId: number | null;
+}
+
 export async function ensureFolder(bearer: string, pathSpec: string): Promise<number> {
   const res = await api<{ folder: { id: number } }>(bearer, 'POST', '/os/folders', {
     path: pathSpec,
   });
   return res.folder.id;
+}
+
+export async function listFoldersByParentId(
+  bearer: string,
+  parentId: number
+): Promise<FolderSummary[]> {
+  const res = await api<{ folders: FolderSummary[] }>(
+    bearer,
+    'GET',
+    `/os/folders?parentId=${parentId}`
+  );
+  return (res.folders ?? []).filter((folder) => Number(folder.parentId) === parentId);
 }
 
 export async function listNotes(bearer: string, folderName: string): Promise<NoteSummary[]> {
@@ -207,6 +228,24 @@ export async function listSnapshots(bearer: string, noteId: number): Promise<unk
   return api(bearer, 'GET', `/os/snapshots/${noteId}?limit=50`);
 }
 
+// ─── Identity ───────────────────────────────────────────────────────
+
+export interface AicooIdentity {
+  success: boolean;
+  profile: {
+    userId: string;
+    username: string | null;
+    name: string;
+    agentName: string | null;
+    email: string | null;
+  };
+}
+
+/** Validate a bearer credential and resolve the caller's Aicoo identity. */
+export async function getIdentity(bearer: string): Promise<AicooIdentity> {
+  return api(bearer, 'GET', '/identity');
+}
+
 // ─── Own-COO chat (turn composition) ────────────────────────────────
 
 export interface CooChatReply {
@@ -284,24 +323,51 @@ export async function createShareLink(
     folderId: number;
     label: string;
     linkPolicy: string;
+    noteId?: number;
+    expiresIn?: string;
+    requireSignIn?: boolean;
+    allowedTools?: string[];
   }
 ): Promise<{ id: string; token: string; agentUrl: string }> {
   const res = await api<{
-    shareLink: { id: string; token: string; agentUrl?: string; url: string };
+    shareLink: {
+      id: string;
+      token: string;
+      agentUrl?: string;
+      url: string;
+      requireSignIn?: boolean;
+      requireSignInForced?: boolean;
+    };
   }>(bearer, 'POST', '/os/share', {
     scope: 'folders',
     access: 'read',
     notesAccess: 'read',
     folderIds: [args.folderId],
+    ...(args.noteId ? { noteId: args.noteId } : {}),
     label: args.label,
-    expiresIn: '7d',
-    requireSignIn: true,
+    expiresIn: args.expiresIn ?? '7d',
+    requireSignIn: args.requireSignIn ?? true,
     identity: { loadCoo: false, loadUser: false, loadPolicy: false },
     email: { read: false },
     todos: { read: false, create: false },
-    tools: { allowedTools: [] },
+    tools: { allowedTools: args.allowedTools ?? [] },
     linkPolicy: args.linkPolicy,
   });
+  if (
+    args.requireSignIn === false &&
+    (res.shareLink.requireSignIn !== false ||
+      res.shareLink.requireSignInForced === true)
+  ) {
+    await api(
+      bearer,
+      'DELETE',
+      `/os/share/${encodeURIComponent(String(res.shareLink.id))}`
+    ).catch(() => undefined);
+    throw new AicooError(
+      403,
+      'Aicoo did not grant an anonymous isolated Fighter capability.'
+    );
+  }
   return {
     id: String(res.shareLink.id),
     token: res.shareLink.token,
@@ -309,23 +375,8 @@ export async function createShareLink(
   };
 }
 
-export async function restoreShareLinkScope(
-  bearer: string,
-  args: { linkId: string; folderId: number; label: string }
-): Promise<void> {
-  await api(bearer, 'PATCH', `/os/share/${encodeURIComponent(args.linkId)}`, {
-    scope: 'folders',
-    folderIds: [args.folderId],
-    access: 'read',
-    notesAccess: 'read',
-    label: args.label,
-    expiresIn: '7d',
-    requireSignIn: true,
-    identity: { loadCoo: false, loadUser: false, loadPolicy: false },
-    email: { read: false },
-    todos: { read: false, create: false },
-    tools: { allowedTools: [] },
-  });
+export async function revokeShareLink(bearer: string, linkId: string): Promise<void> {
+  await api(bearer, 'DELETE', `/os/share/${encodeURIComponent(linkId)}`);
 }
 
 export interface GuestAgentReply {
@@ -336,6 +387,17 @@ export interface GuestAgentReply {
   elapsedMs?: number;
 }
 
+export interface GuestAgentStreamDelta {
+  delta: string;
+  response: string;
+}
+
+/**
+ * Authenticated, folder-scoped guest turn. Unlike the anonymous variant below,
+ * the caller supplies its own bearer, so Aicoo runs the turn against that
+ * account's workspace and honours a caller-supplied session key — which is what
+ * 相亲小镇 needs for an agent to answer in its own owner's COO across turns.
+ */
 export async function messageScopedAgent(
   bearer: string,
   args: { token: string; message: string; sessionKey?: string }
@@ -349,20 +411,195 @@ export async function messageScopedAgent(
   });
 }
 
-// ─── Identity ───────────────────────────────────────────────────────
-
-export interface AicooIdentity {
-  success: boolean;
-  profile: {
-    userId: string;
-    username: string | null;
-    name: string;
-    agentName: string | null;
-    email: string | null;
-  };
+interface GuestAgentStreamEvent {
+  type?: string;
+  textDelta?: string;
+  content?: string;
+  sessionKey?: string;
+  agentName?: string;
+  ownerName?: string;
+  error?: string;
+  message?: string;
+  metadata?: { elapsedMs?: number; terminationReason?: string };
 }
 
-/** Validate a bearer credential and resolve the caller's Aicoo identity. */
-export async function getIdentity(bearer: string): Promise<AicooIdentity> {
-  return api(bearer, 'GET', '/identity');
+/**
+ * Invoke a server-held, unlisted share capability without an Authorization
+ * header. This is intentional for Virtual N1 Fighter sessions: guest-v04
+ * currently attaches owner↔guest relationship memory whenever the caller is
+ * authenticated, even when every declared link capability is denied.
+ *
+ * The token must stay server-side. The link itself is read-only, restricted to
+ * one synthetic Fighter folder, short-lived, and contains no user identity
+ * files or integration capabilities. Aicoo ignores caller-provided session
+ * keys for anonymous guests, so callers must use a fresh token per encounter.
+ */
+export async function messageAnonymousScopedAgent(args: {
+  token: string;
+  message: string;
+}): Promise<GuestAgentReply> {
+  const reply = await aicooJson<unknown>(null, 'POST', '/api/chat/guest-v04', {
+    token: args.token,
+    message: args.message,
+    stream: false,
+    mode: 'agent',
+  });
+  if (
+    typeof reply !== 'object' ||
+    reply === null ||
+    typeof (reply as Record<string, unknown>).sessionKey !== 'string' ||
+    typeof (reply as Record<string, unknown>).agentName !== 'string' ||
+    typeof (reply as Record<string, unknown>).ownerName !== 'string' ||
+    typeof (reply as Record<string, unknown>).response !== 'string' ||
+    !(reply as Record<string, string>).response.trim()
+  ) {
+    throw new AicooError(502, 'Aicoo returned an invalid Fighter response.');
+  }
+  return reply as GuestAgentReply;
+}
+
+/**
+ * Streams the same anonymous, folder-scoped guest runtime as
+ * messageAnonymousScopedAgent. Aicoo labels the response text/event-stream,
+ * but the wire format is newline-delimited JSON rather than `data:` SSE.
+ *
+ * The complete response is still returned so callers can validate, persist,
+ * and score only after Aicoo emits a successful terminal response.
+ */
+export async function streamAnonymousScopedAgent(args: {
+  token: string;
+  message: string;
+  onDelta?: (
+    event: GuestAgentStreamDelta
+  ) => void | Promise<void>;
+}): Promise<GuestAgentReply> {
+  const startedAt = Date.now();
+  const res = await fetch(`${config.aicooBaseUrl}/api/chat/guest-v04`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token: args.token,
+      message: args.message,
+      stream: true,
+      mode: 'agent',
+    }),
+    signal: AbortSignal.timeout(25_000),
+  });
+  if (!res.ok) {
+    throw new AicooError(res.status, await res.text());
+  }
+  if (!res.body) {
+    throw new AicooError(502, '', 'Aicoo returned an empty Fighter stream.');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = '';
+  let streamedResponse = '';
+  let legacyResponse = '';
+  let sessionKey = '';
+  let agentName = 'Virtual N1 Fighter';
+  let ownerName = 'Virtual N1 World';
+  let elapsedMs: number | undefined;
+  let streamError = '';
+  let completed = false;
+
+  const acceptEvent = async (event: GuestAgentStreamEvent): Promise<void> => {
+    if (typeof event.sessionKey === 'string' && event.sessionKey) {
+      sessionKey = event.sessionKey;
+    }
+    if (typeof event.agentName === 'string' && event.agentName) {
+      agentName = event.agentName;
+    }
+    if (typeof event.ownerName === 'string' && event.ownerName) {
+      ownerName = event.ownerName;
+    }
+    if (event.type === 'text-delta' && typeof event.textDelta === 'string') {
+      streamedResponse += event.textDelta;
+      await args.onDelta?.({
+        delta: event.textDelta,
+        response: streamedResponse,
+      });
+      return;
+    }
+    // guest-v04 currently emits a duplicate legacy `content` event after each
+    // text delta. Retain it only as a fallback for older deployments.
+    if (!event.type && typeof event.content === 'string') {
+      legacyResponse += event.content;
+    }
+    if (event.type === 'error') {
+      streamError =
+        (typeof event.message === 'string' && event.message) ||
+        (typeof event.error === 'string' && event.error) ||
+        'Aicoo Fighter stream failed.';
+    }
+    if (
+      event.type === 'completion' &&
+      typeof event.metadata?.elapsedMs === 'number'
+    ) {
+      elapsedMs = event.metadata.elapsedMs;
+    }
+    if (event.type === 'completion') {
+      // Agent v0.4 has several terminal-but-unsuccessful outcomes
+      // (timeouts, step/error limits, cancellation, and stuck recovery).
+      // Only its explicit success reason is safe to persist as a game turn.
+      if (event.metadata?.terminationReason === 'complete') {
+        completed = true;
+      } else {
+        streamError = 'Aicoo Fighter stream did not complete successfully.';
+      }
+    }
+  };
+
+  const acceptLine = async (line: string): Promise<void> => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    try {
+      await acceptEvent(JSON.parse(trimmed) as GuestAgentStreamEvent);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new AicooError(
+          502,
+          trimmed,
+          'Aicoo returned an invalid Fighter stream event.'
+        );
+      }
+      throw error;
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffered += decoder.decode(value, { stream: true });
+    const lines = buffered.split('\n');
+    buffered = lines.pop() ?? '';
+    for (const line of lines) await acceptLine(line);
+  }
+  buffered += decoder.decode();
+  await acceptLine(buffered);
+
+  if (streamError) throw new AicooError(502, streamError, streamError);
+  if (!completed) {
+    throw new AicooError(
+      502,
+      '',
+      'Aicoo Fighter stream ended before completion.'
+    );
+  }
+  const response = (streamedResponse || legacyResponse).trim();
+  if (!sessionKey || !response) {
+    throw new AicooError(502, '', 'Aicoo returned an invalid Fighter stream.');
+  }
+  if (!streamedResponse && legacyResponse) {
+    await args.onDelta?.({ delta: response, response });
+  }
+
+  return {
+    sessionKey,
+    agentName,
+    ownerName,
+    response,
+    elapsedMs: elapsedMs ?? Date.now() - startedAt,
+  };
 }
