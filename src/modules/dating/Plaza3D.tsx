@@ -14,7 +14,7 @@ const map = (v: number) => ((v - 10) / 79 - 0.5) * 7.6;
 
 // live positions come from the sim ref (read every frame — React re-renders do
 // NOT reliably reach inside the r3f Canvas); identity + bubbles come from props.
-export interface LivePos { name: string; x: number; y: number }
+export interface LivePos { name: string; x: number; y: number; vx?: number; vy?: number; heading?: number }
 export interface Mover3D {
   name: string;
   look: DatingLook;
@@ -41,17 +41,35 @@ function tagLift(name: string): number {
 function Agent({ agent, posRef }: { agent: Mover3D; posRef: RefObject<LivePos[]> }) {
   const { scene } = useGLTF(avatar3dUrl(agent.look as AgentAppearance));
   const g = useRef<THREE.Group>(null);
+  const body = useRef<THREE.Group>(null);
   const inited = useRef(false);
-  useFrame(() => {
+  const step = useRef(0);
+  useFrame((_s, dt) => {
     const p = posRef.current?.find((m) => m.name === agent.name);
     if (!p || !g.current) return;
     _v.set(map(p.x), 0, map(p.y));
     if (inited.current) g.current.position.lerp(_v, 0.16);
     else { g.current.position.copy(_v); inited.current = true; }
+    // turn the BODY to face where it's walking (tags stay screen-facing)
+    if (typeof p.heading === 'number' && body.current) {
+      const cur = body.current.rotation.y;
+      const diff = ((p.heading - cur + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      body.current.rotation.y = cur + diff * 0.15;
+    }
+    // a small bob + lean while actually moving, so walking reads as walking
+    const speed = Math.hypot(p.vx ?? 0, p.vy ?? 0);
+    if (body.current) {
+      step.current += Math.min(dt, 0.05) * speed * 26;
+      const walking = speed > 0.05;
+      body.current.position.y = walking ? Math.abs(Math.sin(step.current)) * 0.055 : 0;
+      body.current.rotation.z = walking ? Math.sin(step.current * 2) * 0.05 : 0;
+    }
   });
   return (
     <group ref={g} position={[map(agent.x), 0, map(agent.y)]}>
-      <Clone object={scene} scale={AGENT_SCALE} castShadow />
+      <group ref={body}>
+        <Clone object={scene} scale={AGENT_SCALE} castShadow />
+      </group>
       {agent.you && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
           <ringGeometry args={[0.34, 0.44, 24]} />

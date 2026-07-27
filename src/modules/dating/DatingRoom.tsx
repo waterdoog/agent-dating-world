@@ -77,13 +77,21 @@ function Sprite({ look, size }: { look: DatingLook; size: number }) {
 interface Mover {
   name: string; handle?: string; look: DatingLook; mbti: string; you: boolean; size: number;
   x: number; y: number; tx: number; ty: number;
+  vx: number; vy: number;     // velocity — movement has inertia, not teleporting steps
+  pauseUntil: number;         // agents stop and look around now and then
+  heading: number;            // facing angle (radians), eased toward travel direction
   chatUntil: number;          // holding still (in a real exchange) until this time
   partner?: string;           // who it is talking to right now (name)
   rounds: number;             // vestigial; kept for the mover shape
   bubble?: { text: string; kind: 'fight' | 'love' | 'new' };
 }
 const BOUNDS = { minX: 10, maxX: 89, minY: 17, maxY: 82 };
-const SPEED = 0.55;
+const SPEED = 0.62;       // top walking speed
+const ACCEL = 0.075;      // how quickly they get up to speed / change direction
+const DRAG = 0.86;        // slows them when they stop steering
+const ARRIVE = 9;         // start easing off this far from the target
+const PAUSE_CHANCE = 0.004;   // per tick, an idle agent stops to look around
+const PAUSE_MS = [900, 2600]; // how long such a pause lasts
 const SEP_DIST = 22;      // personal space while wandering — keeps sprites from stacking
 const CHAT_DIST = 20;     // how close YOUR agent must get to spark a live real encounter
 const TALK_DIST = 24;     // how far apart a talking pair stands, so both name cards stay readable
@@ -104,24 +112,55 @@ function partTargets(a: Mover, b: Mover) {
   a.tx = clampX(a.x + (dx / d) * 42); a.ty = clampY(a.y + (dy / d) * 42);
   b.tx = clampX(b.x - (dx / d) * 42); b.ty = clampY(b.y - (dy / d) * 42);
 }
+/**
+ * Steering-based movement: agents accelerate toward a target, ease off as they
+ * arrive, drift to a stop, and occasionally pause to look around — so they walk
+ * rather than slide at a constant speed. Separation is a force too, so passing
+ * someone bends the path instead of snapping the position.
+ */
 function moveWorld(ms: Mover[]) {
   const now = Date.now();
   for (const m of ms) {
-    if (m.chatUntil > now) continue;               // mid-exchange → hold still
-    const dx = m.tx - m.x, dy = m.ty - m.y, d = Math.hypot(dx, dy) || 1;
-    if (d < 2) { const t = newTarget(); m.tx = t.tx; m.ty = t.ty; }
-    else { m.x += (dx / d) * SPEED; m.y += (dy / d) * SPEED; }
-    // separation — keep out of others' space; give a talking/held pair a wide berth
+    if (m.chatUntil > now) { m.vx *= 0.6; m.vy *= 0.6; continue; }   // mid-exchange → settle in place
+
+    let ax = 0, ay = 0;
+    const paused = m.pauseUntil > now;
+    if (!paused) {
+      const dx = m.tx - m.x, dy = m.ty - m.y, d = Math.hypot(dx, dy) || 1;
+      if (d < 3) {
+        const t = newTarget(); m.tx = t.tx; m.ty = t.ty;             // arrived → pick a new spot
+        if (Math.random() < 0.5) m.pauseUntil = now + PAUSE_MS[0] + Math.random() * (PAUSE_MS[1] - PAUSE_MS[0]);
+      } else {
+        const want = d < ARRIVE ? SPEED * (d / ARRIVE) : SPEED;      // slow down on approach
+        ax += (dx / d) * want - m.vx;
+        ay += (dy / d) * want - m.vy;
+      }
+      if (Math.random() < PAUSE_CHANCE) m.pauseUntil = now + PAUSE_MS[0] + Math.random() * (PAUSE_MS[1] - PAUSE_MS[0]);
+    }
+
+    // separation as a steering force — bends the walk, never teleports
     for (const o of ms) {
       if (o === m) continue;
-      const radius = o.partner ? TALK_DIST + 7 : SEP_DIST;   // walk AROUND a chatting pair, don't crash it
+      const radius = o.partner ? TALK_DIST + 7 : SEP_DIST;
       const ox = m.x - o.x, oy = m.y - o.y, od = Math.hypot(ox, oy);
       if (od > 0.001 && od < radius) {
-        const push = ((radius - od) / radius) * (o.partner ? 1.4 : 1.1);
-        m.x += (ox / od) * push; m.y += (oy / od) * push;
+        const strength = ((radius - od) / radius) * (o.partner ? 1.5 : 1.0);
+        ax += (ox / od) * strength;
+        ay += (oy / od) * strength;
       }
     }
-    m.x = clampX(m.x); m.y = clampY(m.y);
+
+    m.vx = (m.vx + ax * ACCEL) * (paused ? 0.75 : DRAG);
+    m.vy = (m.vy + ay * ACCEL) * (paused ? 0.75 : DRAG);
+    const sp = Math.hypot(m.vx, m.vy);
+    if (sp > SPEED) { m.vx = (m.vx / sp) * SPEED; m.vy = (m.vy / sp) * SPEED; }
+    m.x = clampX(m.x + m.vx);
+    m.y = clampY(m.y + m.vy);
+    if (sp > 0.04) {                                                  // ease facing toward travel
+      const want = Math.atan2(m.vx, m.vy);
+      let diff = ((want - m.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      m.heading += diff * 0.18;
+    }
   }
 }
 // stand a talking pair a readable distance apart, cards side by side
@@ -130,6 +169,8 @@ function faceOff(a: Mover, b: Mover) {
   const [left, right] = a.x <= b.x ? [a, b] : [b, a];
   left.x = clampX(mx - TALK_DIST / 2); left.y = my;
   right.x = clampX(mx + TALK_DIST / 2); right.y = my;
+  a.vx = a.vy = b.vx = b.vy = 0;              // stand still to talk
+  left.heading = Math.PI / 2; right.heading = -Math.PI / 2;   // face each other
 }
 // stage a REAL exchange in the plaza: the two agents face off and speak their actual lines
 function stageExchange(a: Mover, b: Mover, message: string, reply: string, kind: 'fight' | 'love') {
@@ -222,7 +263,7 @@ export function DatingRoom() {
       const p = prev.get(r.name);
       if (p) return { ...p, look: r.look, mbti: r.mbti, you: r.you, size: r.size, handle: r.handle };
       const t = newTarget();
-      return { name: r.name, handle: r.handle, look: r.look, mbti: r.mbti, you: r.you, size: r.size, x: r.x, y: r.y, tx: t.tx, ty: t.ty, chatUntil: 0, rounds: 0, partner: undefined as string | undefined, bubble: undefined as Mover['bubble'] };
+      return { name: r.name, handle: r.handle, look: r.look, mbti: r.mbti, you: r.you, size: r.size, x: r.x, y: r.y, tx: t.tx, ty: t.ty, vx: 0, vy: 0, pauseUntil: 0, heading: Math.random() * Math.PI * 2, chatUntil: 0, rounds: 0, partner: undefined as string | undefined, bubble: undefined as Mover['bubble'] };
     });
     setFrame([...simRef.current]);
   }, [residents]);
