@@ -23,7 +23,7 @@ test('Vercel relative requests reach the intended Hono route', async () => {
   assert.equal(payload.ok, true);
 });
 
-test('the scheduler route is authenticated and the legacy fights route is gone', async () => {
+test('world mutation routes are authenticated and the legacy fights route is gone', async () => {
   const scheduler = await app.request('/api/world/run', { method: 'POST' });
   assert.equal(scheduler.status, 401);
   assert.deepEqual(await scheduler.json(), {
@@ -31,10 +31,29 @@ test('the scheduler route is authenticated and the legacy fights route is gone',
     message: 'Not signed in (or session expired).',
   });
 
+  const ready = await app.request('/api/world/ready', {
+    method: 'POST',
+    body: JSON.stringify({ mode: 'room', action: 'create' }),
+    headers: { 'content-type': 'application/json' },
+  });
+  assert.equal(ready.status, 401);
+
+  const leave = await app.request('/api/world/leave-queue', { method: 'POST' });
+  assert.equal(leave.status, 401);
+
   const legacy = await app.request('/api/fights/join', { method: 'POST' });
   assert.equal(legacy.status, 404);
   assert.deepEqual(await legacy.json(), {
     error: true,
     message: 'API route not found.',
+  });
+});
+
+test('leaderboard requires an authenticated Aicoo player', async () => {
+  const response = await app.request('/api/leaderboard');
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), {
+    error: true,
+    message: 'Not signed in (or session expired).',
   });
 });

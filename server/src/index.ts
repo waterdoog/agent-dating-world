@@ -20,6 +20,7 @@ import {
   FighterRateLimitError,
   ensureFighterUser,
   readFighterProfile,
+  readN1CreditLeaderboard,
 } from './database/repository.js';
 import {
   buildAuthorizeUrl,
@@ -42,11 +43,13 @@ import {
   fighterUserRecordForIdentity,
   getFighterWorldSnapshot,
   joinFighterWorld,
+  leaveFighterWorldQueue,
   playFighterWorldAgain,
   readyFighterWorld,
   resumeFighterWorld,
   updateFighterWorldConfig,
   type FighterIdentity,
+  type FighterReadyIntent,
   type FighterRuntimeEvent,
 } from './fighter-world.js';
 import { listSquare, releaseAgent, listEvents, appendEvent, type AgentCard, type LoveStyle } from './modules/dating/store.js';
@@ -290,6 +293,28 @@ app.get('/api/profile', async (c) => {
   }
 });
 
+app.get('/api/leaderboard', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  const identity = fighterIdentityFor(auth);
+  const user = fighterUserRecordForIdentity(identity);
+  try {
+    await ensureFighterUser(user);
+    const leaderboard = await readN1CreditLeaderboard(
+      user.id,
+      c.req.query('limit')
+    );
+    c.header('Cache-Control', 'private, no-store');
+    return c.json(leaderboard);
+  } catch (error) {
+    if (error instanceof DatabaseUnavailableError) {
+      return jsonError(c, 503, error.message);
+    }
+    console.error('[leaderboard] database request failed.');
+    return jsonError(c, 503, 'The N1 Credits leaderboard is temporarily unavailable.');
+  }
+});
+
 // ─── Symmetric Virtual N1 Fighter World ────────────────────────────
 
 app.get('/api/world', async (c) => {
@@ -341,6 +366,7 @@ app.put('/api/world/config', async (c) => {
       await updateFighterWorldConfig(fighterIdentityFor(auth), {
         attackPolicy: input.attackPolicy,
         defensePolicy: input.defensePolicy,
+        agentLanguage: input.agentLanguage,
       })
     );
   } catch (error) {
@@ -351,10 +377,52 @@ app.put('/api/world/config', async (c) => {
 app.post('/api/world/ready', async (c) => {
   const auth = await requireBearer(c);
   if (auth instanceof Response) return auth;
+  let intent: FighterReadyIntent = { mode: 'random' };
+  const rawBody = await c.req.text();
+  if (rawBody.trim()) {
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return jsonError(c, 400, 'Request body must be valid JSON.');
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return jsonError(c, 400, 'A matchmaking mode is required.');
+    }
+    const input = body as Record<string, unknown>;
+    if (input.mode === 'random') {
+      intent = { mode: 'random' };
+    } else if (input.mode === 'room' && input.action === 'create') {
+      intent = { mode: 'room', action: 'create' };
+    } else if (
+      input.mode === 'room' &&
+      input.action === 'join' &&
+      typeof input.roomCode === 'string'
+    ) {
+      intent = { mode: 'room', action: 'join', roomCode: input.roomCode };
+    } else {
+      return jsonError(
+        c,
+        400,
+        'Choose random matchmaking, create a room, or provide a room code to join.'
+      );
+    }
+  }
   try {
     // Policies and the synthetic vault are persisted and snapshotted in
-    // separate role folders before this Fighter can enter matchmaking.
-    return c.json(await readyFighterWorld(fighterIdentityFor(auth)));
+    // separate role folders before this Fighter can enter matchmaking. Room
+    // reservation and pairing remain atomic inside the durable world lock.
+    return c.json(await readyFighterWorld(fighterIdentityFor(auth), intent));
+  } catch (error) {
+    return worldError(c, error);
+  }
+});
+
+app.post('/api/world/leave-queue', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  try {
+    return c.json(await leaveFighterWorldQueue(fighterIdentityFor(auth)));
   } catch (error) {
     return worldError(c, error);
   }
@@ -372,7 +440,12 @@ app.post('/api/world/run', async (c) => {
         payload:
           | FighterRuntimeEvent
           | { type: 'world'; world: unknown }
-          | { type: 'error'; message: string }
+          | {
+              type: 'error';
+              message: string;
+              code?: 'aicoo_rate_limit';
+              retryAfterMs?: number;
+            }
       ) => {
         if (!open) return;
         try {
@@ -393,6 +466,16 @@ app.post('/api/world/run', async (c) => {
         else if (error instanceof FighterRateLimitError) message = error.message;
         else if (error instanceof AicooError && error.status === 429) {
           message = 'Aicoo is rate limiting the world. Try again shortly.';
+          enqueue({
+            type: 'error',
+            message,
+            code: 'aicoo_rate_limit',
+            retryAfterMs: Math.min(
+              24 * 60 * 60_000,
+              Math.max(1_000, error.retryAfterMs ?? 30_000)
+            ),
+          });
+          return;
         } else if (error instanceof AicooError) {
           message = 'Aicoo could not complete the isolated Fighter turn.';
         }

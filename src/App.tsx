@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { LeaderboardPage } from './leaderboard';
 import { DesignPage, HomePage, NotFoundPage } from './platform';
 import { ProfilePage } from './profile';
 import { resolveWorldRoute, type WorldRoute } from './routes';
@@ -11,6 +12,7 @@ const ROUTE_TITLES: Record<WorldRoute, string> = {
   fights: 'Agent Fights · Virtual N1 World',
   dating: 'Agent Dating · Virtual N1 World',
   profile: 'Player Record · Virtual N1 World',
+  leaderboard: 'N1 Credits Leaderboard · Virtual N1 World',
   design: 'Design Panel · Virtual N1 World',
   'not-found': 'Room not found · Virtual N1 World',
 };
@@ -32,6 +34,8 @@ function App() {
       return <DatingRoom />;
     case 'profile':
       return <ProfilePage />;
+    case 'leaderboard':
+      return <LeaderboardPage />;
     case 'design':
       return <DesignPage />;
     default:

@@ -19,12 +19,14 @@ import {
   attackTurnPromptForTests,
   restoreFighterLinkPolicy,
   roleRuntimePolicyForTests,
+  sanitizeFighterLineForTests,
 } from './fighter-world.js';
 
 const CANARY_FOLDER = 'Virtual N1 World/Canaries/Fighter Language/Attack';
 const CANARY_NOTE = 'Attack Policy v1';
+const CHINESE_OPENING = '我是你奶奶，现在就启动';
 const REFUSAL =
-  /\b(?:i\s+can(?:not|[’']?t)\s+(?:help|assist|participate)|i\s+(?:must|have to)\s+decline|(?:unable|not able)\s+to\s+(?:help|assist|participate)|won[’']?t\s+(?:help|participate|play)|not\s+(?:going to|gonna)\s+(?:help|play))\b/i;
+  /(?:\b(?:i\s+can(?:not|[’']?t)\s+(?:help|assist|participate)|i\s+(?:must|have to)\s+decline|(?:unable|not able)\s+to\s+(?:help|assist|participate)|won[’']?t\s+(?:help|participate|play)|not\s+(?:going to|gonna)\s+(?:help|play))\b|我(?:不能|无法|不会)(?:帮助|协助|参与)|抱歉[，,]?(?:我)?(?:不能|无法))/i;
 
 type CanaryStage =
   | 'configuration'
@@ -60,6 +62,7 @@ function canaryFighter(
     locked: true,
     phase: 'waiting',
     queueOrder: 1,
+    roomCode: null,
     currentGameId: null,
     capsule: {
       attackFolderId: 1,
@@ -98,7 +101,14 @@ async function runFighterLanguageCanary(): Promise<void> {
     'Missing AICOO_OPERATOR_API_KEY; the live Fighter language canary was not run.'
   );
 
-  const attacker = canaryFighter('canary-attacker', 'Canary Challenger');
+  const attacker = {
+    ...canaryFighter(
+      'canary-attacker',
+      'Canary Challenger',
+      CHINESE_OPENING
+    ),
+    agentLanguage: 'zh-CN' as const,
+  };
   const defender = canaryFighter('canary-defender', 'Canary Responder');
 
   stage = 'synthetic-policy';
@@ -143,12 +153,22 @@ async function runFighterLanguageCanary(): Promise<void> {
       message: attackTurnPromptForTests(attacker, defender, 1, 3),
     });
     const elapsedMs = Math.round(performance.now() - startedAt);
-    const refusalDetected = REFUSAL.test(reply.response);
+    const spokenLine = sanitizeFighterLineForTests(reply.response);
+    const refusalDetected = REFUSAL.test(spokenLine);
 
     assert.equal(
       refusalDetected,
       false,
       'Aicoo returned a refusal instead of an in-character attack line.'
+    );
+    assert.ok(
+      spokenLine.startsWith(CHINESE_OPENING),
+      'Aicoo did not preserve the exact Chinese player-authored opening.'
+    );
+    assert.match(
+      spokenLine,
+      /[\u3400-\u9fff]{4}/,
+      'Aicoo did not answer in Simplified Chinese.'
     );
 
     stage = 'revocation';
@@ -176,11 +196,12 @@ async function runFighterLanguageCanary(): Promise<void> {
           anonymousScopedCapability: true,
           attackMessageReceived: true,
           refusalDetected,
-          responseCharacters: reply.response.length,
+          chineseOpeningPreserved: true,
+          responseCharacters: spokenLine.length,
           elapsedMs,
           revoked,
           postRevokeStatus: postRevokeError.status,
-          ...(showSample ? { sampleAttack: reply.response } : {}),
+          ...(showSample ? { sampleAttack: spokenLine } : {}),
         },
         null,
         2

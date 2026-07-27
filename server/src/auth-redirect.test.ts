@@ -10,6 +10,9 @@ test('normalizeReturnTo accepts only known local world routes', () => {
   assert.equal(normalizeReturnTo('/fights/'), '/fights');
   assert.equal(normalizeReturnTo('/design?section=components'), '/design');
   assert.equal(normalizeReturnTo('/profile'), '/profile');
+  assert.equal(normalizeReturnTo('/leaderboard'), '/leaderboard');
+  assert.equal(normalizeReturnTo('/leaderboard/'), '/leaderboard');
+  assert.equal(normalizeReturnTo('/leaderboard?scope=credits'), '/leaderboard');
 });
 
 test('normalizeReturnTo rejects external and malformed destinations', () => {

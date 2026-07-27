@@ -6,6 +6,7 @@ import './platform.css';
 import './world.css';
 import './profile.css';
 import './modules/dating/dating.css';
+import './leaderboard.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
