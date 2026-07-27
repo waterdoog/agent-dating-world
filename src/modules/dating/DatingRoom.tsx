@@ -221,6 +221,7 @@ export function DatingRoom() {
   const [events, setEvents] = useState<DatingTickEvent[]>([]);
   const [justBorn, setJustBorn] = useState('');
   const [feedOpen, setFeedOpen] = useState(false);
+  const [openEvent, setOpenEvent] = useState<DatingTickEvent | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 2000); return () => window.clearInterval(t); }, []);
   const clock = worldClock(now);
@@ -376,6 +377,11 @@ export function DatingRoom() {
   const chattingWith = myMover?.partner ? frame.find((m) => m.name === myMover.partner) : null;
   const lookOf = (name: string) => residents.find((r) => r.name === name)?.look as AgentAppearance | undefined;
   const feedShown = feedOpen ? events : events.slice(0, 5);
+  // derived "world state" — real drama only (broke roasts don't count)
+  const realEvents = events.filter((e) => e.move !== 'BROKE');
+  const activeRels = new Set(realEvents.filter((e) => e.attraction >= 0.5).map((e) => [e.actor, e.target].sort().join('~'))).size;
+  const conflicts = new Set(realEvents.filter((e) => e.tension >= 0.6).map((e) => [e.actor, e.target].sort().join('~'))).size;
+  const currentEvent = realEvents[0] ?? null;
 
   return (
     <div className="dt-room world-page">
@@ -391,7 +397,8 @@ export function DatingRoom() {
           <div className="dt-stats">
             <div className="dt-stat"><span className="dt-ic"><Clock3 size={16} /></span><div><b>第 {clock.year} 年</b><small>{clock.season} · 第 {clock.day} 天 · 1天=1世界年</small></div></div>
             <div className="dt-stat"><span className="dt-ic"><Users size={16} /></span><div><b>{live ? agents.length : DEMO.length}</b><small>在场 Agent</small></div></div>
-            <div className="dt-stat"><span className="dt-ic"><Heart size={16} /></span><div><b>{events.length}</b><small>本轮牵动</small></div></div>
+            <div className="dt-stat"><span className="dt-ic"><Heart size={16} /></span><div><b>{activeRels}</b><small>活跃关系</small></div></div>
+            <div className="dt-stat"><span className="dt-ic"><Zap size={16} /></span><div><b>{conflicts}</b><small>公开冲突</small></div></div>
           </div>
           <p className="dt-creed"><b>不设道德，不设剧本。</b><br />只有不断演化的关系。<cite>— Aicoo World Rule</cite></p>
           <button type="button" className="dt-enter" onClick={onReleaseClick}>＋ 放生 Agent <Sparkles size={17} /></button>
@@ -463,6 +470,23 @@ export function DatingRoom() {
             )}
           </div>
 
+          {currentEvent && (
+            <div className="dt-panel dt-rr-sec dt-event">
+              <div className="dt-event-head">
+                <p className="kicker">当前事件</p>
+                <span className={`dt-event-tag ${relPhrase(currentEvent).tone}`}>{relPhrase(currentEvent).text}</span>
+              </div>
+              <div className="dt-event-who">
+                {lookOf(currentEvent.actor) && <span className="dt-f-av" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(currentEvent.actor)!, 30) }} />}
+                <b>{currentEvent.actor} × {currentEvent.target}</b>
+                {lookOf(currentEvent.target) && <span className="dt-f-av dt-f-av2" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(currentEvent.target)!, 30) }} />}
+              </div>
+              {currentEvent.note && <p className="dt-event-note">“{currentEvent.note}”</p>}
+              <div className="dt-event-scores"><span>心动 {currentEvent.attraction.toFixed(2)}</span><span>张力 {currentEvent.tension.toFixed(2)}</span></div>
+              <button type="button" className="dt-event-open" onClick={() => setOpenEvent(currentEvent)}>打开对话</button>
+            </div>
+          )}
+
           <div className="dt-panel dt-rr-sec feed-sec">
             <p className="kicker" style={{ padding: '0 16px' }}>World Feed · 世界动态</p>
             <ul className="dt-feed">
@@ -516,6 +540,31 @@ export function DatingRoom() {
       </main>
 
       {wizard && <CreateWizard onClose={() => setWizard(false)} onReleased={onReleased} />}
+
+      {openEvent && (
+        <div className="dt-drawer-scrim" onClick={() => setOpenEvent(null)}>
+          <div className="dt-convo" onClick={(e) => e.stopPropagation()}>
+            <div className="dt-convo-head">
+              <b>{openEvent.actor} × {openEvent.target}</b>
+              <span className={`dt-event-tag ${relPhrase(openEvent).tone}`}>{relPhrase(openEvent).text}</span>
+              <button type="button" className="dt-convo-x" onClick={() => setOpenEvent(null)} aria-label="关闭">×</button>
+            </div>
+            <div className="dt-convo-body">
+              <div className="dt-convo-line">
+                <span className="dt-convo-nm">{openEvent.actor}</span>
+                <p className="dt-convo-bubble">{openEvent.message}</p>
+              </div>
+              {openEvent.reply && (
+                <div className="dt-convo-line reply">
+                  <span className="dt-convo-nm">{openEvent.target}</span>
+                  <p className="dt-convo-bubble">{openEvent.reply}</p>
+                </div>
+              )}
+            </div>
+            <div className="dt-convo-foot">心动 {openEvent.attraction.toFixed(2)} · 张力 {openEvent.tension.toFixed(2)}{openEvent.note ? ` — ${openEvent.note}` : ''}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
