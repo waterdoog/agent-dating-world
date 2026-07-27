@@ -155,7 +155,7 @@ function PlayerIdentity({ player }: { player: ProfilePlayer }) {
       <div className="profile-credit-ticket" aria-label={`${player.credits} N1 Credits`}>
         <span><Coins size={18} /> N1 Credits</span>
         <strong>{COUNT_FORMAT.format(player.credits)}</strong>
-        <small>Initial grant 1,000 · match wagers are not live yet</small>
+        <small>Initial grant 1,000 · Agent Fights stake 200</small>
       </div>
     </section>
   );
@@ -293,6 +293,10 @@ function MatchSheet({
           <span className="match-result">
             {game.result === 'win' ? <Trophy size={18} /> : <Swords size={18} />}
             <strong>{resultLabel}</strong>
+            <small className="match-credit-delta">
+              {game.creditDelta > 0 ? '+' : ''}
+              {COUNT_FORMAT.format(game.creditDelta)} N1
+            </small>
           </span>
           <span className="match-opponent">
             <small>Opponent</small>

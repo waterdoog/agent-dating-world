@@ -90,6 +90,11 @@ export async function migrationStatus(): Promise<{
   applied: MigrationFile[];
   pending: MigrationFile[];
   mismatched: MigrationFile[];
+  databaseOnly: Array<{
+    version: number;
+    name: string;
+    checksum: string;
+  }>;
 }> {
   const migrations = await readMigrations();
   const sql = migrationClient();
@@ -97,9 +102,13 @@ export async function migrationStatus(): Promise<{
     const [{ exists }] = await sql<{ exists: boolean }[]>`
       SELECT to_regclass(${MIGRATION_TABLE}) IS NOT NULL AS exists
     `;
-    if (!exists) return { applied: [], pending: migrations, mismatched: [] };
-    const rows = await sql<{ version: number; checksum: string }[]>`
-      SELECT version, checksum
+    if (!exists) {
+      return { applied: [], pending: migrations, mismatched: [], databaseOnly: [] };
+    }
+    const rows = await sql<
+      Array<{ version: number; name: string; checksum: string }>
+    >`
+      SELECT version, name, checksum
       FROM virtual_n1.n1_schema_migrations
       ORDER BY version
     `;
@@ -119,6 +128,16 @@ export async function migrationStatus(): Promise<{
           appliedChecksums.has(migration.version) &&
           appliedChecksums.get(migration.version) !== migration.checksum
       ),
+      databaseOnly: rows
+        .filter(
+          (row) =>
+            !migrations.some((migration) => migration.version === Number(row.version))
+        )
+        .map((row) => ({
+          version: Number(row.version),
+          name: row.name,
+          checksum: row.checksum,
+        })),
     };
   } finally {
     await sql.end({ timeout: 1 });

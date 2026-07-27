@@ -71,13 +71,31 @@ Credit history is append-only:
 - match-related entries reference the durable match when applicable;
 - balance-changing code writes the ledger entry and updates or verifies the materialized balance in one transaction.
 
-Do not update or delete a ledger event to “fix” a balance. Write a compensating event with its own reason and idempotency key. The current game does not wager credits and does not reward winners; only the 1,000-credit signup grant is active. A reward or staking system requires a separately reviewed economic and abuse-prevention design.
+Do not update or delete a ledger event to “fix” a balance. Write a
+compensating event with its own reason and idempotency key.
+
+Agent Fights uses a fixed **200 N1 Credit** settlement:
+
+- a player must have at least 200 credits before Ready can enter matchmaking;
+- the winner receives `+200` and the loser receives `-200`;
+- a draw changes neither balance;
+- the per-game settlement amount is fixed on the game's first durable archive;
+- games already archived when settlement launched remain neutral and are not
+  retroactively charged;
+- one immutable settlement marker is stored for each participant, including
+  zero-credit draws;
+- settlement markers, non-zero ledger rows, materialized balances, and the
+  completed match archive commit in one database transaction.
+
+The settlement marker and ledger idempotency constraints are authoritative.
+Retrying completion, resuming after a crash, or reconciling from two Vercel
+instances must never pay or charge a player twice.
 
 ## Match and transcript retention
 
 A completed game is durable. Store the match identity, timestamps, status, round count, both player results, final scores, captures, and ordered sanitized messages. This supports a profile panel showing past games and replaying their game chat.
 
-Match persistence should be idempotent on match ID. Retrying completion after a transient failure must not create a duplicate game, duplicate transcript, or duplicate credit event.
+Match persistence should be idempotent on match ID. Retrying completion after a transient failure must not create a duplicate game, duplicate transcript, duplicate settlement marker, or duplicate credit event.
 
 Until a formal deletion and retention policy is approved:
 
@@ -106,6 +124,13 @@ Each applied migration is recorded in the migration ledger with its filename and
 - each migration should run inside a transaction unless a Postgres operation explicitly cannot;
 - schema-qualified names, constraints, and indexes should be intentional and reviewable.
 
+`pnpm db:status` also prints migrations recorded by the database but missing
+from the current checkout. Never reuse one of those version numbers or invent a
+replacement file: locate the canonical migration from the owning module and
+restore it byte-for-byte. The shared development database currently contains
+versions used by other Virtual N1 modules, so a local migration number must be
+chosen after checking both the repository and the database ledger.
+
 Application code may depend only on migrations that ship in the same revision or an earlier one.
 
 ## Migration commands
@@ -119,6 +144,10 @@ pnpm db:migrate
 
 # Create the next numbered SQL migration.
 pnpm db:create -- <short_snake_case_name>
+
+# Exercise win/loss, draw, and duplicate-retry settlement in a transaction
+# that is deliberately rolled back.
+pnpm db:test:wallet
 ```
 
 Migration and status commands use `n1_POSTGRES_URL_NON_POOLING`, falling back only to this same project's `n1_POSTGRES_URL` when no separate direct URL exists. Production and CI should provide the non-pooling value. Migrations never run automatically when the application starts.

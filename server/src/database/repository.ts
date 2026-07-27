@@ -4,6 +4,7 @@ import {
   type DatabaseQueryClient,
 } from './client.js';
 import type { FighterUserRecord, MiniGameArchive } from './game-archive.js';
+import { buildGameCreditSettlements } from './wallet.js';
 
 export class DatabaseUnavailableError extends Error {
   constructor(message = 'The Agent Fights database is not configured.') {
@@ -77,6 +78,24 @@ export async function ensureFighterUser(user: FighterUserRecord): Promise<void> 
   }
 }
 
+export async function readFighterCreditBalance(fighterId: string): Promise<number> {
+  if (!isDatabaseConfigured()) throw new DatabaseUnavailableError();
+  try {
+    const rows = await database()<Array<{ n1_credits: string | number }>>`
+      SELECT n1_credits
+      FROM virtual_n1.fighter_users
+      WHERE id = ${fighterId}
+    `;
+    if (rows.length !== 1) {
+      throw new DatabaseUnavailableError('The persistent Fighter profile is unavailable.');
+    }
+    return numberValue(rows[0].n1_credits);
+  } catch (error) {
+    if (error instanceof DatabaseUnavailableError) throw error;
+    throw new DatabaseUnavailableError('The persistent Fighter wallet is unavailable.');
+  }
+}
+
 export async function enforceFighterRateLimit(
   fighterId: string,
   action: 'join' | 'config' | 'ready' | 'resume' | 'play_again',
@@ -117,6 +136,137 @@ export async function enforceFighterRateLimit(
   }
 }
 
+/** @internal Exported for the rollback-only live database canary. */
+export async function settleCompletedGameWith(
+  sql: DatabaseQueryClient,
+  gameId: string
+): Promise<void> {
+  const games = await sql<
+    Array<{ status: 'playing' | 'complete'; n1_stake: string | number }>
+  >`
+    SELECT status, n1_stake
+    FROM virtual_n1.fighter_games
+    WHERE id = ${gameId}
+    FOR UPDATE
+  `;
+  const storedGame = games[0];
+  if (storedGame?.status !== 'complete') return;
+
+  const stake = numberValue(storedGame.n1_stake);
+  // Version 0 games were already in the archive when wallet settlement
+  // launched. They remain neutral rather than being retroactively charged.
+  if (stake === 0) return;
+
+  const participants = await sql<
+    Array<{
+      fighter_id: string;
+      result: 'pending' | 'win' | 'loss' | 'draw';
+    }>
+  >`
+    SELECT fighter_id, result
+    FROM virtual_n1.fighter_game_participants
+    WHERE game_id = ${gameId}
+    ORDER BY fighter_id
+    FOR UPDATE
+  `;
+  if (
+    participants.length !== 2 ||
+    participants.some((participant) => participant.result === 'pending')
+  ) {
+    throw new Error('The completed Fighter game has invalid settlement results.');
+  }
+
+  const settlements = buildGameCreditSettlements(
+    gameId,
+    stake,
+    participants.map((participant) => ({
+      fighterId: participant.fighter_id,
+      result: participant.result as 'win' | 'loss' | 'draw',
+    }))
+  );
+  const [first, second] = settlements;
+  const lockedUsers = await sql<Array<{ id: string }>>`
+    SELECT id
+    FROM virtual_n1.fighter_users
+    WHERE id = ${first.fighterId} OR id = ${second.fighterId}
+    ORDER BY id
+    FOR UPDATE
+  `;
+  if (lockedUsers.length !== 2) {
+    throw new Error('A Fighter wallet is missing during settlement.');
+  }
+
+  for (const settlement of settlements) {
+    const insertedMarkers = await sql<Array<{ fighter_id: string }>>`
+      INSERT INTO virtual_n1.fighter_game_credit_settlements (
+        game_id,
+        fighter_id,
+        amount,
+        settlement_version
+      )
+      VALUES (
+        ${settlement.gameId},
+        ${settlement.fighterId},
+        ${settlement.amount},
+        ${settlement.version}
+      )
+      ON CONFLICT (game_id, fighter_id) DO NOTHING
+      RETURNING fighter_id
+    `;
+
+    if (insertedMarkers.length === 0) {
+      const existing = await sql<
+        Array<{ amount: string | number; settlement_version: number }>
+      >`
+        SELECT amount, settlement_version
+        FROM virtual_n1.fighter_game_credit_settlements
+        WHERE game_id = ${settlement.gameId}
+          AND fighter_id = ${settlement.fighterId}
+      `;
+      if (
+        existing.length !== 1 ||
+        numberValue(existing[0].amount) !== settlement.amount ||
+        Number(existing[0].settlement_version) !== settlement.version
+      ) {
+        throw new Error('The Fighter game has a conflicting wallet settlement.');
+      }
+      continue;
+    }
+
+    if (settlement.amount === 0) continue;
+    const updatedBalances = await sql<Array<{ id: string }>>`
+      WITH inserted_ledger AS (
+        INSERT INTO virtual_n1.n1_credit_ledger (
+          fighter_id,
+          game_id,
+          amount,
+          reason,
+          idempotency_key
+        )
+        VALUES (
+          ${settlement.fighterId},
+          ${settlement.gameId},
+          ${settlement.amount},
+          'game_settlement',
+          ${settlement.idempotencyKey}
+        )
+        ON CONFLICT (idempotency_key) DO NOTHING
+        RETURNING fighter_id, amount
+      )
+      UPDATE virtual_n1.fighter_users AS fighter
+      SET
+        n1_credits = fighter.n1_credits + inserted_ledger.amount,
+        updated_at = now()
+      FROM inserted_ledger
+      WHERE fighter.id = inserted_ledger.fighter_id
+      RETURNING fighter.id
+    `;
+    if (updatedBalances.length !== 1) {
+      throw new Error('The Fighter wallet ledger could not be settled.');
+    }
+  }
+}
+
 export async function persistMiniGameArchive(archive: MiniGameArchive): Promise<void> {
   if (!isDatabaseConfigured()) return;
   const sql = database();
@@ -131,6 +281,7 @@ export async function persistMiniGameArchive(archive: MiniGameArchive): Promise<
         status,
         current_round,
         max_rounds,
+        n1_stake,
         winner_fighter_id,
         created_at,
         completed_at
@@ -140,6 +291,7 @@ export async function persistMiniGameArchive(archive: MiniGameArchive): Promise<
         ${archive.status},
         ${archive.round},
         ${archive.maxRounds},
+        ${archive.stake},
         ${archive.winnerId},
         ${archive.createdAt},
         ${archive.completedAt}
@@ -154,6 +306,7 @@ export async function persistMiniGameArchive(archive: MiniGameArchive): Promise<
           EXCLUDED.current_round
         ),
         max_rounds = EXCLUDED.max_rounds,
+        n1_stake = existing_game.n1_stake,
         winner_fighter_id = COALESCE(
           existing_game.winner_fighter_id,
           EXCLUDED.winner_fighter_id
@@ -199,9 +352,11 @@ export async function persistMiniGameArchive(archive: MiniGameArchive): Promise<
             EXCLUDED.shields_remaining
           ),
           result = CASE
-            WHEN EXCLUDED.result = 'pending'
+            WHEN existing_participant.result <> 'pending'
               THEN existing_participant.result
-            ELSE EXCLUDED.result
+            WHEN EXCLUDED.result <> 'pending'
+              THEN EXCLUDED.result
+            ELSE existing_participant.result
           END
       `;
     }
@@ -264,6 +419,8 @@ export async function persistMiniGameArchive(archive: MiniGameArchive): Promise<
         ON CONFLICT (id) DO NOTHING
       `;
     }
+
+    await settleCompletedGameWith(tx, archive.id);
   });
 }
 
@@ -288,6 +445,7 @@ export interface FighterProfileView {
     result: 'win' | 'loss' | 'draw';
     score: number;
     opponentScore: number;
+    creditDelta: number;
     opponent: {
       id: string;
       displayName: string;
@@ -368,6 +526,7 @@ export async function readFighterProfile(
       result: 'win' | 'loss' | 'draw';
       score: number;
       opponent_score: number;
+      credit_delta: string | number;
       opponent_id: string;
       opponent_display_name: string;
       opponent_handle: string;
@@ -380,6 +539,7 @@ export async function readFighterProfile(
       self.result,
       self.score,
       opponent.score AS opponent_score,
+      COALESCE(settlement.amount, 0) AS credit_delta,
       opponent.fighter_id AS opponent_id,
       opponent.display_name_snapshot AS opponent_display_name,
       opponent.handle_snapshot AS opponent_handle,
@@ -391,6 +551,9 @@ export async function readFighterProfile(
     JOIN virtual_n1.fighter_game_participants opponent
       ON opponent.game_id = g.id
       AND opponent.fighter_id <> self.fighter_id
+    LEFT JOIN virtual_n1.fighter_game_credit_settlements settlement
+      ON settlement.game_id = self.game_id
+      AND settlement.fighter_id = self.fighter_id
     WHERE self.fighter_id = ${fighterId}
       AND g.status = 'complete'
     ORDER BY g.completed_at DESC, g.id DESC
@@ -470,6 +633,7 @@ export async function readFighterProfile(
       result: game.result,
       score: numberValue(game.score),
       opponentScore: numberValue(game.opponent_score),
+      creditDelta: numberValue(game.credit_delta),
       opponent: {
         id: game.opponent_id,
         displayName: game.opponent_display_name,

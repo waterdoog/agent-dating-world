@@ -476,13 +476,14 @@ function BriefingDesk({
           <p>
             Locking snapshots two isolated role capsules. The runner mints fresh short-lived
             Aicoo sessions as it advances each round. Policies stay sealed for 10 complete
-            rounds, then the versioned live editor unlocks.
+            rounds, then the versioned live editor unlocks. This bout settles 200 N1 Credits:
+            winner +200, loser −200, draw 0.
           </p>
           <button className="fight-primary" type="submit" disabled={!formValid || readying}>
             {readying
               ? <RefreshCw className="spinning" size={19} />
               : <LockKeyhole size={19} />}
-            {readying ? 'Locking the match…' : 'Lock policies & find opponent'}
+            {readying ? 'Locking the match…' : 'Enter 200 N1 bout'}
           </button>
         </div>
       </form>

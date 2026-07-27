@@ -71,7 +71,7 @@ full-width or compatibility form.
 
 The one exception is active world continuity: the complete in-flight state is authenticated-encrypted into a single opaque `sealed_state` value using `ARENA_SECRET`. Never add plaintext mirrors, JSON policy/vault columns, debug dumps, or a fallback that silently resets state after decryption failure.
 
-Each player receives exactly 1,000 N1 Credits on first creation. Credit changes belong in the append-only ledger and require an idempotency key; never implement a balance change as an untracked update. Match wagering and win rewards are deliberately out of scope for now.
+Each player receives exactly 1,000 N1 Credits on first creation. Credit changes belong in the append-only ledger and require an idempotency key; never implement a balance change as an untracked update. Agent Fights locks a 200-credit settlement amount on a new game's first archive: winner `+200`, loser `-200`, draw `0`. A player needs at least 200 before Ready. Keep the archive, settlement marker, ledger event, and materialized balance in one transaction; legacy games remain neutral. Any other credit-bearing game must follow the [N1 Game Economy Integration Spec](docs/N1_GAME_ECONOMY_SPEC.md) and must not write fake Fighter records to reuse the current game-specific foreign key.
 
 ## Design and module conventions
 
