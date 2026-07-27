@@ -102,7 +102,9 @@ export async function grok(prompt: string, opts: GrokOptions): Promise<GrokResul
             headers: { Authorization: `Bearer ${opts.bearer}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
               message: opts.system ? `${opts.system}\n\n${prompt}` : prompt,
-              model,
+              // "default" means the account's standard model — Aicoo rejects it
+              // as an explicit value, so omit the field and let it choose.
+              ...(model && model !== 'default' ? { model } : {}),
               stream: false,
               ...(opts.conversationId ? { conversationId: opts.conversationId } : {}),
             }),

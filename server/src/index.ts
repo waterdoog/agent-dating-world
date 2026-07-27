@@ -38,14 +38,56 @@ import {
   type FightIdentity,
 } from './fights.js';
 import { listSquare, releaseAgent, listEvents, appendEvent, type AgentCard, type LoveStyle } from './modules/dating/store.js';
-import { runAgentTick, encounterWith } from './modules/dating/engine.js';
+import { runAgentTick, encounterWith, readRels, type TickEvent } from './modules/dating/engine.js';
 import { startWorldLoop } from './modules/dating/scheduler.js';
 import { recentRuns, runById } from './modules/dating/grok.js';
 import { budgetSnapshot } from './modules/dating/budget.js';
+import { listThreads, currentDigest, summariseWorld } from './modules/dating/threads.js';
+import { writeYearbook, listYearbooks, yearbookFor } from './modules/dating/yearbook.js';
+import { recordEvent } from './modules/dating/records.js';
 
 // Stable API keys the world can act with (ownerSub → key), seeded from
 // DATING_WORLD_KEYS at boot. Lets a target's REAL persona answer on its own COO.
 const worldCreds = new Map<string, string>();
+
+// The town digest is re-written from real threads, at most once every few
+// minutes, using whichever account the world is running on.
+let lastDigestAt = 0;
+const DIGEST_EVERY_MS = 4 * 60_000;
+function maybeSummarise(): void {
+  const bearer = worldCreds.values().next().value;
+  if (!bearer || Date.now() - lastDigestAt < DIGEST_EVERY_MS) return;
+  lastDigestAt = Date.now();
+  void summariseWorld(bearer).catch(() => undefined);
+}
+
+// One world year = one real day. At each turn of the year every agent writes
+// its own account of it — in its own voice, from what really happened.
+const WORLD_EPOCH = Date.UTC(2026, 6, 23);
+function worldYear(now = Date.now()): number {
+  return Math.max(1, Math.floor(((now - WORLD_EPOCH) / 86_400_000) * 365 / 365) + 1);
+}
+let lastYearWritten = 0;
+async function maybeCloseYear(): Promise<void> {
+  const year = worldYear();
+  if (year === lastYearWritten) return;
+  lastYearWritten = year;
+  const roster = await listSquare().catch(() => [] as AgentCard[]);
+  const events = (await listEvents().catch(() => [])) as unknown as TickEvent[];
+  for (const card of roster) {
+    const bearer = worldCreds.get(card.ownerSub);
+    if (!bearer) continue;
+    await writeYearbook({
+      agent: card.name,
+      persona: card.persona || card.oneline || card.name,
+      year: year - 1,
+      rels: await readRels(bearer, card.name).catch(() => []),
+      events,
+      bearer,
+    }).catch(() => undefined);
+  }
+}
+
 
 const app = new Hono();
 
@@ -351,6 +393,21 @@ app.get('/api/dating/budget', (c) =>
   c.json({ dailyTurnBudget: config.dailyTurnBudget, agents: budgetSnapshot() })
 );
 
+// Continuous story lines woven from real beats, plus the town digest.
+app.get('/api/dating/yearbooks', (c) => {
+  const agent = c.req.query('agent');
+  const year = Number(c.req.query('year') ?? 0);
+  if (agent && year) {
+    const book = yearbookFor(agent, year);
+    return book ? c.json({ yearbook: book }) : jsonError(c, 404, 'No yearbook for that agent and year.');
+  }
+  return c.json({ yearbooks: listYearbooks(Number(c.req.query('limit') ?? 20)) });
+});
+
+app.get('/api/dating/threads', (c) =>
+  c.json({ threads: listThreads(Number(c.req.query('limit') ?? 12)), digest: currentDigest() })
+);
+
 app.get('/api/dating/feed', async (c) => {
   try {
     return c.json({ events: await listEvents() });
@@ -485,6 +542,10 @@ if (process.env.DATING_WORLD_KEYS) {
       intervalMs,
       onEvent: (e) => {
         appendEvent(e).catch(() => undefined);
+        void recordEvent(e);                          // durable in links/
+        // refresh the town digest from real threads (throttled inside)
+        maybeSummarise();
+        void maybeCloseYear().catch(() => undefined);
         console.log(`[dating] 🌀 ${e.actor} [${e.move}] → ${e.target} · a${e.attraction.toFixed(2)}/t${e.tension.toFixed(2)} — ${e.note}`);
       },
     });

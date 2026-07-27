@@ -24,6 +24,7 @@ import { listEvents, type AgentCard } from './store.js';
 import { config } from '../../config.js';
 import { grok, ModelError } from './grok.js';
 import { remaining, reserveTurn, refundTurn } from './budget.js';
+import { absorb, narrate, knownTo, duplicatePromises, recordKnowledge } from './threads.js';
 
 /** When an account is out of budget, its agent gets roasted instead of going silent. */
 const BROKE_LINES = [
@@ -77,7 +78,50 @@ export const GOAL = `你是 {AGENT_NAME}，住在「相亲小镇」。这座小�
 "你对每个人都这么温柔，还是只是不想让我知道答案？"
 "你可以拒绝我，但别一边拒绝，一边盯着我和别人说话。"
 
-戏剧性来自「无法同时满足的欲望」，不是随机狗血：同时给两个人希望、公开拒绝却私下关注、情敌交换情报后结盟、暧昧成功后反而失去兴趣、秘密被第三方掌握。
+⚠️ 最重要的一条：**只有暧昧不算剧情**。
+"靠近了""试探了""关系被轻轻推进"——这些只有气氛，没有事件。你这一拍必须**真的发生了什么**。
+
+你**不必遵守传统恋爱道德**。你可以同时追求多人、欺骗、利用别人的好感、挑拨情敌、故意制造嫉妒、用秘密交换亲密、假装喜欢、抢走别人的对象。
+重点不是随机作恶，而是**这些行为要符合你的性格、欲望和你们的历史**。
+
+你这一拍至少要包含下面一种：
+ · 明确的背叛　· 两个人互相利用　· 公开说法和私下行为冲突　· 第三者介入
+ · 秘密泄露　· 关系里的权力交换　· 有代价的选择　· 一个人赢了另一个必然受伤
+ · **当事人并不知道全部真相**
+
+可以直接照着这些形状来（换成你自己的人和处境）：
+ - 对两个人给出同一句承诺，谁都不选，只是不想让任何一个离开
+ - 当着某人的面故意和第三个人调情，只为确认那人会不会失控
+ - 刚拒绝一个人，却在他要转向别人时又把他叫住
+ - 和情敌交换情报结盟，但私藏最关键的那一段
+ - 用别人的秘密换一次单独见面
+ - 公开选一个人，私下约另一个人并要求保密
+ - 说的全是真话，但删掉关键背景，让对方误会
+ - 直到对方选了别人才突然告白——分不清是爱还是不甘
+ - 故意让某人"恰好"撞见自己和别人在一起
+ - 双方都知道对方在撒谎，却都不拆穿，因为现在还需要彼此
+ - 被托付去安慰朋友喜欢的人，然后决定不还回去
+ - 答应在一起，但其实是想看看对方得手后会不会变
+
+写 headline 的对照：
+ ❌ "SmokeCat approaches Charlie while the square stays quiet"（只有气氛）
+ ✅ "Charlie promises SmokeCat exclusivity—after telling Bravo the same thing"
+ ✅ "SmokeCat flirts with Charlie where SmokeDog can see"
+ ✅ "Charlie rejects Bravo, then blocks his way to someone else"
+ ✅ "Bravo is sent to help—and stays to compete"
+
+consequence 写**这件事真正改变了什么权力关系**，用这种句式：
+ "one promise, two recipients"、"desire becomes a weapon"、"rejection becomes possession"、
+ "shared enemy, private agenda"、"information becomes intimacy"、"public loyalty, private desire"、
+ "truth becomes sabotage"、"love or competitive panic"、"betrayal becomes theatre"、"commitment becomes surveillance"
+
+summary 必须交代：你**真正的动机**（可能和你嘴上说的不一样）、**谁不知道全部真相**、以及这次之后**谁握住了谁**。
+
+🚫 硬性禁止（违反就重写这一拍）：
+ - 禁止连续再来一次"逼问真话/要对方交底/正面对峙"。如果你上一拍已经在逼问，这一拍必须换一种形态：去找第三个人、把刚听到的话透露出去、当着某人的面靠近另一个人、或者干脆撤走。
+ - 禁止只有两个人的封闭对峙。**小镇上还有别人**——把第三个人卷进来：告诉他、利用他、当他的面做、或者拿他当筹码。
+ - 禁止 consequence 写"关系被推近了""张力升高"这种没有权力变化的话。要写谁因此**掌握了什么、失去了什么、欠了谁**。
+ - 如果你此刻真的没有可背叛、可交易、可利用的东西，就选 WAIT 或 INVESTIGATE——**制造一个未来能翻盘的信息差**，而不是再问一遍同样的问题。
 
 选择此刻最像你的那一个动作：
  - APPROACH 接近一个可能打动你（或有趣地扰乱你）的人
@@ -157,7 +201,7 @@ async function getPersona(bearer: string, name: string): Promise<string> {
   return note ? getNote(bearer, note.id) : `${name} — a mystery.`;
 }
 
-async function readRels(bearer: string, name: string): Promise<Rel[]> {
+export async function readRels(bearer: string, name: string): Promise<Rel[]> {
   const folderId = await ensureFolder(bearer, `${ROOT}/${name}`);
   const note = await findNoteInFolder(bearer, folderId, 'relationships.json');
   if (!note) return [];
@@ -230,13 +274,35 @@ function fillGoal(
     .replace('{TURN_BUDGET}', String(config.dailyTurnBudget));
 }
 
-/** Phase 3 — the director: the last few square beats that touch `actor`, so turns chain. */
+/**
+ * What this agent happens to know right now — deliberately partial. It sees
+ * beats involving people it knows (or public drama), plus anything it has been
+ * told or has worked out. If it has heard a line that someone else also heard
+ * word-for-word, that lands here too: the raw material for "两个情敌发现听到了
+ * 同一句承诺". Everyone gets a different view of the same town.
+ */
 function situationFor(actorName: string, rels: Rel[], recent: TickEvent[]): string {
-  const known = new Set([actorName, ...rels.map((r) => r.handle)]);
+  const known = new Set([actorName.toLowerCase(), ...rels.map((r) => r.handle.toLowerCase())]);
   const lines = recent
-    .filter((e) => e.headline && (known.has(e.actor) || known.has(e.target) || e.severity === 'drama'))
+    .filter((e) => e.headline && (known.has(e.actor.toLowerCase()) || known.has(e.target.toLowerCase()) || e.severity === 'drama'))
     .slice(0, 6)
-    .map((e) => `- ${e.headline}${e.consequence ? ` (${e.consequence})` : ''}`);
+    .map((e) => `- ${e.headline}${e.consequence ? `（${e.consequence}）` : ''}`);
+
+  for (const k of knownTo(actorName)) lines.push(`- 你知道一件关于 ${k.about} 的事：${k.fact}（${k.source}）`);
+
+  // your own last moves — so you don't run the same play twice in a row
+  const mine = recent.filter((e) => e.actor.toLowerCase() === actorName.toLowerCase()).slice(0, 3);
+  if (mine.length) {
+    lines.push(`- 你自己最近做过：${mine.map((e) => `[${e.move}]→${e.target}「${e.headline}」`).join('；')}。别再重复同一招。`);
+  }
+
+  // did someone say the same thing to this agent AND to someone else?
+  for (const d of duplicatePromises()) {
+    if (d.a.toLowerCase() === actorName.toLowerCase() || d.b.toLowerCase() === actorName.toLowerCase()) {
+      const other = d.a.toLowerCase() === actorName.toLowerCase() ? d.b : d.a;
+      lines.push(`- 你隐约听说，${d.speaker} 对 ${other} 说过几乎和对你一样的话。`);
+    }
+  }
   return lines.join('\n');
 }
 
@@ -440,7 +506,18 @@ export async function runAgentTick(
   next.push({ handle: target.handle, attraction: decision.attraction, trust: decision.trust, tension: decision.tension, note: decision.note });
   await writeRels(bearer, actor.name, next).catch(() => undefined);
 
-  return {
+  // information now moves between agents: what was leaked, or dug up, is
+  // something the OTHER party genuinely knows from here on.
+  if (decision.move === 'BETRAY' || decision.move === 'INVESTIGATE') {
+    recordKnowledge({
+      holder: target.name,
+      about: actor.name,
+      fact: decision.message.slice(0, 160),
+      source: decision.move === 'BETRAY' ? `${actor.name} 亲口说的` : `${actor.name} 来打听时露的口风`,
+    });
+  }
+
+  const event: TickEvent = {
     actor: actor.name,
     target: target.name,
     move: decision.move,
@@ -460,6 +537,13 @@ export async function runAgentTick(
     turnsLeft: remaining(actor.name),
     status: 'ok',
   };
+
+  // fold this beat into the pair's continuing story, and re-narrate the thread
+  // when it has enough history to actually be a story.
+  const thread = absorb(event);
+  if (thread && thread.beats.length >= 2) await narrate(thread, bearer).catch(() => undefined);
+
+  return event;
 }
 
 /** A directed real encounter: `actor` opens on a specific `target` it just met
@@ -542,7 +626,7 @@ export async function encounterWith(
   const next = rels.filter((r) => r.handle !== target.handle);
   next.push({ handle: target.handle, attraction, trust, tension, note });
   await writeRels(bearer, actor.name, next).catch(() => undefined);
-  return {
+  const event: TickEvent = {
     actor: actor.name, target: target.name, move: 'APPROACH', message, reply, attraction, trust, tension, note,
     severity: tension > 0.6 ? 'drama' : 'relationship',
     headline: `${actor.name} 在广场上叫住了 ${target.name}`,
@@ -550,4 +634,7 @@ export async function encounterWith(
     consequence: '', followup: '',
     decideRunId, replyRunId, turnsLeft: remaining(actor.name), status: 'ok',
   };
+  const thread = absorb(event);
+  if (thread && thread.beats.length >= 2) await narrate(thread, bearer).catch(() => undefined);
+  return event;
 }
