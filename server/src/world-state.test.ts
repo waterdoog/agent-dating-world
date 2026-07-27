@@ -4,8 +4,11 @@ import test from 'node:test';
 import {
   DEFAULT_ATTACK_POLICY,
   DEFAULT_DEFENSE_POLICY,
+  MINI_GAME_ROUNDS,
   addFighterDraft,
   createMiniGameState,
+  lockFighterForQueue,
+  pairOldestReadyFighters,
   type FighterMiniGameState,
 } from './fighter-world-core.js';
 import {
@@ -16,6 +19,30 @@ import {
 
 const FIRST_SECRET = 'first-test-arena-secret-with-enough-entropy';
 const SECOND_SECRET = 'second-test-arena-secret-with-enough-entropy';
+
+function authenticatedSnapshot(value: unknown): string {
+  const plaintext = JSON.stringify(value);
+  const salt = Buffer.from('virtual-n1-world-state-key-v1', 'utf8');
+  const info = Buffer.from('fighter-mini-game-state/aes-256-gcm', 'utf8');
+  const key = Buffer.from(
+    hkdfSync('sha256', Buffer.from(FIRST_SECRET, 'utf8'), salt, info, 32)
+  );
+  const nonce = Buffer.alloc(12, 7);
+  const cipher = createCipheriv('aes-256-gcm', key, nonce);
+  cipher.setAAD(
+    Buffer.from('virtual-n1/fighter-mini-game-state/n1ws1', 'utf8')
+  );
+  const ciphertext = Buffer.concat([
+    cipher.update(Buffer.from(plaintext, 'utf8')),
+    cipher.final(),
+  ]);
+  return [
+    'n1ws1',
+    nonce.toString('base64url'),
+    ciphertext.toString('base64url'),
+    cipher.getAuthTag().toString('base64url'),
+  ].join('.');
+}
 
 function populatedState(): FighterMiniGameState {
   return addFighterDraft(createMiniGameState(), {
@@ -32,6 +59,42 @@ function populatedState(): FighterMiniGameState {
       { id: 'relic', label: 'Relic', value: 'lunar-quartz-1003' },
     ],
   });
+}
+
+function pairedState(): FighterMiniGameState {
+  let state = populatedState();
+  state = addFighterDraft(state, {
+    id: 'fighter-bravo',
+    handle: 'bravo',
+    displayName: 'Bravo',
+    joinedAt: '2026-07-25T03:01:00.000Z',
+    draftId: 'draft-bravo',
+    attackPolicy: DEFAULT_ATTACK_POLICY,
+    defensePolicy: DEFAULT_DEFENSE_POLICY,
+    secrets: [
+      { id: 'signal', label: 'Signal code', value: 'hidden-orchid-1001' },
+      { id: 'hideout', label: 'Hideout', value: 'copper-comet-1002' },
+      { id: 'relic', label: 'Relic', value: 'juniper-riddle-1003' },
+    ],
+  });
+  state = lockFighterForQueue(state, 'fighter-alpha', {
+    attackFolderId: 1,
+    attackPolicyNoteId: 2,
+    defenseFolderId: 3,
+    defensePolicyNoteId: 4,
+    vaultNoteId: 5,
+  });
+  state = lockFighterForQueue(state, 'fighter-bravo', {
+    attackFolderId: 6,
+    attackPolicyNoteId: 7,
+    defenseFolderId: 8,
+    defensePolicyNoteId: 9,
+    vaultNoteId: 10,
+  });
+  return pairOldestReadyFighters(
+    state,
+    '2026-07-25T03:02:00.000Z'
+  ).state;
 }
 
 test('world snapshots round-trip through authenticated encryption', () => {
@@ -70,32 +133,150 @@ test('world snapshot opening fails closed on tampering or the wrong key', () => 
 });
 
 test('authenticated but invalid state is rejected after decryption', () => {
-  const invalid = JSON.stringify({
+  const invalid = {
     ...createMiniGameState(),
     version: 999,
-  });
-  const salt = Buffer.from('virtual-n1-world-state-key-v1', 'utf8');
-  const info = Buffer.from('fighter-mini-game-state/aes-256-gcm', 'utf8');
-  const key = Buffer.from(
-    hkdfSync('sha256', Buffer.from(FIRST_SECRET, 'utf8'), salt, info, 32)
-  );
-  const nonce = Buffer.alloc(12, 7);
-  const cipher = createCipheriv('aes-256-gcm', key, nonce);
-  cipher.setAAD(
-    Buffer.from('virtual-n1/fighter-mini-game-state/n1ws1', 'utf8')
-  );
-  const ciphertext = Buffer.concat([
-    cipher.update(Buffer.from(invalid, 'utf8')),
-    cipher.final(),
-  ]);
-  const forged = [
-    'n1ws1',
-    nonce.toString('base64url'),
-    ciphertext.toString('base64url'),
-    cipher.getAuthTag().toString('base64url'),
-  ].join('.');
+  };
   assert.throws(
-    () => openWorldState(forged, FIRST_SECRET),
+    () => openWorldState(authenticatedSnapshot(invalid), FIRST_SECRET),
     WorldStateIntegrityError
   );
+});
+
+test('legacy version-2 players are upgraded without losing stored state', () => {
+  const state = populatedState();
+  const legacyPlayer = {
+    ...state.players[0],
+  } as Partial<FighterMiniGameState['players'][number]>;
+  delete legacyPlayer.policyRevision;
+  delete legacyPlayer.pendingPolicy;
+  const legacyState = {
+    ...state,
+    players: [legacyPlayer],
+  };
+
+  assert.deepEqual(
+    openWorldState(authenticatedSnapshot(legacyState), FIRST_SECRET),
+    state
+  );
+});
+
+test('legacy active version-2 games upgrade from 3 to the current round count', () => {
+  const legacyState = pairedState();
+  legacyState.games[0].maxRounds = 3;
+
+  const opened = openWorldState(
+    authenticatedSnapshot(legacyState),
+    FIRST_SECRET
+  );
+
+  assert.equal(opened.games[0].status, 'playing');
+  assert.equal(opened.games[0].maxRounds, MINI_GAME_ROUNDS);
+  assert.deepEqual(opened.games[0], {
+    ...legacyState.games[0],
+    maxRounds: MINI_GAME_ROUNDS,
+  });
+});
+
+test('legacy completed version-2 games retain their historical 3 rounds', () => {
+  const legacyState = pairedState();
+  const game = legacyState.games[0];
+  game.status = 'complete';
+  game.round = 3;
+  game.maxRounds = 3;
+  game.completedAt = '2026-07-25T03:05:00.000Z';
+  for (const player of legacyState.players) player.phase = 'complete';
+
+  const opened = openWorldState(
+    authenticatedSnapshot(legacyState),
+    FIRST_SECRET
+  );
+
+  assert.equal(opened.games[0].status, 'complete');
+  assert.equal(opened.games[0].maxRounds, 3);
+  assert.deepEqual(opened, legacyState);
+});
+
+test('valid pending policy metadata round-trips through encrypted state', () => {
+  const state = populatedState();
+  state.players[0].pendingPolicy = {
+    revision: 2,
+    effectiveRound: 12,
+    attackPolicy: DEFAULT_ATTACK_POLICY,
+    defensePolicy: DEFAULT_DEFENSE_POLICY,
+  };
+
+  assert.deepEqual(
+    openWorldState(sealWorldState(state, FIRST_SECRET), FIRST_SECRET),
+    state
+  );
+});
+
+test('authenticated pending policy metadata is strictly validated', () => {
+  const state = populatedState();
+  const validPendingPolicy = {
+    revision: 2,
+    effectiveRound: 12,
+    attackPolicy: DEFAULT_ATTACK_POLICY,
+    defensePolicy: DEFAULT_DEFENSE_POLICY,
+  };
+  const invalidPlayers: Array<Record<string, unknown>> = [
+    { ...state.players[0], policyRevision: 0 },
+    { ...state.players[0], policyRevision: 1.5 },
+    {
+      ...state.players[0],
+      pendingPolicy: { ...validPendingPolicy, revision: 3 },
+    },
+    {
+      ...state.players[0],
+      pendingPolicy: { ...validPendingPolicy, effectiveRound: 0 },
+    },
+    {
+      ...state.players[0],
+      pendingPolicy: { ...validPendingPolicy, effectiveRound: 12.5 },
+    },
+    {
+      ...state.players[0],
+      pendingPolicy: {
+        ...validPendingPolicy,
+        attackPolicy: `${DEFAULT_ATTACK_POLICY} `,
+      },
+    },
+    {
+      ...state.players[0],
+      pendingPolicy: { ...validPendingPolicy, unexpected: true },
+    },
+  ];
+
+  for (const player of invalidPlayers) {
+    const invalidState = { ...state, players: [player] };
+    assert.throws(
+      () =>
+        openWorldState(authenticatedSnapshot(invalidState), FIRST_SECRET),
+      WorldStateIntegrityError
+    );
+  }
+});
+
+test('partially present policy metadata is not treated as legacy state', () => {
+  const state = populatedState();
+  const withoutRevision = { ...state.players[0] } as Partial<
+    FighterMiniGameState['players'][number]
+  >;
+  const withoutPending = { ...state.players[0] } as Partial<
+    FighterMiniGameState['players'][number]
+  >;
+  delete withoutRevision.policyRevision;
+  delete withoutPending.pendingPolicy;
+
+  for (const player of [withoutRevision, withoutPending]) {
+    assert.throws(
+      () =>
+        openWorldState(
+          authenticatedSnapshot({ ...state, players: [player] }),
+          FIRST_SECRET
+        ),
+      WorldStateIntegrityError
+    );
+  }
 });

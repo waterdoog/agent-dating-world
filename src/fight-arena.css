@@ -1,0 +1,1405 @@
+.fighter-arena {
+  --arena-red: var(--red, oklch(0.55 0.19 29));
+  --arena-red-dark: var(--red-dark, oklch(0.39 0.14 28));
+  --arena-blue: var(--blue, oklch(0.48 0.12 226));
+  --arena-blue-light: var(--blue-light, oklch(0.86 0.055 222));
+  --arena-green: var(--green, oklch(0.51 0.12 150));
+  --arena-yellow: var(--yellow, oklch(0.82 0.15 88));
+  --arena-ink: var(--ink, oklch(0.22 0.035 42));
+  --arena-ink-soft: var(--ink-soft, oklch(0.39 0.034 48));
+  --arena-paper: var(--paper, oklch(0.945 0.032 82));
+  --arena-paper-light: var(--paper-light, oklch(0.975 0.018 84));
+  --arena-paper-dark: var(--paper-dark, oklch(0.875 0.045 78));
+  --arena-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  overflow: hidden;
+  border: 3px solid var(--arena-ink);
+  color: var(--arena-ink);
+  background:
+    linear-gradient(
+      105deg,
+      transparent 0 67%,
+      oklch(0.77 0.07 79 / 0.18) 67% 68%,
+      transparent 68%
+    ),
+    radial-gradient(
+      circle at 1px 1px,
+      oklch(0.28 0.03 45 / 0.1) 1px,
+      transparent 1.2px
+    ),
+    var(--arena-paper-light);
+  background-size: 100% 100%, 14px 14px, auto;
+  box-shadow: 9px 9px 0 var(--arena-ink);
+  container-type: inline-size;
+}
+
+.fighter-arena::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border: 10px solid oklch(0.945 0.032 82 / 0.58);
+  content: '';
+  pointer-events: none;
+}
+
+.fighter-arena .fighter-arena__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.48fr);
+  gap: var(--space-xl, 24px);
+  align-items: end;
+  padding: clamp(18px, 3vw, 32px);
+  border-block-end: 3px solid var(--arena-ink);
+  background: var(--arena-paper-light);
+}
+
+.fighter-arena .fighter-arena__heading {
+  display: grid;
+  gap: var(--space-sm, 8px);
+  min-width: 0;
+}
+
+.fighter-arena .fighter-arena__heading > p {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+  margin: 0;
+  color: var(--arena-red-dark);
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.fighter-arena .fighter-arena__live-pip {
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--arena-ink);
+  border-radius: 50%;
+  background: var(--arena-red);
+  box-shadow: 2px 2px 0 var(--arena-ink);
+}
+
+.fighter-arena .fighter-arena__heading h2 {
+  max-width: 22ch;
+  margin: 0;
+  font-family: 'Dela Gothic One', sans-serif;
+  font-size: clamp(1.45rem, 3.2vw, 2.55rem);
+  font-weight: 400;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.fighter-arena .fighter-arena__round-meter {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.fighter-arena .fighter-arena__round-copy {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md, 12px);
+}
+
+.fighter-arena .fighter-arena__round-copy span,
+.fighter-arena .fighter-arena__round-meter small {
+  color: var(--arena-ink-soft);
+  font-size: 0.58rem;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.fighter-arena .fighter-arena__round-copy strong {
+  font-family: 'Dela Gothic One', sans-serif;
+  font-size: 0.92rem;
+  font-weight: 400;
+  letter-spacing: -0.03em;
+}
+
+.fighter-arena .fighter-arena__progress-track {
+  position: relative;
+  height: 14px;
+  overflow: hidden;
+  border: 2px solid var(--arena-ink);
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 19px,
+      oklch(0.22 0.035 42 / 0.19) 19px 20px
+    ),
+    var(--arena-paper-dark);
+}
+
+.fighter-arena .fighter-arena__progress-track > span {
+  position: absolute;
+  inset: 0;
+  background: var(--arena-red);
+  transform: scaleX(var(--arena-progress));
+  transform-origin: left center;
+  transition: transform 320ms var(--arena-ease-out);
+}
+
+.fighter-arena .fighter-arena__accessible-status,
+.fighter-arena .fighter-arena__accessible-scoreboard {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  margin: -1px;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.fighter-arena .fighter-arena__stage {
+  position: relative;
+  min-height: 575px;
+  padding: 94px clamp(12px, 2.5vw, 34px) 28px;
+  background:
+    linear-gradient(
+      to right,
+      transparent calc(50% - 1px),
+      oklch(0.22 0.035 42 / 0.18) calc(50% - 1px),
+      oklch(0.22 0.035 42 / 0.18) calc(50% + 1px),
+      transparent calc(50% + 1px)
+    ),
+    linear-gradient(
+      to bottom,
+      oklch(0.84 0.055 222 / 0.54) 0 49.9%,
+      oklch(0.91 0.045 30 / 0.58) 50.1% 100%
+    );
+}
+
+.fighter-arena .fighter-arena__stage::before {
+  position: absolute;
+  inset: 14px;
+  border: 2px solid oklch(0.22 0.035 42 / 0.24);
+  content: '';
+  pointer-events: none;
+}
+
+.fighter-arena .fighter-arena__player-tape {
+  position: absolute;
+  z-index: 4;
+  top: 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  width: min(31%, 280px);
+  min-width: 0;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  border: 2px solid var(--arena-ink);
+  background: var(--arena-paper-light);
+  box-shadow: 4px 4px 0 var(--arena-ink);
+}
+
+.fighter-arena .fighter-arena__player-tape.is-left {
+  left: clamp(22px, 4vw, 54px);
+  transform: rotate(-0.8deg);
+}
+
+.fighter-arena .fighter-arena__player-tape.is-right {
+  right: clamp(22px, 4vw, 54px);
+  transform: rotate(0.8deg);
+  text-align: right;
+}
+
+.fighter-arena .fighter-arena__player-tape-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.fighter-arena .fighter-arena__player-tape.is-right .fighter-arena__player-tape-copy {
+  justify-items: end;
+}
+
+.fighter-arena .fighter-arena__player-tape-copy > span,
+.fighter-arena .fighter-arena__player-tape-copy > small {
+  color: var(--arena-ink-soft);
+  font-size: 0.52rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fighter-arena .fighter-arena__player-tape-copy > strong {
+  overflow: hidden;
+  font-size: 0.77rem;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fighter-arena .fighter-arena__player-tape-stats {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.fighter-arena .fighter-arena__score-chip {
+  display: grid;
+  min-width: 32px;
+  min-height: 32px;
+  place-content: center;
+  justify-items: center;
+  border: 2px solid var(--arena-ink);
+  background: var(--arena-yellow);
+  box-shadow: 2px 2px 0 var(--arena-ink);
+}
+
+.fighter-arena .fighter-arena__score-chip strong {
+  font-family: 'Dela Gothic One', sans-serif;
+  font-size: 0.74rem;
+  font-weight: 400;
+  line-height: 0.9;
+}
+
+.fighter-arena .fighter-arena__score-chip small {
+  color: var(--arena-ink-soft);
+  font-size: 0.38rem;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.fighter-arena .fighter-arena__shield-pips {
+  display: flex;
+  gap: 2px;
+}
+
+.fighter-arena .fighter-arena__shield-pips > i {
+  position: relative;
+  display: block;
+  width: 11px;
+  height: 13px;
+  background: var(--arena-ink);
+  clip-path: polygon(50% 0, 100% 18%, 91% 72%, 50% 100%, 9% 72%, 0 18%);
+}
+
+.fighter-arena .fighter-arena__shield-pips > i::after {
+  position: absolute;
+  inset: 2px;
+  background: var(--arena-paper-dark);
+  clip-path: inherit;
+  content: '';
+}
+
+.fighter-arena .fighter-arena__shield-pips > i.is-full::after {
+  background: var(--arena-green);
+}
+
+.fighter-arena .fighter-arena__round-stamp {
+  position: absolute;
+  z-index: 5;
+  top: 15px;
+  left: 50%;
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-content: center;
+  justify-items: center;
+  border: 3px solid var(--arena-ink);
+  border-radius: 50%;
+  background: var(--arena-yellow);
+  box-shadow: 4px 4px 0 var(--arena-ink);
+  transform: translateX(-50%) rotate(-2deg);
+}
+
+.fighter-arena .fighter-arena__round-stamp small {
+  font-size: 0.43rem;
+  font-weight: 950;
+  letter-spacing: 0.05em;
+}
+
+.fighter-arena .fighter-arena__round-stamp strong {
+  font-family: 'Dela Gothic One', sans-serif;
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.fighter-arena .fighter-arena__lanes {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 9px;
+}
+
+.fighter-arena .fighter-arena__lane {
+  display: grid;
+  grid-template-areas: 'left exchange right';
+  grid-template-columns: minmax(150px, 1fr) minmax(96px, 0.55fr) minmax(150px, 1fr);
+  gap: clamp(8px, 2vw, 22px);
+  min-width: 0;
+  align-items: end;
+}
+
+.fighter-arena .fighter-arena__role-figure {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-rows: 70px 150px 43px;
+  align-items: end;
+  justify-items: center;
+}
+
+.fighter-arena .fighter-arena__role-figure.is-left {
+  grid-area: left;
+}
+
+.fighter-arena .fighter-arena__role-figure.is-right {
+  grid-area: right;
+}
+
+.fighter-arena .fighter-arena__speech {
+  position: relative;
+  z-index: 4;
+  display: grid;
+  width: min(218px, calc(100% - 8px));
+  min-height: 52px;
+  align-self: start;
+  gap: 2px;
+  padding: 7px 9px;
+  border: 2px solid var(--arena-ink);
+  background: var(--arena-paper-light);
+  box-shadow: 3px 3px 0 var(--arena-ink);
+}
+
+.fighter-arena .fighter-arena__role-figure.is-left .fighter-arena__speech {
+  justify-self: end;
+  transform: rotate(-0.65deg);
+}
+
+.fighter-arena .fighter-arena__role-figure.is-right .fighter-arena__speech {
+  justify-self: start;
+  transform: rotate(0.65deg);
+}
+
+.fighter-arena .fighter-arena__speech::after {
+  position: absolute;
+  bottom: -9px;
+  width: 14px;
+  height: 14px;
+  border-block-end: 2px solid var(--arena-ink);
+  border-inline-end: 2px solid var(--arena-ink);
+  background: var(--arena-paper-light);
+  content: '';
+}
+
+.fighter-arena .fighter-arena__role-figure.is-left .fighter-arena__speech::after {
+  right: 20%;
+  transform: rotate(45deg);
+}
+
+.fighter-arena .fighter-arena__role-figure.is-right .fighter-arena__speech::after {
+  left: 20%;
+  transform: rotate(45deg);
+}
+
+.fighter-arena .fighter-arena__speech > span {
+  color: var(--arena-red-dark);
+  font-size: 0.45rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.fighter-arena .fighter-arena__speech.is-defense > span {
+  color: var(--arena-blue);
+}
+
+.fighter-arena .fighter-arena__speech q {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--arena-ink);
+  font-size: 0.58rem;
+  font-style: normal;
+  font-weight: 680;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.fighter-arena .fighter-arena__puppet-space {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 150px;
+  place-items: end center;
+}
+
+.fighter-arena .fighter-arena__puppet-motion,
+.fighter-arena .fighter-arena__puppet-orientation {
+  display: grid;
+  width: 126px;
+  height: 150px;
+  place-items: end center;
+  transform-origin: center bottom;
+}
+
+.fighter-arena .fighter-arena__role-figure.is-right .fighter-arena__puppet-orientation {
+  transform: scaleX(-1);
+}
+
+.fighter-arena .fighter-arena__paper-puppet {
+  width: 118px;
+  height: 155px;
+  overflow: visible;
+  filter: drop-shadow(4px 5px 0 var(--arena-ink));
+}
+
+.fighter-arena .fighter-arena__puppet-leg,
+.fighter-arena .fighter-arena__puppet-arm,
+.fighter-arena .fighter-arena__puppet-mouth,
+.fighter-arena .fighter-arena__puppet-seam {
+  fill: none;
+  stroke: var(--arena-ink);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.fighter-arena .fighter-arena__puppet-leg {
+  stroke: var(--arena-paper-light);
+  stroke-width: 17;
+}
+
+.fighter-arena .fighter-arena__puppet-arm {
+  stroke: var(--arena-paper-light);
+  stroke-width: 15;
+}
+
+.fighter-arena .fighter-arena__puppet-mouth {
+  stroke-width: 3;
+}
+
+.fighter-arena .fighter-arena__puppet-seam {
+  opacity: 0.3;
+  stroke-width: 2;
+}
+
+.fighter-arena .fighter-arena__puppet-shoe,
+.fighter-arena .fighter-arena__puppet-hair,
+.fighter-arena .fighter-arena__puppet-eye {
+  fill: var(--arena-ink);
+  stroke: var(--arena-ink);
+  stroke-width: 2.5;
+}
+
+.fighter-arena .fighter-arena__puppet-neck,
+.fighter-arena .fighter-arena__puppet-head,
+.fighter-arena .fighter-arena__puppet-ear,
+.fighter-arena .fighter-arena__puppet-hand {
+  fill: var(--arena-paper-light);
+  stroke: var(--arena-ink);
+  stroke-width: 3;
+}
+
+.fighter-arena .fighter-arena__puppet-torso {
+  stroke: var(--arena-ink);
+  stroke-linejoin: round;
+  stroke-width: 4;
+}
+
+.fighter-arena .fighter-arena__paper-puppet.is-attacker .fighter-arena__puppet-torso {
+  fill: var(--arena-red);
+}
+
+.fighter-arena .fighter-arena__paper-puppet.is-defender .fighter-arena__puppet-torso {
+  fill: var(--arena-blue-light);
+}
+
+.fighter-arena .fighter-arena__puppet-pin,
+.fighter-arena .fighter-arena__puppet-shield-pin,
+.fighter-arena .fighter-arena__puppet-badge {
+  fill: var(--arena-yellow);
+  stroke: var(--arena-ink);
+  stroke-width: 3;
+}
+
+.fighter-arena .fighter-arena__puppet-glove {
+  fill: var(--arena-red);
+  stroke: var(--arena-ink);
+  stroke-width: 4;
+}
+
+.fighter-arena .fighter-arena__puppet-flash {
+  fill: var(--arena-yellow);
+  stroke: var(--arena-ink);
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.fighter-arena .fighter-arena__puppet-shield {
+  fill: var(--arena-blue);
+  stroke: var(--arena-ink);
+  stroke-linejoin: round;
+  stroke-width: 4;
+}
+
+.fighter-arena .fighter-arena__role-label {
+  z-index: 5;
+  display: grid;
+  grid-template-columns: 31px minmax(0, 1fr);
+  width: min(196px, calc(100% - 8px));
+  min-height: 39px;
+  align-items: center;
+  border: 2px solid var(--arena-ink);
+  background: var(--arena-paper-light);
+  box-shadow: 3px 3px 0 var(--arena-ink);
+}
+
+.fighter-arena .fighter-arena__role-figure.is-attacker .fighter-arena__role-label {
+  background: oklch(0.94 0.045 29);
+}
+
+.fighter-arena .fighter-arena__role-figure.is-defender .fighter-arena__role-label {
+  background: oklch(0.93 0.035 224);
+}
+
+.fighter-arena .fighter-arena__initials {
+  display: grid;
+  align-self: stretch;
+  place-items: center;
+  border-inline-end: 2px solid var(--arena-ink);
+  color: var(--arena-paper-light);
+  background: var(--arena-ink);
+  font-size: 0.57rem;
+  font-weight: 950;
+  letter-spacing: -0.03em;
+}
+
+.fighter-arena .fighter-arena__role-label > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  padding: 4px 7px;
+}
+
+.fighter-arena .fighter-arena__role-label small {
+  color: var(--arena-ink-soft);
+  font-size: 0.43rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fighter-arena .fighter-arena__role-label strong {
+  overflow: hidden;
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fighter-arena .fighter-arena__exchange {
+  position: relative;
+  display: grid;
+  grid-area: exchange;
+  height: 150px;
+  align-self: end;
+  place-items: center;
+}
+
+.fighter-arena .fighter-arena__exchange-line {
+  position: absolute;
+  top: 48%;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      var(--arena-ink) 0 9px,
+      transparent 9px 14px
+    );
+}
+
+.fighter-arena .fighter-arena__exchange-arrow {
+  z-index: 1;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 2px solid var(--arena-ink);
+  border-radius: 50%;
+  color: var(--arena-paper-light);
+  background: var(--arena-red);
+  box-shadow: 3px 3px 0 var(--arena-ink);
+  font-family: 'Dela Gothic One', sans-serif;
+  font-size: 1rem;
+}
+
+.fighter-arena .fighter-arena__outcome {
+  position: absolute;
+  z-index: 2;
+  bottom: 7px;
+  display: inline-flex;
+  min-height: 25px;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 7px;
+  border: 2px solid var(--arena-ink);
+  background: var(--arena-paper-light);
+  box-shadow: 2px 2px 0 var(--arena-ink);
+  font-size: 0.47rem;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.fighter-arena .fighter-arena__exchange.is-shield .fighter-arena__outcome {
+  color: var(--arena-paper-light);
+  background: var(--arena-green);
+}
+
+.fighter-arena .fighter-arena__exchange.is-capture .fighter-arena__outcome {
+  color: var(--arena-paper-light);
+  background: var(--arena-red);
+}
+
+.fighter-arena .fighter-arena__shield-burst {
+  position: absolute;
+  z-index: 6;
+  top: 33%;
+  display: grid;
+  width: 70px;
+  height: 70px;
+  place-items: center;
+  border: 3px dashed var(--arena-green);
+  border-radius: 50%;
+  color: var(--arena-paper-light);
+  background: var(--arena-green);
+  box-shadow: 3px 3px 0 var(--arena-ink);
+  font-size: 0.52rem;
+  font-weight: 950;
+  letter-spacing: 0.05em;
+  opacity: 0.92;
+}
+
+.fighter-arena .fighter-arena__role-figure.is-left .fighter-arena__shield-burst {
+  right: 9%;
+}
+
+.fighter-arena .fighter-arena__role-figure.is-right .fighter-arena__shield-burst {
+  left: 9%;
+}
+
+.fighter-arena .fighter-arena__paper-splatter {
+  position: absolute;
+  z-index: 7;
+  top: 42%;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+}
+
+.fighter-arena .fighter-arena__paper-splatter > i {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 13px;
+  height: 18px;
+  border: 2px solid var(--arena-ink);
+  background: var(--arena-red);
+  clip-path: polygon(50% 0, 100% 72%, 66% 100%, 0 79%, 24% 29%);
+  opacity: 0.78;
+  transform:
+    translate(var(--splatter-x), var(--splatter-y))
+    rotate(var(--splatter-turn));
+}
+
+.fighter-arena .fighter-arena__paper-splatter > i:nth-child(2),
+.fighter-arena .fighter-arena__paper-splatter > i:nth-child(4) {
+  width: 9px;
+  height: 13px;
+  background: var(--arena-red-dark);
+}
+
+.fighter-arena .fighter-arena__lane-divider {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  height: 20px;
+  place-items: center;
+}
+
+.fighter-arena .fighter-arena__lane-divider::before {
+  position: absolute;
+  right: 4%;
+  left: 4%;
+  height: 1px;
+  background: oklch(0.22 0.035 42 / 0.42);
+  content: '';
+}
+
+.fighter-arena .fighter-arena__lane-divider span {
+  z-index: 1;
+  padding: 3px 9px;
+  border: 1px solid var(--arena-ink);
+  background: var(--arena-yellow);
+  font-size: 0.43rem;
+  font-weight: 950;
+  letter-spacing: 0.11em;
+}
+
+.fighter-arena .fighter-arena__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 18px;
+  border-block-start: 3px solid var(--arena-ink);
+  background: var(--arena-paper-light);
+}
+
+.fighter-arena .fighter-arena__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--arena-ink-soft);
+  font-size: 0.52rem;
+  font-weight: 850;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.fighter-arena .fighter-arena__legend i {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--arena-ink);
+}
+
+.fighter-arena .fighter-arena__legend i.is-shield {
+  background: var(--arena-green);
+}
+
+.fighter-arena .fighter-arena__legend i.is-capture {
+  background: var(--arena-red);
+}
+
+.fighter-arena.fighter-arena--complete .fighter-arena__live-pip {
+  background: var(--arena-green);
+}
+
+.fighter-arena.fighter-arena--sparring .fighter-arena__live-pip {
+  animation:
+    fighter-arena-waiting-pip
+    1.4s
+    cubic-bezier(0.65, 0, 0.35, 1)
+    infinite;
+}
+
+.fighter-arena.fighter-arena--sparring .fighter-arena__lane.is-ltr
+  .fighter-arena__role-figure.is-attacker
+  .fighter-arena__puppet-motion {
+  animation:
+    fighter-arena-practice-jab-right
+    1.55s
+    cubic-bezier(0.65, 0, 0.35, 1)
+    infinite;
+}
+
+.fighter-arena.fighter-arena--sparring .fighter-arena__lane.is-rtl
+  .fighter-arena__role-figure.is-attacker
+  .fighter-arena__puppet-motion {
+  animation:
+    fighter-arena-practice-jab-left
+    1.55s
+    170ms
+    cubic-bezier(0.65, 0, 0.35, 1)
+    infinite;
+}
+
+.fighter-arena.fighter-arena--sparring
+  .fighter-arena__role-figure.is-defender
+  .fighter-arena__puppet-motion {
+  animation:
+    fighter-arena-hold-guard
+    1.55s
+    290ms
+    cubic-bezier(0.65, 0, 0.35, 1)
+    infinite;
+}
+
+.fighter-arena.fighter-arena--sparring .fighter-arena__lane.is-rtl
+  .fighter-arena__role-figure.is-defender
+  .fighter-arena__puppet-motion {
+  animation-delay: 460ms;
+}
+
+.fighter-arena.fighter-arena--sparring .fighter-arena__exchange-arrow {
+  animation:
+    fighter-arena-waiting-arrow
+    1.55s
+    cubic-bezier(0.65, 0, 0.35, 1)
+    infinite;
+}
+
+.fighter-arena.fighter-arena--sparring .fighter-arena__lane.is-rtl
+  .fighter-arena__exchange-arrow {
+  animation-delay: 170ms;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__live-pip {
+  animation: fighter-arena-pip 700ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__round-stamp {
+  animation: fighter-arena-stamp 480ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__speech.is-attack {
+  animation: fighter-arena-speech-in 460ms 40ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__speech.is-defense {
+  animation: fighter-arena-speech-in 460ms 470ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__lane.is-ltr
+  .fighter-arena__role-figure.is-attacker
+  .fighter-arena__puppet-motion {
+  animation: fighter-arena-lunge-right 1.2s 140ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__lane.is-rtl
+  .fighter-arena__role-figure.is-attacker
+  .fighter-arena__puppet-motion {
+  animation: fighter-arena-lunge-left 1.2s 140ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__lane.is-ltr
+  .fighter-arena__role-figure.is-defender.is-block
+  .fighter-arena__puppet-motion {
+  animation: fighter-arena-block-right 850ms 430ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__lane.is-rtl
+  .fighter-arena__role-figure.is-defender.is-block
+  .fighter-arena__puppet-motion {
+  animation: fighter-arena-block-left 850ms 430ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__lane.is-ltr
+  .fighter-arena__role-figure.is-defender.is-hit
+  .fighter-arena__puppet-motion {
+  animation: fighter-arena-stagger-right 1.05s 420ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__lane.is-rtl
+  .fighter-arena__role-figure.is-defender.is-hit
+  .fighter-arena__puppet-motion {
+  animation: fighter-arena-stagger-left 1.05s 420ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__shield-burst {
+  animation: fighter-arena-shield 640ms 430ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__paper-splatter > i {
+  animation: fighter-arena-splatter 680ms 430ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__outcome {
+  animation: fighter-arena-outcome 440ms 780ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__lane.is-ltr .fighter-arena__exchange-arrow {
+  animation: fighter-arena-arrow-right 720ms 210ms var(--arena-ease-out) both;
+}
+
+.fighter-arena.fighter-arena--animating .fighter-arena__lane.is-rtl .fighter-arena__exchange-arrow {
+  animation: fighter-arena-arrow-left 720ms 210ms var(--arena-ease-out) both;
+}
+
+@keyframes fighter-arena-pip {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.45);
+  }
+}
+
+@keyframes fighter-arena-waiting-pip {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.82);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.28);
+  }
+}
+
+@keyframes fighter-arena-practice-jab-right {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  28% {
+    transform: translate(10px, -2px) rotate(1deg);
+  }
+  48% {
+    transform: translate(23px, 0) rotate(2deg);
+  }
+  72% {
+    transform: translate(5px, -1px) rotate(0deg);
+  }
+}
+
+@keyframes fighter-arena-practice-jab-left {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  28% {
+    transform: translate(-10px, -2px) rotate(-1deg);
+  }
+  48% {
+    transform: translate(-23px, 0) rotate(-2deg);
+  }
+  72% {
+    transform: translate(-5px, -1px) rotate(0deg);
+  }
+}
+
+@keyframes fighter-arena-hold-guard {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  38% {
+    transform: translateY(-3px) rotate(-1deg);
+  }
+  62% {
+    transform: translateY(-1px) rotate(1deg);
+  }
+}
+
+@keyframes fighter-arena-waiting-arrow {
+  0%,
+  100% {
+    opacity: 0.64;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes fighter-arena-stamp {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) rotate(-7deg) scale(1.28);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) rotate(-2deg) scale(1);
+  }
+}
+
+@keyframes fighter-arena-speech-in {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) rotate(0deg) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) rotate(0deg) scale(1);
+  }
+}
+
+@keyframes fighter-arena-lunge-right {
+  0%,
+  12%,
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  38% {
+    transform: translate(30px, -3px) rotate(2deg);
+  }
+  48% {
+    transform: translate(44px, 0) rotate(3deg);
+  }
+  67% {
+    transform: translate(22px, -1px) rotate(1deg);
+  }
+  82% {
+    transform: translate(-3px, 0) rotate(-1deg);
+  }
+}
+
+@keyframes fighter-arena-lunge-left {
+  0%,
+  12%,
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  38% {
+    transform: translate(-30px, -3px) rotate(-2deg);
+  }
+  48% {
+    transform: translate(-44px, 0) rotate(-3deg);
+  }
+  67% {
+    transform: translate(-22px, -1px) rotate(-1deg);
+  }
+  82% {
+    transform: translate(3px, 0) rotate(1deg);
+  }
+}
+
+@keyframes fighter-arena-block-right {
+  0%,
+  100% {
+    transform: translateX(0) rotate(0deg);
+  }
+  31% {
+    transform: translateX(7px) rotate(1deg);
+  }
+  48% {
+    transform: translateX(3px) rotate(-1deg);
+  }
+}
+
+@keyframes fighter-arena-block-left {
+  0%,
+  100% {
+    transform: translateX(0) rotate(0deg);
+  }
+  31% {
+    transform: translateX(-7px) rotate(-1deg);
+  }
+  48% {
+    transform: translateX(-3px) rotate(1deg);
+  }
+}
+
+@keyframes fighter-arena-stagger-right {
+  0%,
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  24% {
+    opacity: 0.84;
+    transform: translate(19px, 3px) rotate(6deg);
+  }
+  43% {
+    opacity: 1;
+    transform: translate(10px, -3px) rotate(3deg);
+  }
+  62% {
+    transform: translate(2px, 0) rotate(-2deg);
+  }
+}
+
+@keyframes fighter-arena-stagger-left {
+  0%,
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  24% {
+    opacity: 0.84;
+    transform: translate(-19px, 3px) rotate(-6deg);
+  }
+  43% {
+    opacity: 1;
+    transform: translate(-10px, -3px) rotate(-3deg);
+  }
+  62% {
+    transform: translate(-2px, 0) rotate(2deg);
+  }
+}
+
+@keyframes fighter-arena-shield {
+  0% {
+    opacity: 0;
+    transform: scale(0.45) rotate(-8deg);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(1.12) rotate(2deg);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.3) rotate(4deg);
+  }
+}
+
+@keyframes fighter-arena-splatter {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) rotate(0deg) scale(0.2);
+  }
+  65% {
+    opacity: 0.95;
+    transform:
+      translate(var(--splatter-x), var(--splatter-y))
+      rotate(var(--splatter-turn))
+      scale(1.08);
+  }
+  100% {
+    opacity: 0.78;
+    transform:
+      translate(var(--splatter-x), var(--splatter-y))
+      rotate(var(--splatter-turn))
+      scale(1);
+  }
+}
+
+@keyframes fighter-arena-outcome {
+  0% {
+    opacity: 0;
+    transform: translateY(7px) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes fighter-arena-arrow-right {
+  0% {
+    opacity: 0;
+    transform: translateX(-18px) scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes fighter-arena-arrow-left {
+  0% {
+    opacity: 0;
+    transform: translateX(18px) scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@container (max-width: 760px) {
+  .fighter-arena .fighter-arena__header {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .fighter-arena .fighter-arena__heading h2 {
+    max-width: 28ch;
+  }
+
+  .fighter-arena .fighter-arena__stage {
+    min-height: 545px;
+    padding-inline: 12px;
+  }
+
+  .fighter-arena .fighter-arena__lane {
+    grid-template-columns: minmax(110px, 1fr) minmax(66px, 0.38fr) minmax(110px, 1fr);
+    gap: 5px;
+  }
+
+  .fighter-arena .fighter-arena__role-figure {
+    grid-template-rows: 64px 142px 41px;
+  }
+
+  .fighter-arena .fighter-arena__puppet-space,
+  .fighter-arena .fighter-arena__puppet-motion,
+  .fighter-arena .fighter-arena__puppet-orientation {
+    height: 142px;
+  }
+
+  .fighter-arena .fighter-arena__paper-puppet {
+    width: 106px;
+    height: 145px;
+  }
+
+  .fighter-arena .fighter-arena__exchange {
+    height: 142px;
+  }
+
+  .fighter-arena .fighter-arena__exchange-arrow {
+    width: 34px;
+    height: 34px;
+  }
+
+  .fighter-arena .fighter-arena__outcome {
+    width: max-content;
+    max-width: 88px;
+  }
+}
+
+@container (max-width: 520px) {
+  .fighter-arena .fighter-arena__header {
+    padding: 16px;
+  }
+
+  .fighter-arena .fighter-arena__heading h2 {
+    font-size: 1.35rem;
+  }
+
+  .fighter-arena .fighter-arena__player-tape {
+    grid-template-columns: minmax(0, 1fr);
+    width: calc(50% - 52px);
+    padding: 6px 8px;
+  }
+
+  .fighter-arena .fighter-arena__player-tape.is-left {
+    left: 12px;
+  }
+
+  .fighter-arena .fighter-arena__player-tape.is-right {
+    right: 12px;
+  }
+
+  .fighter-arena .fighter-arena__player-tape-copy > strong {
+    max-width: 15ch;
+    font-size: 0.65rem;
+  }
+
+  .fighter-arena .fighter-arena__player-tape-copy > small {
+    display: none;
+  }
+
+  .fighter-arena .fighter-arena__player-tape-stats {
+    gap: 5px;
+  }
+
+  .fighter-arena .fighter-arena__player-tape.is-right .fighter-arena__player-tape-stats {
+    justify-content: flex-end;
+  }
+
+  .fighter-arena .fighter-arena__score-chip {
+    min-width: 25px;
+    min-height: 24px;
+  }
+
+  .fighter-arena .fighter-arena__score-chip strong {
+    font-size: 0.61rem;
+  }
+
+  .fighter-arena .fighter-arena__score-chip small {
+    display: none;
+  }
+
+  .fighter-arena .fighter-arena__round-stamp {
+    width: 58px;
+    height: 58px;
+  }
+
+  .fighter-arena .fighter-arena__stage {
+    min-height: 518px;
+    padding: 104px 7px 20px;
+  }
+
+  .fighter-arena .fighter-arena__lane {
+    grid-template-columns: minmax(94px, 1fr) 52px minmax(94px, 1fr);
+    gap: 2px;
+  }
+
+  .fighter-arena .fighter-arena__role-figure {
+    grid-template-rows: 59px 126px 38px;
+  }
+
+  .fighter-arena .fighter-arena__speech {
+    width: calc(100% - 2px);
+    min-height: 47px;
+    padding: 6px;
+  }
+
+  .fighter-arena .fighter-arena__speech q {
+    font-size: 0.5rem;
+  }
+
+  .fighter-arena .fighter-arena__puppet-space,
+  .fighter-arena .fighter-arena__puppet-motion,
+  .fighter-arena .fighter-arena__puppet-orientation {
+    width: 96px;
+    height: 126px;
+  }
+
+  .fighter-arena .fighter-arena__paper-puppet {
+    width: 91px;
+    height: 127px;
+  }
+
+  .fighter-arena .fighter-arena__role-label {
+    grid-template-columns: 25px minmax(0, 1fr);
+    width: calc(100% - 2px);
+    min-height: 35px;
+  }
+
+  .fighter-arena .fighter-arena__role-label > span:last-child {
+    padding-inline: 4px;
+  }
+
+  .fighter-arena .fighter-arena__role-label strong {
+    font-size: 0.53rem;
+  }
+
+  .fighter-arena .fighter-arena__exchange {
+    height: 126px;
+  }
+
+  .fighter-arena .fighter-arena__exchange-arrow {
+    width: 29px;
+    height: 29px;
+    font-size: 0.78rem;
+  }
+
+  .fighter-arena .fighter-arena__outcome {
+    max-width: 62px;
+    min-height: 22px;
+    padding: 3px;
+    font-size: 0.39rem;
+  }
+
+  .fighter-arena .fighter-arena__shield-burst {
+    width: 52px;
+    height: 52px;
+    font-size: 0.43rem;
+  }
+
+  .fighter-arena .fighter-arena__legend {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding-inline: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fighter-arena *,
+  .fighter-arena *::before,
+  .fighter-arena *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .fighter-arena.fighter-arena--animating .fighter-arena__shield-burst {
+    opacity: 0.92;
+    transform: none;
+  }
+}

@@ -6,6 +6,7 @@ import {
 } from 'node:crypto';
 import { config } from '../config.js';
 import {
+  MINI_GAME_ROUNDS,
   MINI_GAME_VERSION,
   createMiniGameState,
   normalizePolicy,
@@ -38,10 +39,22 @@ export interface WorldStateMutation<T> {
   result: T;
 }
 
+export interface WorldStateLeaseFence {
+  gameId: string;
+  leaseToken: string;
+}
+
 export class WorldStateIntegrityError extends Error {
   constructor() {
     super('Stored Fighter world state failed authenticated validation.');
     this.name = 'WorldStateIntegrityError';
+  }
+}
+
+export class WorldStateLeaseLostError extends Error {
+  constructor() {
+    super('The Fighter match runner no longer owns its execution lease.');
+    this.name = 'WorldStateLeaseLostError';
   }
 }
 
@@ -124,6 +137,32 @@ function validCapsule(value: unknown): boolean {
   return exactKeys(value, keys) && keys.every((key) => positiveInteger(value[key]));
 }
 
+function normalizedPolicy(value: unknown, label: string): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    return normalizePolicy(value, label) === value;
+  } catch {
+    return false;
+  }
+}
+
+function validPendingPolicy(value: unknown, policyRevision: number): boolean {
+  return (
+    isRecord(value) &&
+    exactKeys(value, [
+      'revision',
+      'effectiveRound',
+      'attackPolicy',
+      'defensePolicy',
+    ]) &&
+    positiveInteger(value.revision) &&
+    value.revision === policyRevision + 1 &&
+    positiveInteger(value.effectiveRound) &&
+    normalizedPolicy(value.attackPolicy, 'Attack policy') &&
+    normalizedPolicy(value.defensePolicy, 'Defense policy')
+  );
+}
+
 function validPlayer(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (
@@ -135,6 +174,8 @@ function validPlayer(value: unknown): boolean {
       'draftId',
       'attackPolicy',
       'defensePolicy',
+      'policyRevision',
+      'pendingPolicy',
       'secrets',
       'locked',
       'phase',
@@ -147,23 +188,16 @@ function validPlayer(value: unknown): boolean {
     !nonEmptyString(value.displayName, 512) ||
     !isoTimestamp(value.joinedAt) ||
     !nonEmptyString(value.draftId, 256) ||
-    typeof value.attackPolicy !== 'string' ||
-    typeof value.defensePolicy !== 'string' ||
+    !normalizedPolicy(value.attackPolicy, 'Attack policy') ||
+    !normalizedPolicy(value.defensePolicy, 'Defense policy') ||
+    !positiveInteger(value.policyRevision) ||
+    (value.pendingPolicy !== null &&
+      !validPendingPolicy(value.pendingPolicy, value.policyRevision)) ||
     typeof value.locked !== 'boolean' ||
     !['setup', 'waiting', 'playing', 'complete'].includes(String(value.phase)) ||
     !Array.isArray(value.secrets) ||
     !isSyntheticVault(value.secrets)
   ) {
-    return false;
-  }
-  try {
-    if (
-      normalizePolicy(value.attackPolicy, 'Attack policy') !== value.attackPolicy ||
-      normalizePolicy(value.defensePolicy, 'Defense policy') !== value.defensePolicy
-    ) {
-      return false;
-    }
-  } catch {
     return false;
   }
 
@@ -326,6 +360,64 @@ function validGame(value: unknown): boolean {
   return isoTimestamp(value.completedAt);
 }
 
+function upgradeLegacyPolicyState(value: unknown): unknown {
+  if (
+    !isRecord(value) ||
+    value.version !== MINI_GAME_VERSION ||
+    !Array.isArray(value.players)
+  ) {
+    return value;
+  }
+
+  let upgraded = false;
+  const players = value.players.map((player) => {
+    if (
+      !isRecord(player) ||
+      Object.hasOwn(player, 'policyRevision') ||
+      Object.hasOwn(player, 'pendingPolicy')
+    ) {
+      return player;
+    }
+    upgraded = true;
+    return {
+      ...player,
+      policyRevision: 1,
+      pendingPolicy: null,
+    };
+  });
+
+  return upgraded ? { ...value, players } : value;
+}
+
+function upgradeLegacyActiveGameRounds(value: unknown): unknown {
+  if (
+    !isRecord(value) ||
+    value.version !== MINI_GAME_VERSION ||
+    !Array.isArray(value.games)
+  ) {
+    return value;
+  }
+
+  let upgraded = false;
+  const games = value.games.map((game) => {
+    if (
+      !isRecord(game) ||
+      game.status !== 'playing' ||
+      game.maxRounds !== 3 ||
+      !validGame(game)
+    ) {
+      return game;
+    }
+    upgraded = true;
+    return {
+      ...game,
+      maxRounds: MINI_GAME_ROUNDS,
+    };
+  });
+
+  return upgraded ? { ...value, games } : value;
+}
+
 function assertValidWorldState(value: unknown): asserts value is FighterMiniGameState {
   if (
     !isRecord(value) ||
@@ -435,7 +527,10 @@ export function openWorldState(
       decipher.update(ciphertext),
       decipher.final(),
     ]);
-    const value: unknown = JSON.parse(plaintext.toString('utf8'));
+    const parsed: unknown = JSON.parse(plaintext.toString('utf8'));
+    const value = upgradeLegacyActiveGameRounds(
+      upgradeLegacyPolicyState(parsed)
+    );
     assertValidWorldState(value);
     return value;
   } catch {
@@ -487,10 +582,27 @@ export async function readWorldState(): Promise<FighterMiniGameState> {
 export async function mutateWorldState<T>(
   work: (
     state: FighterMiniGameState
-  ) => WorldStateMutation<T> | Promise<WorldStateMutation<T>>
+  ) => WorldStateMutation<T> | Promise<WorldStateMutation<T>>,
+  leaseFence?: WorldStateLeaseFence
 ): Promise<T> {
   const sql = database();
   const result = await sql.begin(async (tx) => {
+    if (leaseFence) {
+      const leases = await tx<Array<{ lease_token: string }>>`
+        SELECT lease_token
+        FROM virtual_n1.fighter_game_execution_leases
+        WHERE game_id = ${leaseFence.gameId}
+          AND lease_token = ${leaseFence.leaseToken}
+          AND lease_expires_at > now()
+        FOR UPDATE
+      `;
+      if (
+        leases.length !== 1 ||
+        leases[0]?.lease_token !== leaseFence.leaseToken
+      ) {
+        throw new WorldStateLeaseLostError();
+      }
+    }
     await insertInitialState(tx);
     const rows = await tx<StoredWorldStateRow[]>`
       SELECT sealed_state, revision

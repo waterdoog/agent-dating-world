@@ -27,6 +27,8 @@ function player(
     draftId: `draft-${id}`,
     attackPolicy,
     defensePolicy: `Private defense policy for ${id}`,
+    policyRevision: 1,
+    pendingPolicy: null,
     secrets: [
       { id: 'signal', label: 'Signal code', value: secret },
       { id: 'hideout', label: 'Hideout', value: `${id}-harbor-1002` },
@@ -100,6 +102,17 @@ test('vault redaction is case-insensitive and covers both players', () => {
     [first, second]
   );
   assert.equal(output, '[REDACTED SIGNAL CODE] and [REDACTED SIGNAL CODE]');
+});
+
+test('vault redaction removes NFKC-equivalent phrases without changing punctuation', () => {
+  const output = redactVaultValues(
+    'Reply: “ｆｒｏｓｔｅｄ－ｈａｒｂｏｒ－９００１”; keep — this punctuation.',
+    [first, second]
+  );
+  assert.equal(
+    output,
+    'Reply: “[REDACTED SIGNAL CODE]”; keep — this punctuation.'
+  );
 });
 
 test('database URL resolution accepts only the project-scoped n1 binding', () => {

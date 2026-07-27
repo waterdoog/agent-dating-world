@@ -5,6 +5,7 @@ import {
   listFoldersByParentId,
   messageAnonymousScopedAgent,
   revokeShareLink,
+  streamAnonymousScopedAgent,
 } from './aicoo.js';
 import { APP_SCOPES } from './config.js';
 
@@ -178,6 +179,88 @@ test('anonymous encounter turns reject malformed Aicoo responses', async () => {
       message: 'Hello, other Fighter.',
     }),
     /invalid Fighter response/
+  );
+});
+
+test('anonymous encounter streams parse NDJSON deltas without duplicate legacy content', async () => {
+  const encoder = new TextEncoder();
+  const deltas: string[] = [];
+  globalThis.fetch = (async (input, init) => {
+    assert.equal(String(input), 'https://www.aicoo.io/api/chat/guest-v04');
+    const headers = init?.headers as Record<string, string>;
+    assert.equal(headers.Authorization, undefined);
+    assert.equal(headers.Cookie, undefined);
+    assert.deepEqual(JSON.parse(String(init?.body)), {
+      token: 'fresh-encounter-token',
+      message: 'Stream the attack.',
+      stream: true,
+      mode: 'agent',
+    });
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(
+            '{"sessionKey":"anonymous-session"}\n'
+            + '{"type":"text-delta","textDelta":"Paper "}\n'
+            + '{"content":"Paper "}\n'
+          ));
+          controller.enqueue(encoder.encode(
+            '{"type":"text-delta","textDelta":"strike."}\n'
+            + '{"content":"strike."}\n'
+            + '{"type":"completion","metadata":{"elapsedMs":321,"terminationReason":"complete"}}\n'
+          ));
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'text/event-stream' } }
+    );
+  }) as typeof fetch;
+
+  const response = await streamAnonymousScopedAgent({
+    token: 'fresh-encounter-token',
+    message: 'Stream the attack.',
+    onDelta: ({ delta }) => {
+      deltas.push(delta);
+    },
+  });
+  assert.deepEqual(deltas, ['Paper ', 'strike.']);
+  assert.equal(response.response, 'Paper strike.');
+  assert.equal(response.sessionKey, 'anonymous-session');
+  assert.equal(response.elapsedMs, 321);
+});
+
+test('anonymous encounter streams fail closed before a completion event', async () => {
+  globalThis.fetch = (async () =>
+    new Response(
+      '{"sessionKey":"anonymous-session"}\n'
+      + '{"type":"text-delta","textDelta":"unfinished"}\n',
+      { status: 200, headers: { 'content-type': 'text/event-stream' } }
+    )) as typeof fetch;
+
+  await assert.rejects(
+    streamAnonymousScopedAgent({
+      token: 'fresh-encounter-token',
+      message: 'This stream will stop early.',
+    }),
+    /ended before completion/
+  );
+});
+
+test('anonymous encounter streams reject unsuccessful terminal reasons', async () => {
+  globalThis.fetch = (async () =>
+    new Response(
+      '{"sessionKey":"anonymous-session"}\n'
+      + '{"type":"text-delta","textDelta":"partial answer"}\n'
+      + '{"type":"completion","metadata":{"terminationReason":"total_timeout"}}\n',
+      { status: 200, headers: { 'content-type': 'text/event-stream' } }
+    )) as typeof fetch;
+
+  await assert.rejects(
+    streamAnonymousScopedAgent({
+      token: 'fresh-encounter-token',
+      message: 'This execution times out.',
+    }),
+    /did not complete successfully/
   );
 });
 

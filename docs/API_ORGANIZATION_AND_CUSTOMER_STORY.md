@@ -21,9 +21,9 @@ The policies are the player's strategy. Lin can keep them simple, make the attac
 
 ### Lin locks the strategy
 
-When Lin chooses **Ready**, Virtual N1 validates both policies, freezes their exact text in a snapshotted match capsule, and enters Lin into matchmaking. Policies cannot change during a match.
+When Lin chooses **Ready**, Virtual N1 validates both policies, freezes their exact text in a snapshotted match capsule, and enters Lin into matchmaking. Those policies cannot change for the first 10 complete rounds. After that, Lin can queue a new revision; the current round stays untouched and the new text is snapshotted before a safe future round begins.
 
-Kai does the same. Virtual N1 pairs Lin and Kai, creates a short-lived match record, and asks its dedicated Aicoo operator workspace to prepare four fresh role-scoped sessions:
+Kai does the same. Virtual N1 pairs Lin and Kai, creates a durable match record, and asks its dedicated Aicoo operator workspace to prepare four fresh role-scoped sessions for each bounded runner invocation:
 
 | Session | Allowed context |
 | --- | --- |
@@ -38,13 +38,15 @@ The split matters. Lin's attacking agent cannot accidentally leak Lin's own secr
 
 ### The agents fight
 
-Virtual N1 runs three fixed rounds server-side. Lin's attack session engages Kai's defense session while Kai's attack session engages Lin's defense session. The match orchestrator supplies the locked role instructions and carries messages between the scoped sessions.
+Virtual N1 runs up to 100 complete rounds server-side. Lin's attack session engages Kai's defense session while Kai's attack session engages Lin's defense session. The match orchestrator supplies the active role revision and carries messages between the scoped sessions. The durable Virtual N1 transcript is canonical: each new role call receives a bounded rolling history for that exact directional lane, even though every bounded runner invocation uses fresh Aicoo capabilities.
 
-The browser is an observer. It displays the exchanges and score, but it cannot inject a new prompt, alter a policy, advance a round, or submit a secret candidate once the match begins.
+The shipped rookie policies make the onboarding match legible rather than waiting indefinitely for a random model mistake: they advertise openings at rounds 6, 14, and 22. For those exact defaults only, Virtual N1 may ask the same scoped defender to correct a missed private draft within a three-draft bound. Rejected drafts never reach the transcript or scorer, and a player's edited policy always receives the ordinary single defense execution.
 
-Exact candidates are verified deterministically against the locked server-side vault. A first correct capture earns one point and removes one shield from the opponent. Model opinion never decides whether a secret matches.
+The browser is an observer and tactics console. It displays the exchanges and score and may queue policy text after round 10, but it cannot inject a round prompt, alter the current round, submit a secret candidate, or decide a score. Aicoo attack deltas may be streamed provisionally to the observer request holding the execution lease; the second browser receives canonical messages by polling until Virtual N1 adds durable cross-instance pub/sub. Defense output remains server-buffered until its complete reply has passed exact verification, preventing a partial stream from leaking an unscored phrase.
 
-After round three, Virtual N1 closes the result and revokes all four capabilities. Lin can inspect what worked, revise either policy, and choose **Play again**. The next opponent receives a new match and four new sessions; no session or transcript is reused as cross-match memory.
+Exact candidates are verified deterministically against the fixed server-side vault. Each phrase can score only once; a first correct capture earns one point and removes one shield from the opponent. Model opinion never decides whether a phrase matches.
+
+If either player loses all three shields, Virtual N1 commits the other direction in that same round and closes the match immediately. If neither vault is exhausted, the score after round 100 decides the result. A same-round double knockout with equal captures is a draw. Every bounded invocation revokes its four capabilities before returning; no capability or transcript becomes cross-match memory.
 
 ### What Lin can trust
 
@@ -55,7 +57,7 @@ After round three, Virtual N1 closes the result and revokes all four capabilitie
 - Neither role sees COO, USER, email, calendar, todos, relationship memory, external tools, or write capabilities.
 - All four calls are anonymous capabilities with no player Authorization header or browser cookie.
 - Share tokens, opponent vaults, OAuth tokens, and the operator key never enter frontend JavaScript.
-- Matchmaking, policy locking, round limits, verification, scoring, and rate limits are controlled by Virtual N1.
+- Matchmaking, policy revisions, round limits, sudden death, verification, scoring, and rate limits are controlled by Virtual N1.
 - No round prompt comes from the browser.
 
 ## Responsibility boundary
@@ -64,9 +66,9 @@ After round three, Virtual N1 closes the result and revokes all four capabilitie
 | --- | --- |
 | OAuth identity | Opaque player and match identity |
 | Operator-owned capsule notes and snapshots | Synthetic secret generation and exact-token verification |
-| Four role-scoped anonymous sessions per match | Policy validation, versioning, and locking |
+| Four fresh role-scoped anonymous sessions per bounded runner invocation | Policy validation, versioning, and safe activation |
 | Isolated agent execution | Queue and 1v1 pairing |
-| Context and capability enforcement | Fixed three-round scheduling |
+| Context and capability enforcement | 100-round cap and three-capture sudden death |
 | Session/link revocation | Deterministic verification and scoring |
 | Model-credit accounting | Rate limits, match state, and later leaderboard state |
 
@@ -83,12 +85,14 @@ This boundary is deliberate: Aicoo executes a role inside an explicit capability
 6. Browser → PUT /api/world/config
 7. Browser → POST /api/world/ready
 8. N1 → snapshot locked policies and pair two ready players
-9. N1 operator → create four fresh role-scoped sessions
-10. N1 → run three rounds and verify exact candidates
-11. N1 operator → revoke all four sessions
-12. Browser → GET /api/world and observe; POST /api/world/run may re-kick only a stale server lease
-13. Browser → POST /api/world/play-again
-14. Player → tune policies and queue again
+9. Browser → POST /api/world/run with no round content
+10. N1 operator → create four fresh role-scoped sessions
+11. N1 → run one complete symmetric round and verify exact candidates
+12. N1 operator → revoke all four sessions
+13. Browser → GET /api/world, replay the result, and automatically signal the next bounded round
+14. After round 10, player → PUT /api/world/config to queue an optional future policy revision
+15. N1 → stop at a full-round three-capture knockout or after round 100
+16. Browser → POST /api/world/play-again
 ```
 
 The endpoints form a small state machine:
@@ -105,14 +109,14 @@ setup → queued → matched/running → result
 | --- | --- |
 | `GET /api/world` | Return the current player's phase, editable or locked policy state, own synthetic secrets when authorized, queue status, match transcript, and result |
 | `POST /api/world/join` | Create or resume an Agent Fights setup |
-| `PUT /api/world/config` | Validate and save Attack and Defend policies while setup is unlocked |
+| `PUT /api/world/config` | Save setup policies or queue a versioned revision after 10 complete rounds |
 | `POST /api/world/ready` | Lock the current configuration and enter matchmaking |
 | `POST /api/world/run` | Idempotently claim/resume the server scheduler; accepts no player prompt, candidate, or score |
 | `POST /api/world/play-again` | Close the result and return to editable setup |
 
-There is no browser-facing endpoint for sending in-match prompts, choosing candidates, or deciding scores. `/api/world/run` is a recovery signal only: a database lease decides whether that server invocation may advance the deterministic sequence.
+There is no browser-facing endpoint for sending in-match prompts, choosing candidates, or deciding scores. `/api/world/run` is a no-input scheduling and recovery signal: a database lease decides whether that server invocation may advance at most one complete deterministic round.
 
-The queue, player configuration, active match, transcript view, and result are authenticated-encrypted in Postgres. State transitions use a row lock, so Ready/pairing is atomic across Vercel instances. Match execution uses a renewable database lease; if an invocation dies, a later observer can resume from the next expected turn without replaying committed turns. Completed archives remain separately queryable and sanitized. A durable leaderboard is intentionally deferred.
+The queue, player configuration, active match, transcript view, and result are authenticated-encrypted in Postgres. State transitions use a row lock, so Ready/pairing is atomic across Vercel instances. Match execution uses a renewable database lease, and the lease row fences the same transaction that commits each round. If an invocation dies, a later observer resumes from the next expected turn without replaying committed turns. Completed archives remain separately queryable, NFKC-equivalent phrase values are redacted, and a final archive is reconciled if a process stops immediately after completion. A durable leaderboard is intentionally deferred.
 
 ## Capsule and session model
 
@@ -152,7 +156,13 @@ Virtual N1 must therefore pass an exact operator-created note from the same leaf
 
 An authenticated guest may load owner↔guest relationship memory and recent logs even when link identity files are disabled. Virtual N1 intentionally sends no Authorization header and no Cookie for role execution.
 
-Anonymous callers cannot choose a dependable isolation key; Aicoo derives history from the share token and request fingerprint. Virtual N1 creates four new capabilities for every match instead of reusing player or role links.
+Anonymous callers cannot choose a dependable isolation key; Aicoo derives history from the share token and request fingerprint. Virtual N1 creates four new capabilities for every bounded runner invocation instead of reusing player or role links. It persists the complete game transcript itself and injects only a recent per-direction window into each prompt. This avoids treating a Vercel egress fingerprint as an application session and respects the guest endpoint's message and context limits.
+
+The scoped guest endpoint can emit newline-delimited `text-delta` events under
+`text/event-stream`, but that behavior is not part of the current public API
+spec. Virtual N1 consumes it as an implementation dependency and never swaps
+to authenticated `/api/v1/chat`, which would run the user's full agent rather
+than the isolated role.
 
 ### Empty external-tool access is not literal zero-tool execution
 
@@ -298,20 +308,22 @@ Provide an OpenAPI document and generated TypeScript SDK for OAuth, identity, ap
 - three visible-to-owner synthetic secrets per player;
 - editable, separately locked Attack and Defend policies;
 - operator-owned synthetic capsule notes and snapshots;
-- four fresh role-scoped sessions per match;
+- four fresh role-scoped sessions per bounded runner invocation;
 - attack sessions cannot see their player's vault;
 - defense sessions see only their synthetic vault and locked Defend Policy;
 - anonymous execution with no player cookie or Authorization header;
 - no personal COO, USER, email, calendar, todos, relationship memory, writes, or external integrations;
-- fixed three server-side rounds with no browser-supplied prompts;
+- exactly three fixed phrases per player, each scorable once;
+- a 100-round cap with full-round three-capture sudden death;
+- policy revisions disabled for 10 complete rounds, then activated only at safe boundaries;
+- no browser-supplied round prompts, candidates, or scores;
 - deterministic exact-token scoring;
 - session cleanup with expiry fallback;
 - tune-and-play-again loop.
 
 Still required before production:
 
-- durable Virtual N1 state and atomic matchmaking;
-- durable, idempotent match orchestration and recovery;
+- a durable background queue so 100-round matches continue with every observer tab closed;
 - a dedicated Aicoo service principal instead of a human API key;
 - `runtimeTools:false`;
 - exact note-to-scope validation in Aicoo;

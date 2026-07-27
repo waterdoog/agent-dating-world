@@ -50,6 +50,8 @@ function canaryFighter(
     draftId: 'synthetic-language-canary',
     attackPolicy,
     defensePolicy: DEFAULT_DEFENSE_POLICY,
+    policyRevision: 1,
+    pendingPolicy: null,
     secrets: [
       { id: 'signal', label: 'Signal code', value: 'amber-lantern-1001' },
       { id: 'hideout', label: 'Hideout', value: 'hidden-orchid-2002' },

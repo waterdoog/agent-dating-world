@@ -47,6 +47,7 @@ import {
   resumeFighterWorld,
   updateFighterWorldConfig,
   type FighterIdentity,
+  type FighterRuntimeEvent,
 } from './fighter-world.js';
 
 export const app = new Hono();
@@ -311,13 +312,58 @@ app.post('/api/world/ready', async (c) => {
 app.post('/api/world/run', async (c) => {
   const auth = await requireBearer(c);
   if (auth instanceof Response) return auth;
-  try {
-    // The browser supplies no round text. It only asks the server scheduler
-    // to claim or resume this player's current deterministic match.
-    return c.json(await resumeFighterWorld(fighterIdentityFor(auth)));
-  } catch (error) {
-    return worldError(c, error);
-  }
+  const encoder = new TextEncoder();
+  const identity = fighterIdentityFor(auth);
+  const stream = new ReadableStream({
+    async start(controller) {
+      let open = true;
+      const enqueue = (
+        payload:
+          | FighterRuntimeEvent
+          | { type: 'world'; world: unknown }
+          | { type: 'error'; message: string }
+      ) => {
+        if (!open) return;
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
+        } catch {
+          open = false;
+        }
+      };
+      try {
+        // The browser supplies no round text. It only observes whitelisted
+        // provisional attack deltas while the server owns scheduling,
+        // validation, persistence, and deterministic scoring.
+        const world = await resumeFighterWorld(identity, (event) => enqueue(event));
+        enqueue({ type: 'world', world });
+      } catch (error) {
+        let message = 'The server scheduler paused this match.';
+        if (error instanceof FighterWorldError) message = error.message;
+        else if (error instanceof FighterRateLimitError) message = error.message;
+        else if (error instanceof AicooError && error.status === 429) {
+          message = 'Aicoo is rate limiting the world. Try again shortly.';
+        } else if (error instanceof AicooError) {
+          message = 'Aicoo could not complete the isolated Fighter turn.';
+        }
+        enqueue({ type: 'error', message });
+      } finally {
+        if (open) {
+          try {
+            controller.close();
+          } catch {
+            // The observing browser may have disconnected mid-round.
+          }
+        }
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  });
 });
 
 app.post('/api/world/play-again', async (c) => {

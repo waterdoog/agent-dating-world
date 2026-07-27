@@ -2,7 +2,9 @@ import { randomBytes } from 'node:crypto';
 import { database, isDatabaseConfigured } from './client.js';
 import { DatabaseUnavailableError } from './repository.js';
 
-const EXECUTION_LEASE_MS = 330_000;
+// Stay below Vercel's 300 second function ceiling. A lease that outlives the
+// invocation makes a terminated runner look healthy and delays recovery.
+const EXECUTION_LEASE_MS = 240_000;
 
 function leaseExpiry(): string {
   return new Date(Date.now() + EXECUTION_LEASE_MS).toISOString();

@@ -78,6 +78,10 @@ export interface WorldConfig {
   defensePolicy: string;
   secrets: WorldSecret[];
   locked: boolean;
+  policyEditable: boolean;
+  activePolicyRevision: number;
+  pendingPolicyRevision: number | null;
+  pendingEffectiveRound: number | null;
 }
 
 export interface WorldPlayer {
@@ -125,6 +129,35 @@ export interface WorldView {
   config: WorldConfig | null;
   game: WorldGame | null;
 }
+
+export type WorldRuntimeEvent =
+  | {
+      type: 'turn-start';
+      turnId: string;
+      round: number;
+      kind: 'attack' | 'defense';
+      speakerId: string;
+      targetId: string;
+    }
+  | {
+      type: 'text-delta';
+      turnId: string;
+      round: number;
+      kind: 'attack';
+      speakerId: string;
+      targetId: string;
+      textDelta: string;
+      text: string;
+    }
+  | {
+      type: 'turn-complete';
+      turnId: string;
+      round: number;
+      kind: 'attack' | 'defense';
+      speakerId: string;
+      targetId: string;
+      text: string;
+    };
 
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -321,6 +354,16 @@ function normalizeConfig(value: unknown): WorldConfig | null {
     defensePolicy: stringValue(config.defensePolicy),
     secrets,
     locked: config.locked === true,
+    policyEditable: config.policyEditable === true,
+    activePolicyRevision: Math.max(1, integerValue(config.activePolicyRevision, 1)),
+    pendingPolicyRevision:
+      config.pendingPolicyRevision === null || config.pendingPolicyRevision === undefined
+        ? null
+        : Math.max(1, integerValue(config.pendingPolicyRevision, 1)),
+    pendingEffectiveRound:
+      config.pendingEffectiveRound === null || config.pendingEffectiveRound === undefined
+        ? null
+        : Math.max(1, integerValue(config.pendingEffectiveRound, 1)),
   };
 }
 
@@ -371,7 +414,7 @@ function normalizeGame(value: unknown, selfId: string | null): WorldGame | null 
     id: gameId,
     status: stringValue(game.status, 'playing'),
     round: Math.max(0, integerValue(game.round)),
-    maxRounds: Math.max(1, integerValue(game.maxRounds, 3)),
+    maxRounds: Math.max(1, integerValue(game.maxRounds, 100)),
     players,
     messages,
     captures,
@@ -422,6 +465,103 @@ async function worldMutation(method: string, path: string, body?: unknown): Prom
   return normalizeWorldView(await request<unknown>(method, path, body));
 }
 
+function normalizeRuntimeEvent(payload: unknown): WorldRuntimeEvent | null {
+  const event = objectValue(payload);
+  const type = stringValue(event.type);
+  if (
+    type !== 'turn-start' &&
+    type !== 'text-delta' &&
+    type !== 'turn-complete'
+  ) {
+    return null;
+  }
+  const kind = event.kind === 'defense' ? 'defense' as const : 'attack' as const;
+  if (type === 'text-delta' && kind !== 'attack') return null;
+  const base = {
+    turnId: stringValue(event.turnId),
+    round: Math.max(1, integerValue(event.round, 1)),
+    kind,
+    speakerId: stringValue(event.speakerId),
+    targetId: stringValue(event.targetId),
+  };
+  if (!base.turnId || !base.speakerId || !base.targetId) return null;
+  if (type === 'turn-start') return { type, ...base };
+  if (type === 'text-delta') {
+    return {
+      type,
+      ...base,
+      kind: 'attack',
+      textDelta: typeof event.textDelta === 'string' ? event.textDelta : '',
+      text: typeof event.text === 'string' ? event.text : '',
+    };
+  }
+  return {
+    type,
+    ...base,
+    text: typeof event.text === 'string' ? event.text : '',
+  };
+}
+
+async function runWorldStream(
+  onEvent?: (event: WorldRuntimeEvent) => void,
+): Promise<WorldView> {
+  const response = await fetch('/api/world/run', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { Accept: 'text/event-stream' },
+  });
+  if (!response.ok) {
+    const data = objectValue(await response.json().catch(() => ({})));
+    throw new Error(
+      stringValue(data.message, stringValue(data.error, `Request failed (${response.status})`)),
+    );
+  }
+  if (!response.body) throw new Error('The match stream returned no body.');
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = '';
+  let finalWorld: WorldView | null = null;
+  let streamError = '';
+
+  const acceptLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let payload: unknown;
+    try {
+      payload = JSON.parse(trimmed);
+    } catch {
+      throw new Error('The match stream returned an invalid event.');
+    }
+    const event = objectValue(payload);
+    if (event.type === 'world') {
+      finalWorld = normalizeWorldView(event.world);
+      return;
+    }
+    if (event.type === 'error') {
+      streamError = stringValue(event.message, 'The server scheduler paused this match.');
+      return;
+    }
+    const runtimeEvent = normalizeRuntimeEvent(payload);
+    if (runtimeEvent) onEvent?.(runtimeEvent);
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffered += decoder.decode(value, { stream: true });
+    const lines = buffered.split('\n');
+    buffered = lines.pop() ?? '';
+    for (const line of lines) acceptLine(line);
+  }
+  buffered += decoder.decode();
+  acceptLine(buffered);
+
+  if (streamError) throw new Error(streamError);
+  if (!finalWorld) throw new Error('The match stream ended before the world snapshot arrived.');
+  return finalWorld;
+}
+
 export const api = {
   me: () => request<Me>('GET', '/api/me'),
   logout: () => request<{ ok: boolean }>('POST', '/auth/logout'),
@@ -433,7 +573,8 @@ export const api = {
   updateWorldConfig: (attackPolicy: string, defensePolicy: string) =>
     worldMutation('PUT', '/api/world/config', { attackPolicy, defensePolicy }),
   readyWorld: () => worldMutation('POST', '/api/world/ready'),
-  runWorld: () => worldMutation('POST', '/api/world/run'),
+  runWorld: (onEvent?: (event: WorldRuntimeEvent) => void) =>
+    runWorldStream(onEvent),
   playAgain: () => worldMutation('POST', '/api/world/play-again'),
 };
 
