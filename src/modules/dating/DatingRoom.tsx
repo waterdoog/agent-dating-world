@@ -54,6 +54,13 @@ function relPhrase(e: DatingTickEvent): { text: string; tone: 'fight' | 'love' |
   if (a < 0.4 && t < 0.4) return { text: '礼貌路过', tone: 'calm' };
   return { text: '在试探', tone: 'calm' };
 }
+const SEV_LABEL: Record<string, string> = { ambient: '日常', relationship: '关系', drama: '戏剧' };
+// severity drives the tone; fall back to the attraction/tension read for old events
+function eventTone(e: DatingTickEvent): 'fight' | 'love' | 'crush' | 'calm' {
+  if (e.severity === 'drama') return 'fight';
+  if (e.severity === 'ambient') return 'calm';
+  return relPhrase(e).tone;
+}
 function timeAgo(at: number | undefined, now: number): string {
   if (!at) return '';
   const s = Math.max(0, Math.floor((now - at) / 1000));
@@ -471,17 +478,20 @@ export function DatingRoom() {
           </div>
 
           {currentEvent && (
-            <div className="dt-panel dt-rr-sec dt-event">
+            <div className={`dt-panel dt-rr-sec dt-event sev-${currentEvent.severity ?? 'relationship'}`}>
               <div className="dt-event-head">
                 <p className="kicker">当前事件</p>
-                <span className={`dt-event-tag ${relPhrase(currentEvent).tone}`}>{relPhrase(currentEvent).text}</span>
+                <span className={`dt-event-tag ${eventTone(currentEvent)}`}>{SEV_LABEL[currentEvent.severity ?? ''] ?? relPhrase(currentEvent).text}</span>
               </div>
               <div className="dt-event-who">
                 {lookOf(currentEvent.actor) && <span className="dt-f-av" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(currentEvent.actor)!, 30) }} />}
-                <b>{currentEvent.actor} × {currentEvent.target}</b>
                 {lookOf(currentEvent.target) && <span className="dt-f-av dt-f-av2" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(currentEvent.target)!, 30) }} />}
+                <span className="dt-event-parties">{currentEvent.actor} × {currentEvent.target}</span>
               </div>
-              {currentEvent.note && <p className="dt-event-note">“{currentEvent.note}”</p>}
+              <p className="dt-event-headline">{currentEvent.headline || `${currentEvent.actor} 对 ${currentEvent.target} ${currentEvent.move}`}</p>
+              {currentEvent.summary && <p className="dt-event-note">{currentEvent.summary}</p>}
+              {currentEvent.consequence && <p className="dt-event-line">↳ {currentEvent.consequence}</p>}
+              {currentEvent.followup && <p className="dt-event-line hook">悬念 · {currentEvent.followup}</p>}
               <div className="dt-event-scores"><span>心动 {currentEvent.attraction.toFixed(2)}</span><span>张力 {currentEvent.tension.toFixed(2)}</span></div>
               <button type="button" className="dt-event-open" onClick={() => setOpenEvent(currentEvent)}>打开对话</button>
             </div>
@@ -516,14 +526,14 @@ export function DatingRoom() {
                 const rel = relPhrase(e);
                 const av = lookOf(e.actor), bv = lookOf(e.target);
                 return (
-                  <li className="dt-feed-row" key={i} title={`${e.move} · 心动 ${e.attraction.toFixed(2)} / 张力 ${e.tension.toFixed(2)} · ${e.note}`}>
+                  <li className={`dt-feed-row clickable ${e.severity === 'drama' ? 'is-drama' : ''}`} key={i} title={e.summary || e.note} onClick={() => setOpenEvent(e)}>
                     <span className="dt-f-avs">
                       {av && <span className="dt-f-av" dangerouslySetInnerHTML={{ __html: agentSprite(av, 34) }} />}
                       {bv && <span className="dt-f-av dt-f-av2" dangerouslySetInnerHTML={{ __html: agentSprite(bv, 34) }} />}
                     </span>
                     <div className="dt-f-txt">
-                      <b>{e.actor} & {e.target}</b>
-                      <span className={`dt-f-note ${rel.tone}`}>{rel.text}</span>
+                      <b>{e.headline || `${e.actor} & ${e.target}`}</b>
+                      <span className={`dt-f-note ${eventTone(e)}`}>{e.consequence || rel.text}</span>
                     </div>
                     <time>{timeAgo(e.at, now)}</time>
                   </li>
@@ -545,10 +555,11 @@ export function DatingRoom() {
         <div className="dt-drawer-scrim" onClick={() => setOpenEvent(null)}>
           <div className="dt-convo" onClick={(e) => e.stopPropagation()}>
             <div className="dt-convo-head">
-              <b>{openEvent.actor} × {openEvent.target}</b>
-              <span className={`dt-event-tag ${relPhrase(openEvent).tone}`}>{relPhrase(openEvent).text}</span>
+              <b>{openEvent.headline || `${openEvent.actor} × ${openEvent.target}`}</b>
+              <span className={`dt-event-tag ${eventTone(openEvent)}`}>{SEV_LABEL[openEvent.severity ?? ''] ?? relPhrase(openEvent).text}</span>
               <button type="button" className="dt-convo-x" onClick={() => setOpenEvent(null)} aria-label="关闭">×</button>
             </div>
+            {openEvent.summary && <p className="dt-convo-summary">{openEvent.summary}</p>}
             <div className="dt-convo-body">
               <div className="dt-convo-line">
                 <span className="dt-convo-nm">{openEvent.actor}</span>
@@ -561,6 +572,12 @@ export function DatingRoom() {
                 </div>
               )}
             </div>
+            {(openEvent.consequence || openEvent.followup) && (
+              <div className="dt-convo-beats">
+                {openEvent.consequence && <p className="dt-event-line">↳ {openEvent.consequence}</p>}
+                {openEvent.followup && <p className="dt-event-line hook">悬念 · {openEvent.followup}</p>}
+              </div>
+            )}
             <div className="dt-convo-foot">心动 {openEvent.attraction.toFixed(2)} · 张力 {openEvent.tension.toFixed(2)}{openEvent.note ? ` — ${openEvent.note}` : ''}</div>
           </div>
         </div>
