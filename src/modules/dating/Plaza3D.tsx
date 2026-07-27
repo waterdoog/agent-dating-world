@@ -21,6 +21,7 @@ export interface Mover3D {
   you: boolean;
   x: number;   // snapshot for initial placement (before useFrame's first tick)
   y: number;
+  partner?: string;
   bubble?: { text: string; kind: 'fight' | 'love' | 'new' };
 }
 
@@ -79,18 +80,65 @@ function Agent({ agent, posRef }: { agent: Mover3D; posRef: RefObject<LivePos[]>
       <Html position={[0, 1.15 + tagLift(agent.name), 0]} center distanceFactor={12} zIndexRange={[10, 0]}>
         <div className={`dt3d-tag ${agent.you ? 'you' : ''}`}>{agent.name}</div>
       </Html>
-      {agent.bubble && (
-        <Html position={[0, 1.72 + tagLift(agent.name), 0]} center distanceFactor={11} zIndexRange={[20, 0]}>
-          <div className={`dt3d-bubble ${agent.bubble.kind}`}>{agent.bubble.text}</div>
-        </Html>
-      )}
+
     </group>
   );
 }
 
 const R = Math.PI / 2;   // one quarter turn
 
+/** A single line above one agent — used when nobody is answering. */
+function SoloBubble({ agent, posRef }: { agent: Mover3D; posRef: RefObject<LivePos[]> }) {
+  const g = useRef<THREE.Group>(null);
+  useFrame(() => {
+    const p = posRef.current?.find((m) => m.name === agent.name);
+    if (!p || !g.current) return;
+    g.current.position.set(map(p.x), 1.72 + tagLift(agent.name), map(p.y));
+  });
+  if (!agent.bubble) return null;
+  return (
+    <group ref={g}>
+      <Html center distanceFactor={11} zIndexRange={[20, 0]}>
+        <div className={`dt3d-bubble ${agent.bubble.kind}`}>{agent.bubble.text}</div>
+      </Html>
+    </group>
+  );
+}
+
+/** One shared chat box floating between two agents who are talking. */
+function ChatBox({ a, b, posRef }: { a: Mover3D; b: Mover3D; posRef: RefObject<LivePos[]> }) {
+  const g = useRef<THREE.Group>(null);
+  useFrame(() => {
+    const pa = posRef.current?.find((m) => m.name === a.name);
+    const pb = posRef.current?.find((m) => m.name === b.name);
+    if (!pa || !pb || !g.current) return;
+    g.current.position.set((map(pa.x) + map(pb.x)) / 2, 1.5, (map(pa.y) + map(pb.y)) / 2);
+  });
+  const kind = a.bubble?.kind ?? b.bubble?.kind ?? 'new';
+  return (
+    <group ref={g}>
+      <Html center distanceFactor={11} zIndexRange={[20, 0]}>
+        <div className={`dt3d-chat ${kind}`}>
+          {a.bubble && <p><b>{a.name}</b>{a.bubble.text}</p>}
+          {b.bubble && <p className="reply"><b>{b.name}</b>{b.bubble.text}</p>}
+        </div>
+      </Html>
+    </group>
+  );
+}
+
 function Scene({ agents, posRef }: { agents: Mover3D[]; posRef: RefObject<LivePos[]> }) {
+  // pair up talking agents so each conversation gets ONE box, not two ribbons
+  const seen = new Set<string>();
+  const chats: Array<[Mover3D, Mover3D]> = [];
+  for (const a of agents) {
+    if (!a.partner || seen.has(a.name)) continue;
+    const b = agents.find((m) => m.name === a.partner);
+    if (!b || b.partner !== a.name) continue;
+    if (!a.bubble && !b.bubble) continue;
+    seen.add(a.name); seen.add(b.name);
+    chats.push([a, b]);
+  }
   // 7×7 paved plaza — the agents' whole world, so nobody wanders onto bare dirt
   const pavement: [number, number][] = [];
   for (let x = -3; x <= 3; x++) for (let z = -3; z <= 3; z++) pavement.push([x, z]);
@@ -207,6 +255,13 @@ function Scene({ agents, posRef }: { agents: Mover3D[]; posRef: RefObject<LivePo
       ))}
       {agents.map((a) => (
         <Agent key={a.name} agent={a} posRef={posRef} />
+      ))}
+      {chats.map(([a, b]) => (
+        <ChatBox key={`${a.name}~${b.name}`} a={a} b={b} posRef={posRef} />
+      ))}
+      {/* a solo line (e.g. someone waiting, or broke) still needs somewhere to go */}
+      {agents.filter((a) => a.bubble && !seen.has(a.name)).map((a) => (
+        <SoloBubble key={`s${a.name}`} agent={a} posRef={posRef} />
       ))}
     </>
   );
