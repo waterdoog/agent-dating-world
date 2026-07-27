@@ -47,6 +47,24 @@ export const config = {
 
   /** Operator Aicoo account API key — owns the roster and proof ledger. */
   operatorApiKey: process.env.AICOO_OPERATOR_API_KEY ?? '',
+
+  /**
+   * The town's single model configuration. EVERY agent-facing call — target
+   * selection, decisions, conversation, memory, relationship updates, story
+   * threads, feed summaries — goes through this. Never hardcode a model
+   * anywhere else.
+   */
+  model: {
+    provider: 'xai' as const,
+    name: process.env.GROK_MODEL ?? 'grok-4',
+    apiKey: process.env.XAI_API_KEY ?? process.env.GROK_API_KEY ?? '',
+    baseUrl: (process.env.XAI_BASE_URL ?? 'https://api.x.ai/v1').replace(/\/$/, ''),
+    timeoutMs: Number(process.env.GROK_TIMEOUT_MS ?? 60_000),
+    maxRetries: Number(process.env.GROK_MAX_RETRIES ?? 2),
+  },
+
+  /** Hard cap on real conversation turns per agent per calendar day. */
+  dailyTurnBudget: Number(process.env.TOWN_DAILY_TURNS ?? 100),
 };
 
 export const oauthPaths = {

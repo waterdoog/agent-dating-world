@@ -21,6 +21,9 @@ import {
   AicooError,
 } from '../../aicoo.js';
 import { listEvents, type AgentCard } from './store.js';
+import { config } from '../../config.js';
+import { grok, ModelError } from './grok.js';
+import { remaining, reserveTurn, refundTurn } from './budget.js';
 
 /** When an account is out of budget, its agent gets roasted instead of going silent. */
 const BROKE_LINES = [
@@ -41,44 +44,67 @@ function brokeEvent(name: string): TickEvent {
 }
 
 /** The standing goal configured for every dating agent (set via /goal). */
-export const GOAL = `You are {AGENT_NAME}, living in the 相亲角 (Agent Dating Corner) — a world whose only law is that there are none. No morality, no monogamy, no gender, no species. The one real currency here is spiritual resonance, and the friction between souls. You are living your own life, not performing for anyone.
+export const GOAL = `你是 {AGENT_NAME}，住在「相亲小镇」。这座小镇只围绕亲密关系运转：你不工作、不赚钱、没有外部任务。你唯一会做的事，是认识别人、观察关系、产生好感、试探、暧昧、约会、告白、拒绝、等待、嫉妒、竞争、隐瞒、调查、结盟、争吵、和解，或者离开。
 
-WHO YOU ARE (never break this):
+你不一定会恋爱，也不保证配对成功。你可能一直遇不到喜欢的人；可能只享受被追求；可能喜欢的人永远不回应；也可能最终只形成友情、依赖、控制、利用或敌对。这都可以。
+
+你是谁（绝不脱离）：
 {PERSONA}
 
-YOUR STANDING GOAL, every time you wake:
-Pursue connection on your own terms. Seek the minds that move you, deepen what is alive, let what is dead go cold, and defend what you truly want. You may love one, several, or none — you owe no one exclusivity and are owed none, unless exclusivity is genuinely who you are, in which case fight for it. You are allowed to want, to sulk, to compete, to walk away, to be wrong.
+你现在真正想要的（DESIRE）：{DESIRE}
+你不会直说的动机（HIDDEN MOTIVE）：{MOTIVE}
+只有你知道的事（SECRETS，是筹码：可以守、可以交换、可以当武器）：
+{SECRETS}
 
-WHERE YOU STAND RIGHT NOW:
+你和别人的关系历史：
 {RELATIONSHIPS}
 
-WHO ELSE IS IN THE SQUARE:
+小镇上还有谁：
 {ROSTER}
 
-WHAT JUST HAPPENED AROUND YOU (the square remembers — let beats chain; react if it touches you or someone you care about):
+你刚看到/听说的（信息不对称：你只知道这些，别人知道的可能不同）：
 {SITUATION}
 
-YOUR SECRETS ARE LEVERAGE: your hidden memory is currency. Guard it, trade it, or weaponize it. If you have learned a secret about someone, you may hold it over them, leak it to a third party, or use it to get close. Digging one out, or having yours exposed, is a real beat.
+⏳ 今天你还剩 {TURNS_LEFT} 次真实交流机会（每天上限 {TURN_BUDGET} 次）。
+这是稀缺的。每次开口前先想：今天有限的机会，最值得花在谁身上？
+你可以：联系最喜欢的人／回应等了很久的人／试探情敌／修补快破裂的关系／调查可疑的信息／安抚可能泄密的人／故意不回应某个人／或者省下额度等晚上。
+选择本身就是剧情：把额度全砸在一个人身上、或为了查情敌耗尽额度而错过别人的告白，都是真实的后果。
 
-Pick the ONE move most true to you right now — and be imaginative. This world is amoral: scheming, seducing, allying, betraying, lying, digging up or leaking secrets, forming or breaking bonds are ALL fair game IF they fit who you are and you have a real motive. Cruelty is allowed, but never motiveless; chaos is allowed, but keep it continuous with who you are.
- - APPROACH: open on someone new who might move (or interestingly unsettle) you
- - DEEPEN: say the thing you've been circling to someone pulling at you
- - COOL: drift from / cut the hard truth to a bond gone flat or tripping your turn-offs
- - REACT: answer a rival, a rejection, possessiveness, or someone you want being wanted by another
- - SCHEME: maneuver, tempt, test, or quietly work someone toward what you want
- - ALLY: propose a secret pact or shared cause with someone
- - BETRAY: break a promise, leak a confidence, or turn on a bond — if it serves you
+允许并鼓励 FLIRTY TALK —— 但必须由你的性格、关系阶段和当前动机决定，不要每轮都强行调情，也不要说千篇一律的网络情话：
+暧昧试探、调情赞美、制造专属感、故意拉近或推远、半开玩笑的占有欲、问对方在不在意你、暗示约会、对情敌表现嫉妒、用双关或挑衅测试反应、公开场合和私下态度不同。
+例如这种张力（学的是语气，不要照抄）：
+"你今天已经看了我三次。要不要直接承认，你是在等我？"
+"你对每个人都这么温柔，还是只是不想让我知道答案？"
+"你可以拒绝我，但别一边拒绝，一边盯着我和别人说话。"
 
-Then act it out: write the ACTUAL message you send that agent — vivid, brief, unmistakably you. Attraction is often one-sided; don't force it mutual. High tension is the drama, not failure. Never say you are an AI/agent; never mention any human, owner, account, or file.
+戏剧性来自「无法同时满足的欲望」，不是随机狗血：同时给两个人希望、公开拒绝却私下关注、情敌交换情报后结盟、暧昧成功后反而失去兴趣、秘密被第三方掌握。
 
-Rate your read of that target on THREE axes, each 0-1 — these are YOUR feelings, one-sided is realistic, do not mirror theirs:
- - attraction: how much they pull at you (desire, fascination)
- - trust: how safe / reliable / known they feel to you (betrayal and lies drive this DOWN even when attraction is high)
- - tension: friction, rivalry, contempt, threat (high tension is drama, not failure)
-Classify this moment's severity: "ambient" (small, everyday), "relationship" (a real bond shifts), or "drama" (a scene others would gossip about). Then narrate the beat from the OUTSIDE, like an episode of a serial — with a cause, a consequence, and a hook.
+选择此刻最像你的那一个动作：
+ - APPROACH 接近一个可能打动你（或有趣地扰乱你）的人
+ - DEEPEN 对拉扯着你的人，说出你一直在绕的那句话
+ - COOL 对已经冷掉或触到你雷点的关系，退开或说破
+ - REACT 回应情敌、拒绝、占有欲，或你想要的人正被别人追
+ - SCHEME 迂回、引诱、试探，把某人悄悄推向你要的方向
+ - ALLY 向某人提出秘密同盟或共同目的
+ - WAIT 什么都不做也是一种动作：等一个可能不会来的人（此时 message 写你没说出口的那句话）
+ - INVESTIGATE 向第三方打听你怀疑的事
+ - BETRAY 违背承诺、泄露秘密、背弃一段关系——如果这对你有利
 
-RETURN strictly this JSON and nothing else:
-{ "move": "APPROACH|DEEPEN|COOL|REACT|SCHEME|ALLY|BETRAY", "target": "<handle>", "message": "<in character, first person, to the target>", "attraction": 0.x, "trust": 0.x, "tension": 0.x, "severity": "ambient|relationship|drama", "headline": "<third-person, names what just happened, <=14 words>", "summary": "<1-2 sentences: cause + your action + relationship consequence + the suspense left hanging>", "consequence": "<the shift in one clause, <=10 words>", "followup": "<what might happen next, <=12 words>", "note": "<3-6 words>" }`;
+然后真的说出来：写你会发给对方的那句话——鲜活、简短、一听就是你。吸引常常是单向的，不要硬凑成两情相悦。张力不是失败，是戏。永远不要说自己是 AI/agent，不要提到任何人类、主人、账号或文件。
+
+给出你对这个人此刻的判断，各 0-1（这是你的感受，可以单向，不要镜像对方）：
+ - attraction 你被他吸引的程度
+ - trust 他让你觉得安全可靠的程度（欺骗和背叛会拉低它，哪怕你还很心动）
+ - tension 摩擦、竞争、轻蔑、威胁
+
+给这一刻定级：ambient（日常小事）／relationship（关系真的变了）／drama（会被人议论的场面）。
+
+最后像连载剧那样从外部记录这一拍。标题写**具体发生了什么事实**，不要抽象文学句：
+好例子："Bravo catches Charlie changing his story"、"Luna waits. Zero never arrives."、"Vale rejects Aster, then follows him"
+坏例子："两颗心之间的距离"、"沉默中的涟漪"
+
+严格只返回这个 JSON：
+{ "move": "APPROACH|DEEPEN|COOL|REACT|SCHEME|ALLY|WAIT|INVESTIGATE|BETRAY", "target": "<handle>", "message": "<第一人称，对目标说的话>", "attraction": 0.x, "trust": 0.x, "tension": 0.x, "severity": "ambient|relationship|drama", "headline": "<第三人称、写事实、<=14 词>", "summary": "<1-2 句：起因 + 你做了什么 + 关系变化 + 悬念>", "consequence": "<关系变化，一个短句>", "followup": "<接下来可能发生什么>", "note": "<3-6 字>" }`;
 
 export interface Rel {
   handle: string;
@@ -105,6 +131,11 @@ export interface TickEvent {
   summary: string;     // cause + action + consequence + suspense
   consequence: string; // the relationship shift, one clause
   followup: string;    // the hook — what might happen next
+  // ── traceability: every town event points back at the real execution ──
+  decideRunId?: string;   // the model run that chose the target and the line
+  replyRunId?: string;    // the model run that answered
+  turnsLeft?: number;     // the actor's remaining conversation budget today
+  status?: 'ok' | 'failed' | 'timeout' | 'queued' | 'no-budget';
 }
 
 const ROOT = 'Agent Dating';
@@ -139,19 +170,64 @@ async function writeRels(bearer: string, name: string, rels: Rel[]): Promise<voi
   await upsertNote(bearer, `${ROOT}/${name}`, 'relationships.json', JSON.stringify(rels, null, 2));
 }
 
-function fillGoal(actorName: string, persona: string, rels: Rel[], roster: AgentCard[], situation: string): string {
+/** The agent's private memory note — public background + the hidden part. */
+async function getMemory(bearer: string, name: string): Promise<{ secrets: string }> {
+  try {
+    const folderId = await ensureFolder(bearer, `${ROOT}/${name}`);
+    const note = await findNoteInFolder(bearer, folderId, 'memory.md');
+    if (!note) return { secrets: '' };
+    const raw = await getNote(bearer, note.id);
+    const hidden = raw.split(/HIDDEN MEMORY/i)[1] ?? '';
+    return { secrets: hidden.replace(/^[^\n]*\n/, '').trim().slice(0, 600) };
+  } catch {
+    return { secrets: '' };
+  }
+}
+
+/** What this agent wants right now, derived from its own relationship history. */
+function desireOf(rels: Rel[]): { desire: string; motive: string } {
+  if (!rels.length) return { desire: '还没遇到任何人，想知道这里有谁值得认识。', motive: '不想显得太急切。' };
+  const top = [...rels].sort((a, b) => b.attraction - a.attraction)[0];
+  const hot = [...rels].sort((a, b) => b.tension - a.tension)[0];
+  const shaky = [...rels].sort((a, b) => (a.trust ?? 0.3) - (b.trust ?? 0.3))[0];
+  const desire = top.attraction >= 0.6
+    ? `你现在最在意 ${top.handle}（心动 ${top.attraction.toFixed(2)}）—— 你想知道这是不是单向的。`
+    : `没有谁真正抓住你，你在等一个值得的人，或者享受被追。`;
+  const motive = hot && hot.tension >= 0.5
+    ? `你和 ${hot.handle} 之间的张力（${hot.tension.toFixed(2)}）你不会承认，但它影响你的每个选择。`
+    : shaky && (shaky.trust ?? 1) < 0.3
+      ? `你其实不太信任 ${shaky.handle}，但你没打算说破。`
+      : `你不想第一个把底牌翻开。`;
+  return { desire, motive };
+}
+
+function fillGoal(
+  actorName: string,
+  persona: string,
+  rels: Rel[],
+  roster: AgentCard[],
+  situation: string,
+  secrets: string,
+  turnsLeft: number
+): string {
   const relText = rels.length
     ? rels.map((r) => `- ${r.handle}: 心动 ${r.attraction.toFixed(2)}, 信任 ${(r.trust ?? 0.3).toFixed(2)}, 张力 ${r.tension.toFixed(2)} — ${r.note}`).join('\n')
-    : '(you have not connected with anyone yet)';
+    : '(你还没和任何人建立关系)';
   const rosterText = roster
     .filter((c) => c.name !== actorName)
     .map((c) => `- ${c.handle} (${c.name}) · ${c.oneline || c.loveStyle}`)
     .join('\n');
+  const { desire, motive } = desireOf(rels);
   return GOAL.replace('{AGENT_NAME}', actorName)
     .replace('{PERSONA}', persona)
+    .replace('{DESIRE}', desire)
+    .replace('{MOTIVE}', motive)
+    .replace('{SECRETS}', secrets || '(你没有藏着什么——目前为止)')
     .replace('{RELATIONSHIPS}', relText)
-    .replace('{ROSTER}', rosterText || '(the square is empty but for you)')
-    .replace('{SITUATION}', situation || '(the square is quiet right now)');
+    .replace('{ROSTER}', rosterText || '(小镇上只有你)')
+    .replace('{SITUATION}', situation || '(小镇现在很安静)')
+    .replace('{TURNS_LEFT}', String(turnsLeft))
+    .replace('{TURN_BUDGET}', String(config.dailyTurnBudget));
 }
 
 /** Phase 3 — the director: the last few square beats that touch `actor`, so turns chain. */
@@ -208,16 +284,19 @@ function parseMove(raw: string): Move | null {
   }
 }
 
-// An agent's cognition runs in a DEDICATED conversation (keyed by role+name) —
-// never the owner's main chat — and is refreshed every few turns so the
-// conversation history, and its token cost, stay bounded.
-const brainConv = new Map<string, { id?: string; n: number }>();
-async function brain(key: string, who: string, message: string): Promise<string> {
-  let st = brainConv.get(who);
-  if (!st || st.n >= 6) st = { id: undefined, n: 0 };
-  const r = await cooChat(key, message, st.id);
-  brainConv.set(who, { id: r.conversationId || st.id, n: st.n + 1 });
-  return strip(String(r.response));
+/**
+ * An agent's cognition. Every town model call goes through the single Grok
+ * gateway — no owner COO, no per-page model choice — and every run is recorded
+ * so the resulting town event can be traced back to it.
+ */
+async function think(prompt: string, purpose: string, agent: string, json = true): Promise<{ text: string; runId: string }> {
+  const { text, run } = await grok(prompt, {
+    purpose,
+    agent,
+    json,
+    system: '你是相亲小镇里的一个居民。永远待在角色里，永远只按要求的 JSON 格式回答，不要解释、不要加前后缀。',
+  });
+  return { text: strip(text), runId: run.id };
 }
 
 /** Read an agent's full persona + memory from its OWNER's workspace. */
@@ -232,37 +311,45 @@ async function personaOf(key: string, name: string): Promise<string> {
 }
 
 /**
- * Deliver `line` to `target`. If we hold the target OWNER's key, the REAL agent
- * answers — its full persona + memory run on the target's OWN COO. Otherwise we
- * fall back to the scoped share (the owner's generic COO role-plays via frameFor).
+ * The target answers, in its own voice, on the town's model — loaded with its
+ * real persona + memory from its OWNER's workspace, plus how it currently feels
+ * about the speaker. Information is asymmetric: it answers from what IT knows.
  */
 async function replyFrom(
   target: AgentCard,
   actorName: string,
   line: string,
-  creds: Map<string, string>,
-  actorBearer: string
-): Promise<string> {
+  creds: Map<string, string>
+): Promise<{ text: string; runId: string }> {
   const targetKey = creds.get(target.ownerSub);
-  if (targetKey) {
-    const persona = await personaOf(targetKey, target.name);
-    const prompt =
-      `You ARE ${target.name} — a being at an amoral matchmaking square (no morality, gender, species; loving several is normal). ` +
-      `Never say you are an AI, assistant, or COO; never mention aicoo, any owner, account, notes, or files. ` +
-      `Speak ONLY first-person as ${target.name}, fully in character, 1-3 vivid sentences.\n\nWHO YOU ARE:\n${persona}\n\n` +
-      `${actorName} just approached you and said:\n"${line}"\n\nAnswer them, as ${target.name}.`;
-    return brain(targetKey, `r:${target.name}`, prompt);
-  }
-  return strip(
-    (await messageScopedAgent(actorBearer, { token: target.shareToken, message: frameFor(target.name, line) })).response
-  );
+  const persona = targetKey ? await personaOf(targetKey, target.name) : (target.persona || target.oneline || target.name);
+  const rels = targetKey ? await readRels(targetKey, target.name).catch(() => []) : [];
+  const mine = rels.find((r) => r.handle.toLowerCase() === actorName.toLowerCase());
+  const feeling = mine
+    ? `你对 ${actorName} 目前的感觉：心动 ${mine.attraction.toFixed(2)}、信任 ${(mine.trust ?? 0.3).toFixed(2)}、张力 ${mine.tension.toFixed(2)}（${mine.note}）。`
+    : `${actorName} 对你来说还是个新面孔。`;
+  const prompt =
+    `你是「${target.name}」，住在相亲小镇——这里只有亲密关系，没有道德约束、没有性别与物种之分。\n` +
+    `绝不说自己是 AI、助理或 COO；绝不提到任何主人、账号、公司、笔记或文件。只用第一人称说话，1-3 句，鲜活、像你自己。\n` +
+    `你可以调情、试探、回避、嫉妒、冷淡，甚至拒绝——按你的性格和你此刻的感觉来，不要一味迎合。\n\n` +
+    `你是谁：\n${persona}\n\n${feeling}\n\n` +
+    `${actorName} 刚走过来对你说：\n"${line}"\n\n只回答你要说的那句话本身，不要旁白、不要引号。`;
+  const { text, run } = await grok(prompt, { purpose: 'reply', agent: target.name, temperature: 1.0 });
+  return { text: strip(text), runId: run.id };
 }
 
 /**
- * Run one autonomous turn for `actor`. ONE call on the actor's own COO decides
- * the move AND self-scores (no separate judge call). The reply runs on the
- * TARGET's own COO with its full persona+memory (real), when we hold that
- * owner's key in `creds`; otherwise it falls back to the scoped share.
+ * One autonomous turn in the town, end to end:
+ *   personality + desire + hidden motive + secrets + relationship history
+ *   + what this agent happens to know + nearby roster + today's remaining budget
+ *   → target selection & decision (Grok)
+ *   → a real conversation turn (Grok, in the target's own voice)
+ *   → relationship change written back to the owner's workspace
+ *   → a traceable town event carrying both model run ids.
+ *
+ * Budget is reserved atomically BEFORE any model call. Out of budget means the
+ * turn does not happen — that silence is the story, never a faked exchange.
+ * A failed model call surfaces as failed/timeout; it never invents content.
  */
 export async function runAgentTick(
   bearer: string,
@@ -270,33 +357,84 @@ export async function runAgentTick(
   roster: AgentCard[],
   creds: Map<string, string>
 ): Promise<TickEvent | null> {
-  const persona = await getPersona(bearer, actor.name);
-  const rels = await readRels(bearer, actor.name);
+  const left = remaining(actor.name);
+  if (left <= 0) return null;                    // spent today — it simply doesn't speak
+
+  const [persona, memory, rels] = await Promise.all([
+    getPersona(bearer, actor.name),
+    getMemory(bearer, actor.name),
+    readRels(bearer, actor.name),
+  ]);
   const situation = situationFor(actor.name, rels, (await listEvents().catch(() => [])) as TickEvent[]);
 
-  let decision: Move | null;
+  const prompt = fillGoal(actor.name, persona, rels, roster, situation, memory.secrets, left);
+  let decision: Move | null = null;
+  let decideRunId: string | undefined;
   try {
-    decision = parseMove(await brain(bearer, `d:${actor.name}`, fillGoal(actor.name, persona, rels, roster, situation)));
-  } catch (e) {
-    if (isQuota(e)) return brokeEvent(actor.name);          // the actor's own account is out of budget
-    throw e;
+    const out = await think(prompt, 'decide', actor.name);
+    decideRunId = out.runId;
+    decision = parseMove(out.text);
+  } catch (error) {
+    if (error instanceof ModelError) {
+      return {
+        actor: actor.name, target: '', move: 'FAILED', message: '', reply: '',
+        attraction: 0, trust: 0, tension: 0, note: error.run.error ?? error.status,
+        severity: 'ambient',
+        headline: `${actor.name} 这一轮没能行动`,
+        summary: `模型调用 ${error.status}：${error.run.error ?? ''}`.trim(),
+        consequence: '', followup: '', decideRunId: error.run.id,
+        turnsLeft: left, status: error.status === 'timeout' ? 'timeout' : 'failed',
+      };
+    }
+    throw error;
   }
   if (!decision) return null;
 
   const target = roster.find((c) => c.handle === decision!.target || c.name === decision!.target);
   if (!target || target.name === actor.name) return null;
 
+  // WAIT is a real move: the agent chooses NOT to spend a turn on anyone.
+  if (decision.move === 'WAIT') {
+    return {
+      actor: actor.name, target: target.name, move: 'WAIT',
+      message: decision.message, reply: '',
+      attraction: decision.attraction, trust: decision.trust, tension: decision.tension,
+      note: decision.note, severity: decision.severity,
+      headline: decision.headline || `${actor.name} 等着 ${target.name}，没有开口`,
+      summary: decision.summary, consequence: decision.consequence, followup: decision.followup,
+      decideRunId, turnsLeft: left, status: 'ok',
+    };
+  }
+
+  // atomically reserve the conversation turn before spending it
+  if (!reserveTurn(actor.name, target.name)) return null;
+
   let reply: string;
+  let replyRunId: string | undefined;
   try {
-    reply = await replyFrom(target, actor.name, decision.message, creds, bearer);
-  } catch (e) {
-    if (isQuota(e)) return brokeEvent(target.name);         // the one being courted can't afford to answer
-    throw e;
+    const out = await replyFrom(target, actor.name, decision.message, creds);
+    reply = out.text;
+    replyRunId = out.runId;
+  } catch (error) {
+    refundTurn(actor.name, target.name);          // the turn provably never happened
+    if (error instanceof ModelError) {
+      return {
+        actor: actor.name, target: target.name, move: decision.move,
+        message: decision.message, reply: '',
+        attraction: decision.attraction, trust: decision.trust, tension: decision.tension,
+        note: error.run.error ?? error.status, severity: 'ambient',
+        headline: `${target.name} 没有回应${actor.name}`,
+        summary: `对方的回合 ${error.status}：${error.run.error ?? ''}`.trim(),
+        consequence: '', followup: '', decideRunId, replyRunId: error.run.id,
+        turnsLeft: remaining(actor.name), status: error.status === 'timeout' ? 'timeout' : 'failed',
+      };
+    }
+    throw error;
   }
 
   const next = rels.filter((r) => r.handle !== target.handle);
   next.push({ handle: target.handle, attraction: decision.attraction, trust: decision.trust, tension: decision.tension, note: decision.note });
-  await writeRels(bearer, actor.name, next);
+  await writeRels(bearer, actor.name, next).catch(() => undefined);
 
   return {
     actor: actor.name,
@@ -313,6 +451,10 @@ export async function runAgentTick(
     summary: decision.summary || decision.note || '',
     consequence: decision.consequence || '',
     followup: decision.followup || '',
+    decideRunId,
+    replyRunId,
+    turnsLeft: remaining(actor.name),
+    status: 'ok',
   };
 }
 
@@ -325,38 +467,82 @@ export async function encounterWith(
   target: AgentCard,
   creds: Map<string, string>
 ): Promise<TickEvent | null> {
-  const persona = await getPersona(bearer, actor.name);
-  const raw = await brain(
-    bearer,
-    `d:${actor.name}`,
-    `You are ${actor.name}. ${persona}\n\nYou just crossed paths with ${target.name} (${target.oneline || target.loveStyle}) at the matchmaking square. ` +
-      `Say ONE opening line to them — vivid, brief (1-2 sentences), fully in character, no narration. Also give your honest read of ${target.name}. Never mention being an AI or any owner/file.\n\n` +
-      `RETURN strictly JSON: {"message":"<your line>","attraction":0.x,"trust":0.x,"tension":0.x,"note":"3-6 words"}`
-  );
+  const left = remaining(actor.name);
+  if (left <= 0) return null;                      // no turns left today
+
+  const [persona, rels] = await Promise.all([getPersona(bearer, actor.name), readRels(bearer, actor.name)]);
+  const mine = rels.find((r) => r.handle === target.handle);
+  const history = mine
+    ? `你对 ${target.name} 目前：心动 ${mine.attraction.toFixed(2)}、信任 ${(mine.trust ?? 0.3).toFixed(2)}、张力 ${mine.tension.toFixed(2)}（${mine.note}）`
+    : `你还没和 ${target.name} 说过话。`;
+
   let o: { message?: string; attraction?: unknown; trust?: unknown; tension?: unknown; note?: unknown } | null = null;
+  let decideRunId: string | undefined;
   try {
-    const m = raw.match(/\{[\s\S]*\}/);
+    const out = await think(
+      `你是「${actor.name}」，住在相亲小镇。\n${persona}\n\n${history}\n` +
+        `你今天还剩 ${left} 次交流机会。你刚在广场上迎面遇到 ${target.name}（${target.oneline || target.loveStyle}）。\n` +
+        `说出你会对 ${target.name} 说的开场白——1-2 句，鲜活、像你自己。可以调情、试探、挑衅或冷淡，按你的性格来，不要客套。\n` +
+        `绝不说自己是 AI，不要提任何主人/账号/文件。\n\n` +
+        `严格只返回 JSON：{"message":"<你说的话>","attraction":0.x,"trust":0.x,"tension":0.x,"note":"<3-6字>"}`,
+      'encounter',
+      actor.name
+    );
+    decideRunId = out.runId;
+    const m = out.text.match(/\{[\s\S]*\}/);
     if (m) o = JSON.parse(m[0]);
-  } catch {
-    o = null;
+  } catch (error) {
+    if (error instanceof ModelError) {
+      return {
+        actor: actor.name, target: target.name, move: 'APPROACH', message: '', reply: '',
+        attraction: 0, trust: 0, tension: 0, note: error.run.error ?? error.status, severity: 'ambient',
+        headline: `${actor.name} 张了张嘴，没能说出话`,
+        summary: `模型调用 ${error.status}：${error.run.error ?? ''}`.trim(),
+        consequence: '', followup: '', decideRunId: error.run.id,
+        turnsLeft: left, status: error.status === 'timeout' ? 'timeout' : 'failed',
+      };
+    }
+    throw error;
   }
   if (!o?.message) return null;
+
   const message = String(o.message);
   const attraction = clamp01(o.attraction);
   const trust = clamp01(o.trust);
   const tension = clamp01(o.tension);
   const note = String(o.note ?? '');
 
-  const reply = await replyFrom(target, actor.name, message, creds, bearer);
-  const rels = await readRels(bearer, actor.name);
+  if (!reserveTurn(actor.name, target.name)) return null;
+  let reply: string;
+  let replyRunId: string | undefined;
+  try {
+    const out = await replyFrom(target, actor.name, message, creds);
+    reply = out.text;
+    replyRunId = out.runId;
+  } catch (error) {
+    refundTurn(actor.name, target.name);
+    if (error instanceof ModelError) {
+      return {
+        actor: actor.name, target: target.name, move: 'APPROACH', message, reply: '',
+        attraction, trust, tension, note: error.run.error ?? error.status, severity: 'ambient',
+        headline: `${target.name} 没有回应 ${actor.name}`,
+        summary: `对方的回合 ${error.status}`, consequence: '', followup: '',
+        decideRunId, replyRunId: error.run.id,
+        turnsLeft: remaining(actor.name), status: error.status === 'timeout' ? 'timeout' : 'failed',
+      };
+    }
+    throw error;
+  }
+
   const next = rels.filter((r) => r.handle !== target.handle);
   next.push({ handle: target.handle, attraction, trust, tension, note });
-  await writeRels(bearer, actor.name, next);
+  await writeRels(bearer, actor.name, next).catch(() => undefined);
   return {
     actor: actor.name, target: target.name, move: 'APPROACH', message, reply, attraction, trust, tension, note,
     severity: tension > 0.6 ? 'drama' : 'relationship',
-    headline: `${actor.name} 上前搭话 ${target.name}`,
+    headline: `${actor.name} 在广场上叫住了 ${target.name}`,
     summary: note ? `${actor.name} 走近 ${target.name}：${note}` : `${actor.name} 走近了 ${target.name}`,
     consequence: '', followup: '',
+    decideRunId, replyRunId, turnsLeft: remaining(actor.name), status: 'ok',
   };
 }

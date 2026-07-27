@@ -40,6 +40,8 @@ import {
 import { listSquare, releaseAgent, listEvents, appendEvent, type AgentCard, type LoveStyle } from './modules/dating/store.js';
 import { runAgentTick, encounterWith } from './modules/dating/engine.js';
 import { startWorldLoop } from './modules/dating/scheduler.js';
+import { recentRuns, runById } from './modules/dating/grok.js';
+import { budgetSnapshot } from './modules/dating/budget.js';
 
 // Stable API keys the world can act with (ownerSub → key), seeded from
 // DATING_WORLD_KEYS at boot. Lets a target's REAL persona answer on its own COO.
@@ -329,6 +331,25 @@ app.get('/api/dating/square', async (c) => {
     return datingError(c, error);
   }
 });
+
+// Traceability: every town event carries the model run ids that produced it.
+// These expose the run ledger and today's conversation budget behind them.
+app.get('/api/dating/runs', (c) => {
+  const id = c.req.query('id');
+  if (id) {
+    const run = runById(id);
+    return run ? c.json({ run }) : jsonError(c, 404, 'No such model run.');
+  }
+  return c.json({
+    provider: config.model.provider,
+    model: config.model.name,
+    runs: recentRuns(Number(c.req.query('limit') ?? 50)),
+  });
+});
+
+app.get('/api/dating/budget', (c) =>
+  c.json({ dailyTurnBudget: config.dailyTurnBudget, agents: budgetSnapshot() })
+);
 
 app.get('/api/dating/feed', async (c) => {
   try {

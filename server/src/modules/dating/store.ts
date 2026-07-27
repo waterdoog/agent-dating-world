@@ -121,6 +121,10 @@ export interface WorldEvent {
   summary: string;
   consequence: string;
   followup: string;
+  decideRunId?: string;   // trace: the model run that chose this move
+  replyRunId?: string;    // trace: the model run that answered
+  turnsLeft?: number;     // the actor's remaining daily conversation budget
+  status?: string;        // ok | failed | timeout | queued | no-budget
   at: number;
 }
 
