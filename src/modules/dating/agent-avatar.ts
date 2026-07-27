@@ -151,6 +151,14 @@ export function agentSprite(a: AgentAppearance, size = 96): string {
   return `<img src="${avatarUrl(a)}" width="${size}" height="${size}" class="agent-sprite" alt="" draggable="false" />`;
 }
 
+/** The 3D model that matches an agent's 2D avatar — same character, GLB form. */
+export function avatar3dUrl(a: AgentAppearance): string {
+  return avatarUrl(a)
+    .replace('/avatars/pets/', '/pets3d/')
+    .replace('/avatars/characters/', '/characters3d/')
+    .replace('.png', '.glb');
+}
+
 export function agentSpriteSvg(a: AgentAppearance, size = 96): string {
   const body = a.color;
   const top = withL(body, 0.12);

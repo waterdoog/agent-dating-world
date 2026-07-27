@@ -5,6 +5,11 @@ import react from '@vitejs/plugin-react';
 // same-origin during development.
 export default defineConfig({
   plugins: [react()],
+  // react-three-fiber has its own reconciler; a duplicate React copy breaks its
+  // hooks ("Invalid hook call"). Force a single instance across the 3D stack.
+  resolve: {
+    dedupe: ['react', 'react-dom', 'three', '@react-three/fiber'],
+  },
   server: {
     port: 3000,
     strictPort: true,

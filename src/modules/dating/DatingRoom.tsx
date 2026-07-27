@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ChevronRight, Clock3, Heart, RefreshCw, Sparkles, Users, Zap } from 'lucide-react';
 import { api, loginWithAicooUrl, type DatingLook, type DatingTickEvent, type PublicAgent } from '../../api';
 import { useAicooSession } from '../../live';
 import { WorldHeader } from '../../platform';
 import { agentSprite, type AgentAppearance } from './agent-avatar';
 import { CreateWizard } from './CreateWizard';
+
+const Plaza3D = lazy(() => import('./Plaza3D'));
 
 // ── demo cast (shown only while the real square is empty) ───────────
 const DEMO: Array<{ name: string; mbti: string; look: AgentAppearance; x: number; y: number; size: number; bubble?: { text: string; kind: 'fight' | 'love' | 'new' } }> = [
@@ -228,6 +230,7 @@ export function DatingRoom() {
   const [events, setEvents] = useState<DatingTickEvent[]>([]);
   const [justBorn, setJustBorn] = useState('');
   const [feedOpen, setFeedOpen] = useState(false);
+  const [plaza3d, setPlaza3d] = useState(true);
   const [openEvent, setOpenEvent] = useState<DatingTickEvent | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 2000); return () => window.clearInterval(t); }, []);
@@ -418,26 +421,37 @@ export function DatingRoom() {
         </aside>
 
         <section className="dt-panel dt-plaza-wrap">
-          <div className="dt-plabel"><h2>World Plaza</h2><span>{live ? '世界广场 · 真实入场的 agent' : '世界广场 · 示例(还没人放生)'}</span></div>
+          <div className="dt-plabel">
+            <h2>World Plaza</h2><span>{live ? '世界广场 · 真实入场的 agent' : '世界广场 · 示例(还没人放生)'}</span>
+            <button type="button" className="dt-view-toggle" onClick={() => setPlaza3d((v) => !v)}>{plaza3d ? '切到 2D' : '切到 3D'}</button>
+          </div>
           <div className="dt-plaza">
-            <div className="dt-path" />
-            <div className="dt-plaza-ring" />
-            <div className="dt-season" style={{ background: SEASON_TINT[clock.season] ?? 'transparent' }} />
-            <Tree x={7} y={21} /><Tree x={93} y={23} /><Tree x={92} y={83} /><Tree x={6} y={85} s={0.85} />
-            <Lamp x={31} y={31} /><Lamp x={73} y={73} />
-            <Board x={74} y={17} />
-            <Bench x={15} y={65} />
-            <div className="dt-fountain"><div className="dt-base" /><div className="dt-tier" /><div className="dt-cube">N1</div></div>
-            {frame.map((m) => (
-              <div key={m.name} className={`dt-agent dt-mover ${m.you ? 'is-you' : ''} ${m.bubble ? 'chatting' : ''}`} style={{ left: `${m.x}%`, top: `${m.y}%` }}>
-                {m.bubble && <div className={`dt-bubble ${m.bubble.kind}`}>{m.bubble.text}</div>}
-                <Sprite look={m.look} size={m.size} />
-                <div className={`dt-tag ${m.you ? 'you' : ''}`}>
-                  {m.you && <span className="dt-youflag">我的</span>}
-                  <b>{m.name}</b><small>{m.mbti}</small>
-                </div>
-              </div>
-            ))}
+            {plaza3d ? (
+              <Suspense fallback={<div className="dt-plaza-loading">加载 3D 世界…</div>}>
+                <Plaza3D movers={frame.map((m) => ({ name: m.name, look: m.look, you: m.you, x: m.x, y: m.y, bubble: m.bubble }))} />
+              </Suspense>
+            ) : (
+              <>
+                <div className="dt-path" />
+                <div className="dt-plaza-ring" />
+                <div className="dt-season" style={{ background: SEASON_TINT[clock.season] ?? 'transparent' }} />
+                <Tree x={7} y={21} /><Tree x={93} y={23} /><Tree x={92} y={83} /><Tree x={6} y={85} s={0.85} />
+                <Lamp x={31} y={31} /><Lamp x={73} y={73} />
+                <Board x={74} y={17} />
+                <Bench x={15} y={65} />
+                <div className="dt-fountain"><div className="dt-base" /><div className="dt-tier" /><div className="dt-cube">N1</div></div>
+                {frame.map((m) => (
+                  <div key={m.name} className={`dt-agent dt-mover ${m.you ? 'is-you' : ''} ${m.bubble ? 'chatting' : ''}`} style={{ left: `${m.x}%`, top: `${m.y}%` }}>
+                    {m.bubble && <div className={`dt-bubble ${m.bubble.kind}`}>{m.bubble.text}</div>}
+                    <Sprite look={m.look} size={m.size} />
+                    <div className={`dt-tag ${m.you ? 'you' : ''}`}>
+                      {m.you && <span className="dt-youflag">我的</span>}
+                      <b>{m.name}</b><small>{m.mbti}</small>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         </section>
 
