@@ -1,9 +1,11 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  AicooError,
   createShareLink,
   listFoldersByParentId,
   messageAnonymousScopedAgent,
+  parseRetryAfterMs,
   revokeShareLink,
   streamAnonymousScopedAgent,
 } from './aicoo.js';
@@ -17,6 +19,81 @@ afterEach(() => {
 
 test('Aicoo login grants identity only, never the player workspace', () => {
   assert.deepEqual(APP_SCOPES, ['openid', 'profile', 'offline_access']);
+});
+
+test('Retry-After parser accepts seconds and HTTP-date values', () => {
+  const nowMs = Date.parse('Wed, 21 Oct 2015 07:28:00 GMT');
+  assert.equal(parseRetryAfterMs('12', nowMs), 12_000);
+  assert.equal(
+    parseRetryAfterMs('Wed, 21 Oct 2015 07:28:45 GMT', nowMs),
+    45_000
+  );
+  assert.equal(parseRetryAfterMs('not-a-retry-date', nowMs), undefined);
+});
+
+test('operator JSON errors expose Aicoo Retry-After seconds', async () => {
+  globalThis.fetch = (async () =>
+    new Response('operator quota reached', {
+      status: 429,
+      headers: { 'Retry-After': '9' },
+    })) as typeof fetch;
+
+  await assert.rejects(
+    listFoldersByParentId('operator-key', 42),
+    (error: unknown) => {
+      assert.ok(error instanceof AicooError);
+      assert.equal(error.status, 429);
+      assert.equal(error.retryAfterMs, 9_000);
+      return true;
+    }
+  );
+});
+
+test('guest JSON errors expose Aicoo Retry-After HTTP dates', async () => {
+  const retryAt = new Date(Date.now() + 60_000);
+  globalThis.fetch = (async () =>
+    new Response('guest quota reached', {
+      status: 429,
+      headers: { 'Retry-After': retryAt.toUTCString() },
+    })) as typeof fetch;
+
+  await assert.rejects(
+    messageAnonymousScopedAgent({
+      token: 'fresh-encounter-token',
+      message: 'Wait for the next quota window.',
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AicooError);
+      assert.equal(error.status, 429);
+      assert.ok(
+        error.retryAfterMs !== undefined
+          && error.retryAfterMs >= 58_000
+          && error.retryAfterMs <= 60_000
+      );
+      return true;
+    }
+  );
+});
+
+test('initial stream errors expose Aicoo Retry-After metadata', async () => {
+  globalThis.fetch = (async () =>
+    new Response('stream quota reached', {
+      status: 429,
+      headers: { 'Retry-After': '3' },
+    })) as typeof fetch;
+
+  await assert.rejects(
+    streamAnonymousScopedAgent({
+      token: 'fresh-encounter-token',
+      message: 'Stream after the quota window.',
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AicooError);
+      assert.equal(error.status, 429);
+      assert.equal(error.retryAfterMs, 3_000);
+      return true;
+    }
+  );
 });
 
 test('role-folder checks can enumerate direct child folders', async () => {

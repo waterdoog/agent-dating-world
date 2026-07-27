@@ -1,4 +1,12 @@
-export type WorldRoute = 'home' | 'world' | 'fights' | 'dating' | 'profile' | 'design' | 'not-found';
+export type WorldRoute =
+  | 'home'
+  | 'world'
+  | 'fights'
+  | 'dating'
+  | 'profile'
+  | 'leaderboard'
+  | 'design'
+  | 'not-found';
 
 export function normalizePathname(pathname: string): string {
   if (!pathname || pathname === '/') return '/';
@@ -17,6 +25,8 @@ export function resolveWorldRoute(pathname: string): WorldRoute {
       return 'dating';
     case '/profile':
       return 'profile';
+    case '/leaderboard':
+      return 'leaderboard';
     case '/design':
       return 'design';
     default:

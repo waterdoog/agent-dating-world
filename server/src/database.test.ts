@@ -18,6 +18,7 @@ import {
   buildGameCreditSettlements,
   canAffordGameStake,
 } from './database/wallet.js';
+import { normalizeLeaderboardLimit } from './database/repository.js';
 
 function player(
   id: string,
@@ -42,6 +43,7 @@ function player(
     locked: true,
     phase: 'complete',
     queueOrder: null,
+    roomCode: null,
     currentGameId: 'game-1',
     capsule: {
       attackFolderId: 1,
@@ -84,6 +86,7 @@ const completedGame: MiniGame = {
   ],
   scores: { alpha: 1, bravo: 0 },
   shields: { alpha: 3, bravo: 2 },
+  roomCode: null,
   createdAt: '2026-07-24T10:00:00.000Z',
   completedAt: '2026-07-24T10:01:00.000Z',
 };
@@ -134,6 +137,16 @@ test('Agent Fights requires the full 200-credit bankroll before Ready', () => {
   assert.equal(canAffordGameStake(199, AGENT_FIGHTS_STAKE), false);
   assert.equal(canAffordGameStake(200, AGENT_FIGHTS_STAKE), true);
   assert.equal(canAffordGameStake(1000, AGENT_FIGHTS_STAKE), true);
+});
+
+test('leaderboard limits use a safe default and stay within server bounds', () => {
+  assert.equal(normalizeLeaderboardLimit(undefined), 25);
+  assert.equal(normalizeLeaderboardLimit(''), 25);
+  assert.equal(normalizeLeaderboardLimit('not-a-number'), 25);
+  assert.equal(normalizeLeaderboardLimit(-8), 1);
+  assert.equal(normalizeLeaderboardLimit(0), 1);
+  assert.equal(normalizeLeaderboardLimit(12.9), 12);
+  assert.equal(normalizeLeaderboardLimit(500), 100);
 });
 
 test('wallet settlement rejects incomplete or contradictory results', () => {

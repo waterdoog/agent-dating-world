@@ -8,6 +8,7 @@ import { config } from '../config.js';
 import {
   MINI_GAME_ROUNDS,
   MINI_GAME_VERSION,
+  ROOM_CODE_PATTERN,
   createMiniGameState,
   normalizePolicy,
   type FighterMiniGameState,
@@ -166,23 +167,28 @@ function validPendingPolicy(value: unknown, policyRevision: number): boolean {
 function validPlayer(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (
-    !exactKeys(value, [
-      'id',
-      'handle',
-      'displayName',
-      'joinedAt',
-      'draftId',
-      'attackPolicy',
-      'defensePolicy',
-      'policyRevision',
-      'pendingPolicy',
-      'secrets',
-      'locked',
-      'phase',
-      'queueOrder',
-      'currentGameId',
-      'capsule',
-    ]) ||
+    !exactKeys(
+      value,
+      [
+        'id',
+        'handle',
+        'displayName',
+        'joinedAt',
+        'draftId',
+        'attackPolicy',
+        'defensePolicy',
+        'policyRevision',
+        'pendingPolicy',
+        'secrets',
+        'locked',
+        'phase',
+        'queueOrder',
+        'roomCode',
+        'currentGameId',
+        'capsule',
+      ],
+      ['agentLanguage']
+    ) ||
     !nonEmptyString(value.id, 256) ||
     !nonEmptyString(value.handle, 256) ||
     !nonEmptyString(value.displayName, 512) ||
@@ -190,6 +196,9 @@ function validPlayer(value: unknown): boolean {
     !nonEmptyString(value.draftId, 256) ||
     !normalizedPolicy(value.attackPolicy, 'Attack policy') ||
     !normalizedPolicy(value.defensePolicy, 'Defense policy') ||
+    (Object.hasOwn(value, 'agentLanguage') &&
+      value.agentLanguage !== 'en' &&
+      value.agentLanguage !== 'zh-CN') ||
     !positiveInteger(value.policyRevision) ||
     (value.pendingPolicy !== null &&
       !validPendingPolicy(value.pendingPolicy, value.policyRevision)) ||
@@ -205,6 +214,7 @@ function validPlayer(value: unknown): boolean {
     return (
       !value.locked &&
       value.queueOrder === null &&
+      value.roomCode === null &&
       value.currentGameId === null &&
       value.capsule === null
     );
@@ -213,6 +223,9 @@ function validPlayer(value: unknown): boolean {
     return (
       value.locked &&
       positiveInteger(value.queueOrder) &&
+      (value.roomCode === null ||
+        (typeof value.roomCode === 'string' &&
+          ROOM_CODE_PATTERN.test(value.roomCode))) &&
       value.currentGameId === null &&
       validCapsule(value.capsule)
     );
@@ -220,6 +233,7 @@ function validPlayer(value: unknown): boolean {
   return (
     value.locked &&
     value.queueOrder === null &&
+    value.roomCode === null &&
     nonEmptyString(value.currentGameId, 256) &&
     validCapsule(value.capsule)
   );
@@ -314,6 +328,7 @@ function validGame(value: unknown): boolean {
         'captures',
         'scores',
         'shields',
+        'roomCode',
         'createdAt',
       ],
       ['completedAt']
@@ -329,6 +344,10 @@ function validGame(value: unknown): boolean {
     value.round > value.maxRounds ||
     !Array.isArray(value.messages) ||
     !Array.isArray(value.captures) ||
+    !(
+      value.roomCode === null ||
+      (typeof value.roomCode === 'string' && ROOM_CODE_PATTERN.test(value.roomCode))
+    ) ||
     !isoTimestamp(value.createdAt)
   ) {
     return false;
@@ -387,6 +406,31 @@ function upgradeLegacyPolicyState(value: unknown): unknown {
   });
 
   return upgraded ? { ...value, players } : value;
+}
+
+function upgradeLegacyRoomCodeState(value: unknown): unknown {
+  if (
+    !isRecord(value) ||
+    value.version !== 2 ||
+    !Array.isArray(value.players) ||
+    !Array.isArray(value.games)
+  ) {
+    return value;
+  }
+  return {
+    ...value,
+    version: MINI_GAME_VERSION,
+    players: value.players.map((player) =>
+      isRecord(player) && !Object.hasOwn(player, 'roomCode')
+        ? { ...player, roomCode: null }
+        : player
+    ),
+    games: value.games.map((game) =>
+      isRecord(game) && !Object.hasOwn(game, 'roomCode')
+        ? { ...game, roomCode: null }
+        : game
+    ),
+  };
 }
 
 function upgradeLegacyActiveGameRounds(value: unknown): unknown {
@@ -456,6 +500,20 @@ function assertValidWorldState(value: unknown): asserts value is FighterMiniGame
   if (
     new Set(queueOrders).size !== queueOrders.length ||
     queueOrders.some((order) => order >= nextQueueOrder)
+  ) {
+    failIntegrity();
+  }
+  const waitingRoomCodes = players
+    .filter((player) => player.phase === 'waiting')
+    .map((player) => player.roomCode)
+    .filter((roomCode): roomCode is string => roomCode !== null);
+  const gameRoomCodes = games
+    .map((game) => game.roomCode)
+    .filter((roomCode): roomCode is string => roomCode !== null);
+  if (
+    new Set(waitingRoomCodes).size !== waitingRoomCodes.length ||
+    new Set(gameRoomCodes).size !== gameRoomCodes.length ||
+    waitingRoomCodes.some((roomCode) => gameRoomCodes.includes(roomCode))
   ) {
     failIntegrity();
   }
@@ -529,7 +587,7 @@ export function openWorldState(
     ]);
     const parsed: unknown = JSON.parse(plaintext.toString('utf8'));
     const value = upgradeLegacyActiveGameRounds(
-      upgradeLegacyPolicyState(parsed)
+      upgradeLegacyPolicyState(upgradeLegacyRoomCodeState(parsed))
     );
     assertValidWorldState(value);
     return value;

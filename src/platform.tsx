@@ -12,6 +12,7 @@ import {
   Mic2,
   Sparkles,
   Swords,
+  Trophy,
 } from 'lucide-react';
 import { loginWithAicooUrl, type Me } from './api';
 import { SessionChip, useAicooSession } from './session';
@@ -117,6 +118,19 @@ export function WorldHeader({
       <WorldBrand section={section} />
       <div className="world-header-actions">
         {utility}
+        {me?.signedIn ? (
+          <a
+            className="header-leaderboard"
+            href="/leaderboard"
+            aria-current={window.location.pathname.replace(/\/+$/, '') === '/leaderboard'
+              ? 'page'
+              : undefined}
+            aria-label="Open N1 Credits leaderboard"
+          >
+            <Trophy size={16} aria-hidden="true" />
+            <span>Leaderboard</span>
+          </a>
+        ) : null}
         {me !== undefined && <SessionControl me={me} returnTo={returnTo} />}
       </div>
     </header>

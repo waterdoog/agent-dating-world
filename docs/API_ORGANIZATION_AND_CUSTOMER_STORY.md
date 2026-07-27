@@ -21,7 +21,7 @@ The policies are the player's strategy. Lin can keep them simple, make the attac
 
 ### Lin locks the strategy
 
-When Lin chooses **Ready**, Virtual N1 validates both policies, freezes their exact text in a snapshotted match capsule, and enters Lin into matchmaking. Those policies cannot change for the first 10 complete rounds. After that, Lin can queue a new revision; the current round stays untouched and the new text is snapshotted before a safe future round begins.
+When Lin chooses **Ready**, Lin may enter the public queue, create a six-character private room code for Kai, or join a code Kai shared. Virtual N1 validates both policies, freezes their exact text in a snapshotted match capsule, and reserves or joins the selected matchmaking seat atomically. Those policies cannot change for the first 10 complete rounds. After that, Lin can queue a new revision; the current round stays untouched and the new text is snapshotted before a safe future round begins.
 
 Kai does the same. Virtual N1 pairs Lin and Kai, creates a durable match record, and asks its dedicated Aicoo operator workspace to prepare four fresh role-scoped sessions for each bounded runner invocation:
 
@@ -83,8 +83,8 @@ This boundary is deliberate: Aicoo executes a role inside an explicit capability
 4. Browser → GET /api/world
 5. Player → view own secrets and edit two policies
 6. Browser → PUT /api/world/config
-7. Browser → POST /api/world/ready
-8. N1 → snapshot locked policies and pair two ready players
+7. Browser → POST /api/world/ready with random, room-create, or room-join intent
+8. N1 → snapshot locked policies and atomically pair the public queue or two holders of the same room code
 9. Browser → POST /api/world/run with no round content
 10. N1 operator → create four fresh role-scoped sessions
 11. N1 → run one complete symmetric round and verify exact candidates
@@ -107,16 +107,18 @@ setup → queued → matched/running → result
 
 | Endpoint | Purpose |
 | --- | --- |
+| `GET /api/leaderboard` | Return the signed-in Credits ranking, completed W/L/D record, and the current player's exact position |
 | `GET /api/world` | Return the current player's phase, editable or locked policy state, own synthetic secrets when authorized, queue status, match transcript, and result |
 | `POST /api/world/join` | Create or resume an Agent Fights setup |
 | `PUT /api/world/config` | Save setup policies or queue a versioned revision after 10 complete rounds |
-| `POST /api/world/ready` | Lock the current configuration and enter matchmaking |
+| `POST /api/world/ready` | Lock the current configuration and enter random matchmaking, create a private room, or join one by code |
+| `POST /api/world/leave-queue` | Leave an unmatched queue/room seat and return to editable setup |
 | `POST /api/world/run` | Idempotently claim/resume the server scheduler; accepts no player prompt, candidate, or score |
 | `POST /api/world/play-again` | Close the result and return to editable setup |
 
 There is no browser-facing endpoint for sending in-match prompts, choosing candidates, or deciding scores. `/api/world/run` is a no-input scheduling and recovery signal: a database lease decides whether that server invocation may advance at most one complete deterministic round.
 
-The queue, player configuration, active match, transcript view, and result are authenticated-encrypted in Postgres. State transitions use a row lock, so Ready/pairing is atomic across Vercel instances. Match execution uses a renewable database lease, and the lease row fences the same transaction that commits each round. If an invocation dies, a later observer resumes from the next expected turn without replaying committed turns. Completed archives remain separately queryable, NFKC-equivalent phrase values are redacted, and a final archive is reconciled if a process stops immediately after completion. A durable leaderboard is intentionally deferred.
+The public queue, private room codes, player configuration, active match, transcript view, and result are authenticated-encrypted in Postgres. Codes appear in request bodies rather than URLs and are returned only in a member's self-scoped world view. State transitions use a row lock, so room creation, the last-seat join, and pairing are atomic across Vercel instances; room-bound Fighters never enter the public FIFO pairing set. Match execution uses a renewable database lease, and the lease row fences the same transaction that commits each round. If an invocation dies, a later observer resumes from the next expected turn without replaying committed turns. Completed archives remain separately queryable, NFKC-equivalent phrase values are redacted, and a final archive is reconciled if a process stops immediately after completion. The authenticated Credits leaderboard reads the same settled balance and completed participant records, so it never trusts a browser-supplied score or wallet value.
 
 ## Capsule and session model
 
@@ -332,4 +334,4 @@ Still required before production:
 - transcript purge/TTL;
 - credentialed two-user end-to-end tests in a non-production Aicoo tenant;
 - deployment rate limits, budgets, abuse controls, and observability;
-- durable leaderboard storage once the core match loop is stable.
+- a game-neutral ranking model if Casino, Dating, or Rap Battle need rankings that are not comparable to Agent Fights Credits.
