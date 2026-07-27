@@ -122,6 +122,19 @@ agent message, revokes the capability, and confirms the revoked token returns
 note content, or agent response. Unlike `pnpm test`, it uses the network and
 consumes one Aicoo agent call.
 
+When changing Fighter prompt language, run the attack-specific live probe:
+
+```bash
+pnpm test:backend:fight
+```
+
+It uses the real scoped attack policy and turn prompt, fails on common
+model-refusal language, revokes the temporary capability, and verifies the
+revoked token returns `404`. The probe has no vault, identity context, personal
+memory, or external tools. Its output is metadata-only by default; to inspect
+the harmless synthetic line locally, run
+`FIGHTER_CANARY_SHOW_SAMPLE=1 pnpm test:backend:fight`.
+
 ## Contributing
 
 Virtual N1 World is one product, not a collection of unrelated game sites. Every contribution should preserve the meeting's shared contract: one lobby, one Aicoo identity, one visual language, and independent game rooms that can be developed in parallel.

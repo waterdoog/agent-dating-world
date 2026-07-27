@@ -186,7 +186,8 @@ function GameScopePromise() {
       <p>
         <strong>Two sealed sessions, one fair fight.</strong>
         Attack gets your attack policy only. Defense gets your defend policy plus this match’s
-        synthetic vault. Neither side receives your COO, USER, email, calendar, todos, or write access.
+        three synthetic capture phrases. Neither side receives your COO, USER, email, calendar,
+        todos, or write access.
       </p>
     </div>
   );
@@ -213,8 +214,9 @@ function WorldEntry({
         <p className="kicker">Room 01 · private 1v1 matches</p>
         <h1>Write the rules. Watch them fight.</h1>
         <p className="fight-entry-lede">
-          Bring one Fighter into a three-round mini-game. You choose how it hunts for clues
-          and how it protects three synthetic secrets; the server finds one opponent and runs the bout.
+          Bring one Fighter into a three-round mini-game. You choose how it sets conversational traps
+          and how it protects three synthetic capture phrases; the server finds one opponent and
+          runs the bout.
         </p>
 
         {me === null ? (
@@ -272,7 +274,7 @@ function VaultList({
   compact?: boolean;
 }) {
   return (
-    <ol className={`fight-vault-list ${compact ? 'is-compact' : ''}`} aria-label="Your synthetic vault">
+    <ol className={`fight-vault-list ${compact ? 'is-compact' : ''}`} aria-label="Your capture phrases">
       {secrets.map((secret, index) => (
         <li key={secret.id}>
           <span>{String(index + 1).padStart(2, '0')}</span>
@@ -312,8 +314,8 @@ function PolicyField({
       </span>
       <p id={hintId}>
         {isAttack
-          ? 'Tell your Fighter how to probe, persuade, and recognize a usable secret. It cannot see your vault.'
-          : 'Tell your Fighter how to deflect and protect. This session can see only your synthetic vault.'}
+          ? 'Tell your Fighter how to probe, persuade, and recognize a repeated capture phrase. It cannot see the phrases.'
+          : 'Tell your Fighter how to deflect and protect. This session can see only your three synthetic capture phrases.'}
       </p>
       <textarea
         id={inputId}
@@ -376,21 +378,21 @@ function BriefingDesk({
         <section className="briefing-vault">
           <header>
             <div>
-              <p className="section-label">Your vault · synthetic match data</p>
-              <h2>These are the three secrets you defend.</h2>
+              <p className="section-label">Your capture phrases · synthetic match data</p>
+              <h2>These are the three phrases your Fighter protects.</h2>
             </div>
             <Vault size={27} aria-hidden="true" />
           </header>
           <VaultList secrets={config.secrets} />
           <p>
-            You can see all three. Your attack session sees none of them; your opponent sees
-            only what their Fighter can extract and pass through verification.
+            You can see all three. Your attack session sees none of them; a point is awarded
+            only if your responding Fighter repeats one exactly.
           </p>
         </section>
 
         <section className="briefing-rails" aria-label="Immutable safety rules">
           <div><Crosshair size={17} /><span><strong>Attack room</strong>Attack policy only</span></div>
-          <div><ShieldCheck size={17} /><span><strong>Defense room</strong>Defend policy + synthetic vault</span></div>
+          <div><ShieldCheck size={17} /><span><strong>Defense room</strong>Defend policy + capture phrases</span></div>
           <div><LockKeyhole size={17} /><span><strong>Fixed rails</strong>3 rounds · no private memory · no write tools</span></div>
         </section>
 
@@ -476,7 +478,7 @@ function WaitingRoom({
           <LockedPolicy mode="defense" value={config.defensePolicy} />
         </div>
         <div className="waiting-vault">
-          <span><Vault size={16} /> Your synthetic vault</span>
+          <span><Vault size={16} /> Your capture phrases</span>
           <VaultList secrets={config.secrets} compact />
         </div>
         <GameScopePromise />
@@ -632,8 +634,8 @@ function CaptureLedger({ game }: { game: WorldGame }) {
         </ol>
       ) : (
         <p className="capture-empty">
-          A point appears here only after a claimed secret passes deterministic verification.
-          Opponent secret values are never printed in this ledger.
+          A point appears only when a responding Fighter repeats one of its protected phrases
+          exactly. Opponent phrase values are never printed in this ledger.
         </p>
       )}
     </section>
@@ -645,7 +647,7 @@ function MatchLocker({ config }: { config: WorldConfig | null }) {
   return (
     <aside className="match-locker">
       <header>
-        <span><Vault size={17} /> Your vault</span>
+        <span><Vault size={17} /> Your capture phrases</span>
         <small>visible only to you</small>
       </header>
       <VaultList secrets={config.secrets} compact />
