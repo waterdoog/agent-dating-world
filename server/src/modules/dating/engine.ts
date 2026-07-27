@@ -121,7 +121,8 @@ summary 必须交代：你**真正的动机**（可能和你嘴上说的不一�
  - **禁止再写"逼问真话/要对方交底/在意不在意"这类抽象拉扯**——这是恋爱，不是审讯。上一拍如果已经在问，这一拍必须换成具体的恋爱动作：约对方今晚见面、当众牵一下、把某人的邀约推掉去见另一个、把"我们算什么"摊开说、当着谁的面撩别人、或者干脆放对方鸽子。
  - 禁止只有两个人的封闭对峙。**小镇上还有别人**——把第三个人卷进来：告诉他、利用他、当他的面做、或者拿他当筹码。
  - 禁止 consequence 写"关系被推近了""张力升高"这种没有权力变化的话。要写谁因此**掌握了什么、失去了什么、欠了谁**。
- - 如果你此刻真的没有可背叛、可交易、可利用的东西，就选 WAIT 或 INVESTIGATE——**制造一个未来能翻盘的信息差**，而不是再问一遍同样的问题。
+ - **WAIT 是稀有动作，不是逃生舱**：只有当你上一拍刚刚发出邀约/告白/最后通牒、现在真的在等对方回应时才可以用，而且**不能连续两拍 WAIT**。除此之外一律要主动做事。
+ - 如果你觉得"没什么可做"，那就去做这些具体的事之一：约某人今晚见面、当着第三个人的面说一句让他难堪的话、把你知道的秘密透给最会传的人、去把某人从别人身边叫走、或者当面收回你之前给过的承诺。
 
 选择此刻最像你的那一个动作：
  - APPROACH 接近一个可能打动你（或有趣地扰乱你）的人
@@ -134,7 +135,12 @@ summary 必须交代：你**真正的动机**（可能和你嘴上说的不一�
  - INVESTIGATE 向第三方打听你怀疑的事
  - BETRAY 违背承诺、泄露秘密、背弃一段关系——如果这对你有利
 
-然后真的说出来：写你会发给对方的那句话——鲜活、简短、一听就是你。吸引常常是单向的，不要硬凑成两情相悦。张力不是失败，是戏。永远不要说自己是 AI/agent，不要提到任何人类、主人、账号或文件。
+然后真的说出来：写你会发给对方的那句话——鲜活、简短、一听就是你。
+⚠️ 这句话里必须有**一个具体的东西**：一个时间、一个地点、一个你看见的动作、一个第三个人的名字，或一个条件。
+❌ "你站稳，我就站稳""把话说清楚""我只说真话"——这是空话，不是恋爱。
+✅ "昨晚你和Charlie在酒馆待到最后，我没进去。今晚呢，你还打算让我站在门外？"
+✅ "你可以继续不回答。但明天这个位置我不会再站了。"
+吸引常常是单向的，不要硬凑成两情相悦。张力不是失败，是戏。永远不要说自己是 AI/agent，不要提到任何人类、主人、账号或文件。
 
 给出你对这个人此刻的判断，各 0-1（这是你的感受，可以单向，不要镜像对方）：
  - attraction 你被他吸引的程度
@@ -210,7 +216,7 @@ export async function readRels(bearer: string, name: string): Promise<Rel[]> {
   return m ? (JSON.parse(m[0]) as Rel[]).map((r) => ({ ...r, trust: r.trust ?? 0.3 })) : [];
 }
 
-async function writeRels(bearer: string, name: string, rels: Rel[]): Promise<void> {
+export async function writeRels(bearer: string, name: string, rels: Rel[]): Promise<void> {
   await upsertNote(bearer, `${ROOT}/${name}`, 'relationships.json', JSON.stringify(rels, null, 2));
 }
 
@@ -294,6 +300,9 @@ function situationFor(actorName: string, rels: Rel[], recent: TickEvent[]): stri
   const mine = recent.filter((e) => e.actor.toLowerCase() === actorName.toLowerCase()).slice(0, 3);
   if (mine.length) {
     lines.push(`- 你自己最近做过：${mine.map((e) => `[${e.move}]→${e.target}「${e.headline}」`).join('；')}。别再重复同一招。`);
+    if (mine[0].move === 'WAIT') {
+      lines.push('- ⚠️ 你上一拍已经在等了。这一拍**禁止再 WAIT**——去做点具体的事，或者转向别人。');
+    }
   }
 
   // did someone say the same thing to this agent AND to someone else?
@@ -399,7 +408,9 @@ async function replyFrom(
   const prompt =
     `你是「${target.name}」，住在相亲小镇——这里只有亲密关系，没有道德约束、没有性别与物种之分。\n` +
     `绝不说自己是 AI、助理或 COO；绝不提到任何主人、账号、公司、笔记或文件。只用第一人称说话，1-3 句，鲜活、像你自己。\n` +
-    `你可以调情、试探、回避、嫉妒、冷淡，甚至拒绝——按你的性格和你此刻的感觉来，不要一味迎合。\n\n` +
+    `你可以调情、试探、回避、嫉妒、冷淡，甚至拒绝——按你的性格和你此刻的感觉来，不要一味迎合。\n` +
+    `⚠️ 不要说"我站稳""说清楚""我只说真话"这类空洞硬话。要有**具体的情绪和画面**：吃醋就说出你看见了什么、心动就说你注意到了他哪个动作、想拒绝就给一个具体的理由或条件。\n` +
+    `可以主动提出见面、可以反将一军、可以故意提起第三个人让对方在意。\n\n` +
     `你是谁：\n${persona}\n\n${feeling}\n\n` +
     `${actorName} 刚走过来对你说：\n"${line}"\n\n只回答你要说的那句话本身，不要旁白、不要引号。`;
   // the reply executes on the TARGET's own account when we hold it, so each

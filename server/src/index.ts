@@ -50,14 +50,14 @@ import {
   type FighterRuntimeEvent,
 } from './fighter-world.js';
 import { listSquare, releaseAgent, listEvents, appendEvent, type AgentCard, type LoveStyle } from './modules/dating/store.js';
-import { runAgentTick, encounterWith, readRels, type TickEvent } from './modules/dating/engine.js';
+import { runAgentTick, encounterWith, readRels, writeRels, type TickEvent } from './modules/dating/engine.js';
 import { startWorldLoop } from './modules/dating/scheduler.js';
 import { recentRuns, runById } from './modules/dating/grok.js';
 import { budgetSnapshot } from './modules/dating/budget.js';
-import { listThreads, currentDigest, summariseWorld } from './modules/dating/threads.js';
+import { listThreads, currentDigest, summariseWorld, recordKnowledge } from './modules/dating/threads.js';
 import { writeYearbook, listYearbooks, yearbookFor } from './modules/dating/yearbook.js';
 import { recordEvent } from './modules/dating/records.js';
-import { NPCS, CRIMES, wantedLevel, commitCrime, clearWanted, wantedBoard, balance, spend } from './modules/dating/town-life.js';
+import { NPCS, CRIMES, wantedLevel, commitCrime, clearWanted, wantedBoard, balance, spend, falloutOf } from './modules/dating/town-life.js';
 
 // Stable API keys the world can act with (ownerSub → key), seeded from
 // DATING_WORLD_KEYS at boot. Lets a target's REAL persona answer on its own COO.
@@ -527,9 +527,48 @@ app.post('/api/dating/town/crime', async (c) => {
   const roster = await listSquare().catch(() => [] as AgentCard[]);
   const mine = roster.find((r) => r.ownerSub === auth.session.sub);
   if (!mine) return jsonError(c, 404, 'Release an agent first.');
-  const done = commitCrime(mine.name, String(body.crime ?? ''), String(body.detail ?? ''));
+  const crimeId = String(body.crime ?? '');
+  const victimName = String(body.victim ?? '');
+  const done = commitCrime(mine.name, crimeId, victimName || String(body.detail ?? ''));
   if (!done) return jsonError(c, 400, 'No such crime.');
-  return c.json({ ok: true, ...done });
+
+  // A crime is only interesting if it lands on someone's feelings: apply the
+  // fallout to the VICTIM's own relationship record, and let the town hear it.
+  let fallout = null;
+  const victim = roster.find((r) => r.name.toLowerCase() === victimName.toLowerCase());
+  if (victim) {
+    const f = falloutOf(crimeId, mine.name, victim.name);
+    const victimKey = worldCreds.get(victim.ownerSub);
+    if (f && victimKey) {
+      const rels = await readRels(victimKey, victim.name).catch(() => []);
+      const cur = rels.find((r) => r.handle.toLowerCase() === mine.name.toLowerCase());
+      const next = rels.filter((r) => r.handle.toLowerCase() !== mine.name.toLowerCase());
+      next.push({
+        handle: mine.handle,
+        attraction: Math.max(0, Math.min(1, (cur?.attraction ?? 0.3) + f.attractionDelta)),
+        trust: Math.max(0, Math.min(1, (cur?.trust ?? 0.3) + f.trustDelta)),
+        tension: Math.max(0, Math.min(1, (cur?.tension ?? 0.2) + f.tensionDelta)),
+        note: f.rumour.slice(0, 60),
+      });
+      await writeRels(victimKey, victim.name, next).catch(() => undefined);
+      // the town remembers, and the victim now KNOWS
+      recordKnowledge({ holder: victim.name, about: mine.name, fact: f.rumour, source: '小镇上传开的' });
+      const ev = {
+        actor: mine.name, target: victim.name, move: 'CRIME', message: '', reply: '',
+        attraction: 0, trust: 0, tension: 0, note: done.label,
+        severity: 'drama' as const,
+        headline: f.rumour,
+        summary: `${mine.name} ${done.label}。${victim.name} 现在知道了，信任 ${f.trustDelta.toFixed(2)}、张力 +${f.tensionDelta.toFixed(2)}。`,
+        consequence: 'a crime lands on someone who can feel it',
+        followup: `${victim.name} 会当面质问，还是先按住不说？`,
+        status: 'ok' as const,
+      };
+      await appendEvent(ev).catch(() => undefined);
+      void recordEvent(ev as never);
+      fallout = f;
+    }
+  }
+  return c.json({ ok: true, ...done, fallout });
 });
 
 app.get('/api/dating/threads', (c) =>

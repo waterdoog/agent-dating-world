@@ -110,6 +110,36 @@ export function clearWanted(agent: string): void {
   wanted.delete(agent.toLowerCase());
 }
 
+/**
+ * What a crime costs socially. A crime is only interesting if it lands on
+ * someone's feelings, so each one carries a relationship delta against the
+ * victim, plus the rumour the town will hear about it.
+ */
+export interface CrimeFallout {
+  victim: string;
+  trustDelta: number;
+  tensionDelta: number;
+  attractionDelta: number;
+  rumour: string;
+}
+const CRIME_FALLOUT: Record<string, (actor: string, victim: string) => CrimeFallout> = {
+  'steal-letter': (a, v) => ({ victim: v, trustDelta: -0.35, tensionDelta: +0.25, attractionDelta: 0,
+    rumour: `${a} 拿走了写给 ${v} 的那封信` }),
+  'stage-scene': (a, v) => ({ victim: v, trustDelta: -0.25, tensionDelta: +0.35, attractionDelta: -0.05,
+    rumour: `${a} 故意让 ${v} 撞见了不该看见的一幕` }),
+  'bribe-vendor': (a, v) => ({ victim: v, trustDelta: -0.2, tensionDelta: +0.15, attractionDelta: 0,
+    rumour: `${a} 花钱买了 ${v} 的行踪` }),
+  'spread-lie': (a, v) => ({ victim: v, trustDelta: -0.45, tensionDelta: +0.3, attractionDelta: -0.1,
+    rumour: `${a} 让整个小镇相信了一件关于 ${v} 的假事` }),
+  'break-in': (a, v) => ({ victim: v, trustDelta: -0.3, tensionDelta: +0.4, attractionDelta: 0,
+    rumour: `${a} 闯进了 ${v} 的私下见面` }),
+};
+
+export function falloutOf(crimeId: string, actor: string, victim: string): CrimeFallout | null {
+  const f = CRIME_FALLOUT[crimeId];
+  return f ? f(actor, victim) : null;
+}
+
 export function wantedBoard(): Array<{ agent: string; level: number; reasons: string[] }> {
   return [...wanted.keys()]
     .map((k) => ({ agent: k, level: wantedLevel(k), reasons: wanted.get(k)?.reasons ?? [] }))
