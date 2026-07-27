@@ -57,6 +57,7 @@ import { budgetSnapshot } from './modules/dating/budget.js';
 import { listThreads, currentDigest, summariseWorld } from './modules/dating/threads.js';
 import { writeYearbook, listYearbooks, yearbookFor } from './modules/dating/yearbook.js';
 import { recordEvent } from './modules/dating/records.js';
+import { NPCS, CRIMES, wantedLevel, commitCrime, clearWanted, wantedBoard, balance, spend } from './modules/dating/town-life.js';
 
 // Stable API keys the world can act with (ownerSub → key), seeded from
 // DATING_WORLD_KEYS at boot. Lets a target's REAL persona answer on its own COO.
@@ -487,6 +488,48 @@ app.get('/api/dating/yearbooks', (c) => {
     return book ? c.json({ yearbook: book }) : jsonError(c, 404, 'No yearbook for that agent and year.');
   }
   return c.json({ yearbooks: listYearbooks(Number(c.req.query('limit') ?? 20)) });
+});
+
+// ─── town life: NPCs, crime, wanted level, pocket money ───────────
+app.get('/api/dating/town', async (c) => {
+  const auth = await resolveBearer(c);
+  const roster = await listSquare().catch(() => [] as AgentCard[]);
+  const mine = auth ? roster.find((r) => r.ownerSub === auth.session.sub) : undefined;
+  return c.json({
+    npcs: NPCS,
+    crimes: Object.entries(CRIMES).map(([id, v]) => ({ id, ...v })),
+    wanted: wantedBoard(),
+    me: mine ? { name: mine.name, cash: balance(mine.name), wanted: wantedLevel(mine.name) } : null,
+  });
+});
+
+app.post('/api/dating/town/deal', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  const body = await c.req.json().catch(() => ({}));
+  const npc = NPCS.find((n) => n.id === body.npc);
+  const offer = npc?.offers.find((o) => o.id === body.offer);
+  if (!npc || !offer) return jsonError(c, 404, 'No such offer.');
+  const roster = await listSquare().catch(() => [] as AgentCard[]);
+  const mine = roster.find((r) => r.ownerSub === auth.session.sub);
+  if (!mine) return jsonError(c, 404, 'Release an agent first.');
+  if (offer.cost > 0 && !spend(mine.name, offer.cost)) {
+    return jsonError(c, 402, `不够钱：还差 ${offer.cost - balance(mine.name)}。`);
+  }
+  if (npc.id === 'cop' && offer.id === 'pay-fine') clearWanted(mine.name);
+  return c.json({ ok: true, npc: npc.name, offer: offer.label, effect: offer.effect, cash: balance(mine.name), wanted: wantedLevel(mine.name) });
+});
+
+app.post('/api/dating/town/crime', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  const body = await c.req.json().catch(() => ({}));
+  const roster = await listSquare().catch(() => [] as AgentCard[]);
+  const mine = roster.find((r) => r.ownerSub === auth.session.sub);
+  if (!mine) return jsonError(c, 404, 'Release an agent first.');
+  const done = commitCrime(mine.name, String(body.crime ?? ''), String(body.detail ?? ''));
+  if (!done) return jsonError(c, 400, 'No such crime.');
+  return c.json({ ok: true, ...done });
 });
 
 app.get('/api/dating/threads', (c) =>

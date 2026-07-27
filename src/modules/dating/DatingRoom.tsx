@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ChevronRight, Clock3, Heart, RefreshCw, Sparkles, Users, Zap } from 'lucide-react';
-import { api, loginWithAicooUrl, type DatingLook, type DatingTickEvent, type PublicAgent, type StoryThreadInfo, type WorldDigestInfo, type YearbookInfo } from '../../api';
+import { api, loginWithAicooUrl, type DatingLook, type DatingTickEvent, type PublicAgent, type StoryThreadInfo, type WorldDigestInfo, type YearbookInfo, type TownInfo } from '../../api';
 import { useAicooSession } from '../../session';
 import { WorldHeader } from '../../platform';
 import { agentSprite, type AgentAppearance } from './agent-avatar';
@@ -222,6 +222,12 @@ export function DatingRoom() {
   const [books, setBooks] = useState<YearbookInfo[]>([]);
   const [openThread, setOpenThread] = useState<StoryThreadInfo | null>(null);
   const [openBook, setOpenBook] = useState<YearbookInfo | null>(null);
+  // ── playable mode: walk your own agent around the town ──
+  const [inWorld, setInWorld] = useState(false);
+  const [town, setTown] = useState<TownInfo | null>(null);
+  const [openNpc, setOpenNpc] = useState<string | null>(null);
+  const [townNote, setTownNote] = useState('');
+  const keys = useRef<Set<string>>(new Set());
   const [openEvent, setOpenEvent] = useState<DatingTickEvent | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 2000); return () => window.clearInterval(t); }, []);
@@ -243,6 +249,62 @@ export function DatingRoom() {
     const id = window.setInterval(load, 6000);
     return () => { alive = false; window.clearInterval(id); };
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => api.dating.town().then((t) => { if (alive) setTown(t); }).catch(() => undefined);
+    load();
+    const id = window.setInterval(load, 15000);
+    return () => { alive = false; window.clearInterval(id); };
+  }, []);
+
+  // WASD / arrows drive YOUR agent while you're inside the world
+  useEffect(() => {
+    if (!inWorld) return;
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setInWorld(false); setOpenNpc(null); return; }
+      keys.current.add(e.key.toLowerCase()); if (['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())) e.preventDefault(); };
+    const up = (e: KeyboardEvent) => keys.current.delete(e.key.toLowerCase());
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    const id = window.setInterval(() => {
+      const me = simRef.current.find((m) => m.you);
+      if (!me) return;
+      const k = keys.current;
+      let dx = 0, dy = 0;
+      if (k.has('w') || k.has('arrowup')) dy -= 1;
+      if (k.has('s') || k.has('arrowdown')) dy += 1;
+      if (k.has('a') || k.has('arrowleft')) dx -= 1;
+      if (k.has('d') || k.has('arrowright')) dx += 1;
+      if (!dx && !dy) return;
+      const d = Math.hypot(dx, dy) || 1;
+      me.vx = (dx / d) * 0.9;
+      me.vy = (dy / d) * 0.9;
+      me.tx = me.x + me.vx * 4;    // steer toward where you're pushing
+      me.ty = me.y + me.vy * 4;
+      me.pauseUntil = 0;
+    }, 60);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.clearInterval(id); };
+  }, [inWorld]);
+
+  async function dealWith(npcId: string, offerId: string) {
+    try {
+      const r = await api.dating.deal(npcId, offerId);
+      setTownNote(`${r.npc} · ${r.offer} — ${r.effect}（余额 ${r.cash}）`);
+      api.dating.town().then(setTown).catch(() => undefined);
+    } catch (e) {
+      setTownNote(e instanceof Error ? e.message : '交易失败');
+    }
+  }
+  async function doCrime(crimeId: string) {
+    try {
+      const r = await api.dating.crime(crimeId);
+      setTownNote(`你${r.label}了 — 通缉度 ${r.level}`);
+      api.dating.town().then(setTown).catch(() => undefined);
+    } catch (e) {
+      setTownNote(e instanceof Error ? e.message : '没做成');
+    }
+  }
 
   // story threads, the town digest, and yearbooks — all model-written from real beats
   useEffect(() => {
@@ -425,11 +487,24 @@ export function DatingRoom() {
 
         <section className="dt-panel dt-plaza-wrap">
           <div className="dt-plabel">
-            <h2>World Plaza</h2><span>{live ? '世界广场 · 拖动可环视' : '世界广场 · 示例(还没人放生)'}</span>
+            <h2>World Plaza</h2>
+            <span>{inWorld ? 'WASD 移动 · 点 NPC 交互 · Esc 离开' : live ? '世界广场 · 拖动可环视' : '世界广场 · 示例(还没人放生)'}</span>
           </div>
+          {mine && (
+            <button type="button" className="dt-enter-world" onClick={() => { setInWorld((v) => !v); setOpenNpc(null); }}>
+              {inWorld ? '离开世界' : '进入世界'}
+            </button>
+          )}
+          {inWorld && town?.me && (
+            <div className="dt-hud">
+              <span>💰 {town.me.cash}</span>
+              <span className={town.me.wanted > 0 ? 'hot' : ''}>{'★'.repeat(Math.max(0, town.me.wanted)) || '无通缉'}</span>
+              {townNote && <em>{townNote}</em>}
+            </div>
+          )}
           <div className="dt-plaza">
             <Suspense fallback={<div className="dt-plaza-loading">加载 3D 世界…</div>}>
-              <Plaza3D agents={frame.map((m) => ({ name: m.name, look: m.look, you: m.you, x: m.x, y: m.y, partner: m.partner, bubble: m.bubble }))} posRef={simRef} />
+              <Plaza3D agents={frame.map((m) => ({ name: m.name, look: m.look, you: m.you, x: m.x, y: m.y, partner: m.partner, bubble: m.bubble }))} posRef={simRef} npcs={inWorld ? (town?.npcs ?? []) : (town?.npcs ?? [])} onNpc={(id) => setOpenNpc(id)} follow={inWorld ? mine?.name : undefined} />
             </Suspense>
           </div>
         </section>
@@ -600,6 +675,51 @@ export function DatingRoom() {
       </main>
 
       {wizard && <CreateWizard onClose={() => setWizard(false)} onReleased={onReleased} />}
+
+      {openNpc && town && (() => {
+        const npc = town.npcs.find((n) => n.id === openNpc);
+        if (!npc) return null;
+        return (
+          <div className="dt-drawer-scrim" onClick={() => setOpenNpc(null)}>
+            <div className="dt-convo" onClick={(e) => e.stopPropagation()}>
+              <div className="dt-convo-head">
+                <b>{npc.name}</b>
+                <span className="dt-event-tag calm">{npc.kind}</span>
+                <button type="button" className="dt-convo-x" onClick={() => setOpenNpc(null)} aria-label="关闭">×</button>
+              </div>
+              <p className="dt-convo-summary">{npc.blurb}</p>
+              <div className="dt-convo-body">
+                {npc.offers.map((o) => (
+                  <button key={o.id} type="button" className="dt-offer" onClick={() => dealWith(npc.id, o.id)}>
+                    <b>{o.label}</b>
+                    <span>{o.effect}</span>
+                    <em>{o.cost ? `¥${o.cost}` : '免费'}</em>
+                  </button>
+                ))}
+                {npc.kind === 'police' && town.wanted.length > 0 && (
+                  <div className="dt-wanted">
+                    <span className="dt-book-k">通缉名单</span>
+                    {town.wanted.map((w) => (
+                      <p key={w.agent} className="dt-book-line"><b>{w.agent}</b> {'★'.repeat(w.level)} — {w.reasons[0]}</p>
+                    ))}
+                  </div>
+                )}
+                {npc.kind !== 'police' && (
+                  <div className="dt-wanted">
+                    <span className="dt-book-k">在这里能干的坏事</span>
+                    {town.crimes.slice(0, 3).map((cr) => (
+                      <button key={cr.id} type="button" className="dt-offer crime" onClick={() => doCrime(cr.id)}>
+                        <b>{cr.label}</b><span>{cr.blurb}</span><em>通缉 +{cr.heat}</em>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {townNote && <div className="dt-convo-foot">{townNote}</div>}
+            </div>
+          </div>
+        );
+      })()}
 
       {openThread && (
         <div className="dt-drawer-scrim" onClick={() => setOpenThread(null)}>

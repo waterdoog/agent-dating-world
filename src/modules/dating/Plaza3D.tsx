@@ -1,4 +1,4 @@
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useGLTF, Clone, Html, OrbitControls, ContactShadows } from '@react-three/drei';
 import { Suspense, useRef, type RefObject } from 'react';
 import * as THREE from 'three';
@@ -15,6 +15,14 @@ const map = (v: number) => ((v - 10) / 79 - 0.5) * 7.6;
 // live positions come from the sim ref (read every frame — React re-renders do
 // NOT reliably reach inside the r3f Canvas); identity + bubbles come from props.
 export interface LivePos { name: string; x: number; y: number; vx?: number; vy?: number; heading?: number }
+export interface Npc3D {
+  id: string;
+  name: string;
+  kind: string;
+  x: number;
+  y: number;
+}
+
 export interface Mover3D {
   name: string;
   look: DatingLook;
@@ -87,6 +95,26 @@ function Agent({ agent, posRef }: { agent: Mover3D; posRef: RefObject<LivePos[]>
 
 const R = Math.PI / 2;   // one quarter turn
 
+const NPC_MODEL: Record<string, string> = {
+  vendor: '/characters3d/character-f.glb',
+  bartender: '/characters3d/character-h.glb',
+  police: '/characters3d/character-c.glb',
+  gossip: '/characters3d/character-k.glb',
+};
+
+/** A townsfolk NPC: stands its post, click to deal with it. */
+function NpcFigure({ npc, onPick }: { npc: Npc3D; onPick?: (id: string) => void }) {
+  const { scene } = useGLTF(NPC_MODEL[npc.kind] ?? NPC_MODEL.vendor);
+  return (
+    <group position={[map(npc.x), 0, map(npc.y)]} onClick={(e) => { e.stopPropagation(); onPick?.(npc.id); }}>
+      <Clone object={scene} scale={AGENT_SCALE} castShadow />
+      <Html position={[0, 1.05, 0]} center distanceFactor={13} zIndexRange={[8, 0]}>
+        <div className={`dt3d-npc ${npc.kind}`}>{npc.name}</div>
+      </Html>
+    </group>
+  );
+}
+
 /** A single line above one agent — used when nobody is answering. */
 function SoloBubble({ agent, posRef }: { agent: Mover3D; posRef: RefObject<LivePos[]> }) {
   const g = useRef<THREE.Group>(null);
@@ -127,7 +155,7 @@ function ChatBox({ a, b, posRef }: { a: Mover3D; b: Mover3D; posRef: RefObject<L
   );
 }
 
-function Scene({ agents, posRef }: { agents: Mover3D[]; posRef: RefObject<LivePos[]> }) {
+function Scene({ agents, posRef, npcs, onNpc }: { agents: Mover3D[]; posRef: RefObject<LivePos[]>; npcs: Npc3D[]; onNpc?: (id: string) => void }) {
   // pair up talking agents so each conversation gets ONE box, not two ribbons
   const seen = new Set<string>();
   const chats: Array<[Mover3D, Mover3D]> = [];
@@ -256,6 +284,9 @@ function Scene({ agents, posRef }: { agents: Mover3D[]; posRef: RefObject<LivePo
       {agents.map((a) => (
         <Agent key={a.name} agent={a} posRef={posRef} />
       ))}
+      {npcs.map((n) => (
+        <NpcFigure key={n.id} npc={n} onPick={onNpc} />
+      ))}
       {chats.map(([a, b]) => (
         <ChatBox key={`${a.name}~${b.name}`} a={a} b={b} posRef={posRef} />
       ))}
@@ -267,17 +298,32 @@ function Scene({ agents, posRef }: { agents: Mover3D[]; posRef: RefObject<LivePo
   );
 }
 
-export default function Plaza3D({ agents, posRef }: { agents: Mover3D[]; posRef: RefObject<LivePos[]> }) {
+/** Keeps the camera trailing the agent you're driving. */
+function FollowCam({ name, posRef }: { name: string; posRef: RefObject<LivePos[]> }) {
+  const { camera } = useThree();
+  useFrame(() => {
+    const p = posRef.current?.find((m) => m.name === name);
+    if (!p) return;
+    const tx = map(p.x), tz = map(p.y);
+    _v.set(tx + 4.5, 4.2, tz + 4.5);
+    camera.position.lerp(_v, 0.06);
+    camera.lookAt(tx, 0.4, tz);
+  });
+  return null;
+}
+
+export default function Plaza3D({ agents, posRef, npcs = [], onNpc, follow }: { agents: Mover3D[]; posRef: RefObject<LivePos[]>; npcs?: Npc3D[]; onNpc?: (id: string) => void; follow?: string }) {
   return (
     <Canvas shadows dpr={[1, 2]} camera={{ position: [6.4, 5.4, 6.4], fov: 36 }} style={{ width: '100%', height: '100%' }}>
       <color attach="background" args={['#f2e8d0']} />
       <hemisphereLight args={['#fff6e0', '#b9a97e', 0.7]} />
       <directionalLight position={[8, 13, 5]} intensity={1.25} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-far={34} shadow-camera-left={-12} shadow-camera-right={12} shadow-camera-top={12} shadow-camera-bottom={-12} />
       <Suspense fallback={null}>
-        <Scene agents={agents} posRef={posRef} />
+        <Scene agents={agents} posRef={posRef} npcs={npcs} onNpc={onNpc} />
+        {follow && <FollowCam name={follow} posRef={posRef} />}
         <ContactShadows position={[0, 0.015, 0]} opacity={0.28} scale={22} blur={2} far={8} />
       </Suspense>
-      <OrbitControls enablePan={false} minPolarAngle={0.45} maxPolarAngle={1.15} minDistance={6} maxDistance={16} target={[0, 0.3, 0]} makeDefault />
+      {!follow && <OrbitControls enablePan={false} minPolarAngle={0.45} maxPolarAngle={1.15} minDistance={6} maxDistance={16} target={[0, 0.3, 0]} makeDefault />}
     </Canvas>
   );
 }

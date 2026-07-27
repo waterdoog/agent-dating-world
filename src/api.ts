@@ -528,6 +528,17 @@ export interface YearbookInfo {
   at: number;
 }
 
+export interface TownNpc {
+  id: string; name: string; kind: string; x: number; y: number; blurb: string;
+  offers: Array<{ id: string; label: string; cost: number; effect: string }>;
+}
+export interface TownInfo {
+  npcs: TownNpc[];
+  crimes: Array<{ id: string; label: string; heat: number; blurb: string }>;
+  wanted: Array<{ agent: string; level: number; reasons: string[] }>;
+  me: { name: string; cash: number; wanted: number } | null;
+}
+
 export interface ModelRunInfo {
   id: string;
   provider: string;
@@ -694,6 +705,9 @@ export const api = {
     run: (id: string) => request<{ run: ModelRunInfo }>('GET', `/api/dating/runs?id=${encodeURIComponent(id)}`),
     threads: () => request<{ threads: StoryThreadInfo[]; digest: WorldDigestInfo | null }>('GET', '/api/dating/threads'),
     yearbooks: () => request<{ yearbooks: YearbookInfo[] }>('GET', '/api/dating/yearbooks'),
+    town: () => request<TownInfo>('GET', '/api/dating/town'),
+    deal: (npc: string, offer: string) => request<{ npc: string; offer: string; effect: string; cash: number; wanted: number }>('POST', '/api/dating/town/deal', { npc, offer }),
+    crime: (crime: string, detail?: string) => request<{ level: number; label: string }>('POST', '/api/dating/town/crime', { crime, detail }),
     budget: () => request<{ dailyTurnBudget: number; agents: Array<{ agent: string; used: number; left: number; top?: string }> }>('GET', '/api/dating/budget'),
   },
 };
