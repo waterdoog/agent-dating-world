@@ -60,6 +60,7 @@ export interface AgentCard {
   look: Appearance;
   loveStyle: LoveStyle;
   oneline: string;
+  persona: string;   // public persona blurb, injected into guest messages so the agent speaks in character
 }
 
 export interface WorldEvent {
@@ -224,6 +225,12 @@ export async function releaseAgent(
     look: { ...spec.look, mood: STYLE_MOOD[spec.relationshipStyle] ?? 'curious' },
     loveStyle: spec.relationshipStyle,
     oneline: spec.publicIntroduction.trim().slice(0, 120),
+    persona: [
+      `${spec.name} — ${spec.publicIntroduction.trim()}`,
+      spec.summary.trim(),
+      `恋爱风格 ${spec.relationshipStyle}；特质：${spec.traits.join('、') || '—'}。`,
+      spec.memory.publicBackground.trim() ? `背景：${spec.memory.publicBackground.trim()}` : '',
+    ].filter(Boolean).join(' ').slice(0, 700),
   };
 
   const roster = (await readRoster()).filter((c) => c.handle !== card.handle);

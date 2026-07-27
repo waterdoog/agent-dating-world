@@ -84,9 +84,9 @@ interface Mover {
 }
 const BOUNDS = { minX: 10, maxX: 89, minY: 17, maxY: 82 };
 const SPEED = 0.55;
-const SEP_DIST = 11;      // personal space while wandering — keeps sprites from stacking
-const CHAT_DIST = 13;     // how close YOUR agent must get to spark a live real encounter
-const TALK_DIST = 17;     // how far apart a talking pair stands, so both name cards stay readable
+const SEP_DIST = 22;      // personal space while wandering — keeps sprites from stacking
+const CHAT_DIST = 20;     // how close YOUR agent must get to spark a live real encounter
+const TALK_DIST = 24;     // how far apart a talking pair stands, so both name cards stay readable
 const DISPLAY_MS = 10000;  // how long a real exchange's lines stay up in the plaza
 const PAIR_COOL = 8000;   // a just-finished pair won't re-stage for this long
 const REAL_COOL = 120000; // the user's own (token-spending) encounter cools down much longer
@@ -117,7 +117,7 @@ function moveWorld(ms: Mover[]) {
       const radius = o.partner ? TALK_DIST + 7 : SEP_DIST;   // walk AROUND a chatting pair, don't crash it
       const ox = m.x - o.x, oy = m.y - o.y, od = Math.hypot(ox, oy);
       if (od > 0.001 && od < radius) {
-        const push = ((radius - od) / radius) * (o.partner ? 1.1 : 0.6);
+        const push = ((radius - od) / radius) * (o.partner ? 1.4 : 1.1);
         m.x += (ox / od) * push; m.y += (oy / od) * push;
       }
     }
