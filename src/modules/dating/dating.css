@@ -16,8 +16,10 @@
   gap: var(--space-xl);
   align-items: stretch;   /* three columns share one height; the feed scrolls inside */
   width: min(1320px, 100%);
+  height: calc(100dvh - 96px);   /* lock the console to the viewport — nothing ever grows the page */
+  overflow: hidden;
   margin: 0 auto;
-  padding: var(--space-xl) clamp(16px, 4vw, 40px) var(--space-3xl);
+  padding: var(--space-lg) clamp(16px, 4vw, 40px);
   animation: reveal-up 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
@@ -69,12 +71,12 @@
 .dt-legend-row b { font-size: 0.85rem; }
 
 /* ── plaza ── */
-.dt-plaza-wrap { position: relative; overflow: hidden; padding: 0; }
+.dt-plaza-wrap { position: relative; overflow: hidden; padding: 0; display: flex; flex-direction: column; }
 .dt-plabel { position: absolute; top: 14px; left: 16px; z-index: 5; }
 .dt-plabel h2 { margin: 0; font-family: 'Dela Gothic One', sans-serif; font-size: 1.05rem; font-weight: 400; text-transform: uppercase; }
 .dt-plabel span { color: var(--ink-soft); font-size: 0.7rem; font-weight: 700; }
 .dt-plaza {
-  position: relative; height: 600px; overflow: hidden;
+  position: relative; flex: 1; min-height: 0; overflow: hidden;
   background-color: var(--dt-floor);
   background-image:
     radial-gradient(ellipse 62% 58% at 50% 44%, oklch(0.986 0.012 86) 0%, oklch(0.965 0.02 84) 46%, oklch(0.925 0.032 76) 100%),
@@ -114,7 +116,7 @@
 /* ── right rail ── */
 .dt-rr { display: flex; flex-direction: column; gap: var(--space-lg); }
 .dt-rr-sec { padding: var(--space-lg); }
-.dt-rr-sec.feed-sec { padding: var(--space-lg) 0 0; }
+.dt-rr-sec.feed-sec { padding: var(--space-lg) 0 0; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .dt-rr .kicker { margin-bottom: var(--space-md); }
 .dt-myagent { display: flex; gap: var(--space-md); align-items: center; }
 .dt-por { display: grid; place-items: center; width: 56px; height: 56px; border: 2px solid var(--ink); background: oklch(0.9 0.06 88); }
@@ -133,7 +135,7 @@
 .dt-signin-cta { display: flex; flex-direction: column; gap: var(--space-sm); align-items: flex-start; }
 .dt-signin-cta p { margin: 0; color: var(--ink-soft); font-size: 0.82rem; line-height: 1.45; }
 
-.dt-feed { list-style: none; margin: 0; padding: 0; max-height: min(48vh, 440px); overflow-y: auto; }
+.dt-feed { list-style: none; margin: 0; padding: 0; flex: 1; min-height: 0; overflow-y: auto; }
 .dt-feed::-webkit-scrollbar { width: 8px; }
 .dt-feed::-webkit-scrollbar-thumb { background: var(--paper-dark); border-radius: 4px; }
 .dt-feed-row { display: flex; gap: var(--space-md); align-items: center; padding: var(--space-md) var(--space-lg); border-top: 1px solid var(--paper-dark); }
@@ -188,8 +190,9 @@
 .dt-more { display: block; width: 100%; padding: var(--space-md); border: 0; border-top: 1px solid var(--paper-dark); background: transparent; text-align: center; font-size: 0.72rem; font-weight: 800; color: var(--ink); }
 
 @media (max-width: 1120px) {
-  .dt-shell { grid-template-columns: 1fr; align-items: start; }   /* stack — no equal-height */
-  .dt-plaza { height: 520px; }
+  .dt-shell { grid-template-columns: 1fr; align-items: start; height: auto; overflow: visible; }   /* stack — page scrolls on mobile */
+  .dt-plaza { flex: none; height: 460px; }
+  .dt-feed { flex: none; max-height: 60vh; }
   .dt-legend { margin: var(--space-lg) var(--space-lg) 0; }        /* not pinned to bottom when stacked */
 }
 
