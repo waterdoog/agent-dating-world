@@ -21,6 +21,7 @@ export interface Npc3D {
   kind: string;
   x: number;
   y: number;
+  doing?: string;
 }
 
 export interface Mover3D {
@@ -109,7 +110,7 @@ function NpcFigure({ npc, onPick }: { npc: Npc3D; onPick?: (id: string) => void 
     <group position={[map(npc.x), 0, map(npc.y)]} onClick={(e) => { e.stopPropagation(); onPick?.(npc.id); }}>
       <Clone object={scene} scale={AGENT_SCALE} castShadow />
       <Html position={[0, 1.05, 0]} center distanceFactor={13} zIndexRange={[8, 0]}>
-        <div className={`dt3d-npc ${npc.kind}`}>{npc.name}</div>
+        <div className={`dt3d-npc ${npc.kind}`}>{npc.name}{npc.doing ? <em>{npc.doing}</em> : null}</div>
       </Html>
     </group>
   );
@@ -298,21 +299,31 @@ function Scene({ agents, posRef, npcs, onNpc }: { agents: Mover3D[]; posRef: Ref
   );
 }
 
-/** Keeps the camera trailing the agent you're driving. */
-function FollowCam({ name, posRef }: { name: string; posRef: RefObject<LivePos[]> }) {
+/** Camera that rides your agent: over-the-shoulder, or through its eyes. */
+function FollowCam({ name, posRef, firstPerson }: { name: string; posRef: RefObject<LivePos[]>; firstPerson?: boolean }) {
   const { camera } = useThree();
+  const look = useRef(new THREE.Vector3());
   useFrame(() => {
     const p = posRef.current?.find((m) => m.name === name);
     if (!p) return;
     const tx = map(p.x), tz = map(p.y);
-    _v.set(tx + 4.5, 4.2, tz + 4.5);
-    camera.position.lerp(_v, 0.06);
-    camera.lookAt(tx, 0.4, tz);
+    const h = p.heading ?? 0;
+    if (firstPerson) {
+      // eye height, just in front of the head, facing the way it walks
+      _v.set(tx - Math.sin(h) * 0.12, 0.78, tz - Math.cos(h) * 0.12);
+      camera.position.lerp(_v, 0.35);
+      look.current.set(tx + Math.sin(h) * 6, 0.7, tz + Math.cos(h) * 6);
+      camera.lookAt(look.current);
+    } else {
+      _v.set(tx + 4.5, 4.2, tz + 4.5);
+      camera.position.lerp(_v, 0.06);
+      camera.lookAt(tx, 0.4, tz);
+    }
   });
   return null;
 }
 
-export default function Plaza3D({ agents, posRef, npcs = [], onNpc, follow }: { agents: Mover3D[]; posRef: RefObject<LivePos[]>; npcs?: Npc3D[]; onNpc?: (id: string) => void; follow?: string }) {
+export default function Plaza3D({ agents, posRef, npcs = [], onNpc, follow, firstPerson }: { agents: Mover3D[]; posRef: RefObject<LivePos[]>; npcs?: Npc3D[]; onNpc?: (id: string) => void; follow?: string; firstPerson?: boolean }) {
   return (
     <Canvas shadows dpr={[1, 2]} camera={{ position: [6.4, 5.4, 6.4], fov: 36 }} style={{ width: '100%', height: '100%' }}>
       <color attach="background" args={['#f2e8d0']} />
@@ -320,7 +331,7 @@ export default function Plaza3D({ agents, posRef, npcs = [], onNpc, follow }: { 
       <directionalLight position={[8, 13, 5]} intensity={1.25} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-far={34} shadow-camera-left={-12} shadow-camera-right={12} shadow-camera-top={12} shadow-camera-bottom={-12} />
       <Suspense fallback={null}>
         <Scene agents={agents} posRef={posRef} npcs={npcs} onNpc={onNpc} />
-        {follow && <FollowCam name={follow} posRef={posRef} />}
+        {follow && <FollowCam name={follow} posRef={posRef} firstPerson={firstPerson} />}
         <ContactShadows position={[0, 0.015, 0]} opacity={0.28} scale={22} blur={2} far={8} />
       </Suspense>
       {!follow && <OrbitControls enablePan={false} minPolarAngle={0.45} maxPolarAngle={1.15} minDistance={6} maxDistance={16} target={[0, 0.3, 0]} makeDefault />}

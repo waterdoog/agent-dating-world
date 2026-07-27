@@ -427,3 +427,4 @@ img.agent-sprite { display: block; object-fit: contain; }
 .dt-offer em { grid-row: 1 / span 2; align-self: center; font-style: normal; font-size: 0.72rem; font-weight: 800; color: var(--red); }
 .dt-offer.crime { border-style: dashed; }
 .dt-wanted { margin-top: var(--space-md); padding-top: var(--space-md); border-top: 1px dashed var(--paper-dark); }
+.dt3d-npc em { display: block; font-style: normal; font-size: 8px; font-weight: 700; opacity: 0.75; }

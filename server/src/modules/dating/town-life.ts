@@ -135,6 +135,47 @@ const CRIME_FALLOUT: Record<string, (actor: string, victim: string) => CrimeFall
     rumour: `${a} 闯进了 ${v} 的私下见面` }),
 };
 
+/**
+ * NPCs keep hours. The town clock runs 1 real day = 1 world year, but a
+ * townsperson's day is simpler: they move between a few posts so the square
+ * looks lived-in, and so "who was at the bar last night" means something.
+ */
+const SCHEDULE: Record<string, Array<{ x: number; y: number; doing: string }>> = {
+  florist: [
+    { x: 24, y: 30, doing: '摆摊' },
+    { x: 46, y: 44, doing: '推着花车绕广场' },
+    { x: 24, y: 30, doing: '收摊前最后一轮' },
+    { x: 70, y: 60, doing: '给酒馆送花' },
+  ],
+  bar: [
+    { x: 74, y: 28, doing: '擦杯子' },
+    { x: 74, y: 28, doing: '开门迎客' },
+    { x: 58, y: 40, doing: '出来抽根烟' },
+    { x: 74, y: 28, doing: '守着深夜的最后一桌' },
+  ],
+  cop: [
+    { x: 50, y: 76, doing: '站岗' },
+    { x: 30, y: 52, doing: '巡逻西侧' },
+    { x: 68, y: 48, doing: '巡逻东侧' },
+    { x: 50, y: 76, doing: '回到岗亭' },
+  ],
+  gossip: [
+    { x: 20, y: 66, doing: '坐着看' },
+    { x: 20, y: 66, doing: '交换今天的消息' },
+    { x: 38, y: 70, doing: '挪到能看见东灯的位置' },
+    { x: 20, y: 66, doing: '收工前再看一眼' },
+  ],
+};
+
+/** Where an NPC is right now, and what it's doing — a real-time function. */
+export function npcNow(id: string): { x: number; y: number; doing: string } | null {
+  const posts = SCHEDULE[id];
+  if (!posts) return null;
+  // one town "shift" every 4 real minutes, so the square visibly changes
+  const shift = Math.floor(Date.now() / (4 * 60_000)) % posts.length;
+  return posts[shift];
+}
+
 export function falloutOf(crimeId: string, actor: string, victim: string): CrimeFallout | null {
   const f = CRIME_FALLOUT[crimeId];
   return f ? f(actor, victim) : null;
@@ -147,23 +188,47 @@ export function wantedBoard(): Array<{ agent: string; level: number; reasons: st
     .sort((a, b) => b.level - a.level);
 }
 
-/** A player's pocket money, so vendor offers mean something. */
+/**
+ * Money is the platform's N1 Credits — the same wallet Agent Fights stakes
+ * from — so what you spend on a bouquet is the balance you actually hold.
+ * When the wallet database isn't configured (local dev), the town keeps a
+ * pocket ledger instead so vendors still work.
+ */
 const purse = new Map<string, number>();
 const START_CASH = 200;
-export function balance(agent: string): number {
+
+function localBalance(agent: string): number {
   const k = agent.toLowerCase();
   if (!purse.has(k)) purse.set(k, START_CASH);
   return purse.get(k)!;
 }
+
+/**
+ * The town shows the platform's N1 Credit balance when the wallet database is
+ * reachable, so the number in the HUD is the one the player actually holds.
+ * Town spending itself stays on the town ledger — Agent Fights owns the credit
+ * ledger and the town must not silently drain a player's stake.
+ */
+export async function walletBalance(fighterId: string | undefined, agent: string): Promise<number> {
+  if (fighterId) {
+    try {
+      const { readFighterCreditBalance } = await import('../../database/repository.js');
+      return await readFighterCreditBalance(fighterId);
+    } catch {
+      /* no wallet configured — use the town's own ledger */
+    }
+  }
+  return localBalance(agent);
+}
+
+/** Synchronous view used where an await isn't available. */
+export function balance(agent: string): number {
+  return localBalance(agent);
+}
 export function spend(agent: string, amount: number): boolean {
   const k = agent.toLowerCase();
-  const have = balance(agent);
+  const have = localBalance(agent);
   if (have < amount) return false;
   purse.set(k, have - amount);
   return true;
-}
-export function earn(agent: string, amount: number): number {
-  const k = agent.toLowerCase();
-  purse.set(k, balance(agent) + amount);
-  return purse.get(k)!;
 }

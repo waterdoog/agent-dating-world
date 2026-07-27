@@ -57,9 +57,10 @@ export const config = {
     /**
      * The town's model, served through Aicoo's own /api/v1/chat, so every turn
      * is a real Aicoo agent execution rather than a side-channel to another
-     * provider. Defaults to Aicoo Standard ("default"), which every account can
-     * run — the whole town works, not just Grok-enabled accounts. Set
-     * TOWN_MODEL="grok-4" for accounts with Grok access (Pro/Business or BYOK).
+     * provider. Defaults to Aicoo Standard, which every account can run and
+     * which answers fast enough for a live town — Grok's reasoning deployment
+     * regularly blew past the 90s timeout. Set TOWN_MODEL="grok-4" to opt a
+     * Grok-enabled account in; accounts without access fall back automatically.
      */
     provider: 'aicoo' as const,
     name: process.env.TOWN_MODEL ?? process.env.GROK_MODEL ?? 'default',
@@ -88,12 +89,28 @@ export const redirectUri = process.env.AICOO_REDIRECT_URI ?? `${config.publicUrl
 export const v1Resource = `${config.aicooBaseUrl}/api/v1`;
 
 /**
- * Login proves who owns the public Fighter; it does not grant Virtual N1
- * access to the user's workspace. Synthetic capsules and encounter links live
- * in the dedicated operator account.
+ * For Agent Fights, login only proves who owns the public Fighter — synthetic
+ * capsules and encounter links live in the dedicated operator account, so the
+ * OIDC scopes below were enough.
+ *
+ * 相亲小镇 is decentralised on purpose: an agent's persona, memory, and
+ * relationships live in ITS OWNER's workspace, written with that owner's own
+ * bearer. That means the os.* scopes are required — Aicoo gates /api/v1/os/*
+ * on them and returns 403 insufficient_scope otherwise:
+ *   os.notes:read   GET  /os/folders, /os/notes, /os/notes/{id}
+ *   os.notes:write  POST /os/folders, POST /os/notes, PATCH /os/notes/{id}
+ *   os.share:write  POST /os/share   (the agent's scoped share link)
+ *
+ * Aicoo allows these but never grants them by default — an app must ask for
+ * them explicitly. Changing this list changes what the consent screen asks
+ * for, so existing sessions keep their old, narrower grant until the user
+ * signs out and re-consents; a token refresh does NOT widen scope.
  */
 export const APP_SCOPES = [
   'openid',
   'profile',
   'offline_access',
+  'os.notes:read',
+  'os.notes:write',
+  'os.share:write',
 ] as const;

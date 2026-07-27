@@ -44,6 +44,8 @@ export class ModelError extends Error {
 // A bounded in-memory ledger of recent runs, exposed for tracing a town event
 // back to the exact model call that produced it.
 const runs: ModelRun[] = [];
+/** Bearers we've learned have no Grok access — they use their standard model. */
+const noGrok = new Set<string>();
 const MAX_RUNS = 300;
 export function recentRuns(limit = 50): ModelRun[] {
   return runs.slice(0, limit);
@@ -96,6 +98,10 @@ export async function grok(prompt: string, opts: GrokOptions): Promise<GrokResul
   let lastStatus: RunStatus = 'failed';
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
     try {
+      // Grok per the town spec, but tier-gated per account: an account without
+      // Grok gets its standard model rather than a hard failure, and the run
+      // records whichever model actually answered.
+      const wantGrok = model && model !== 'default' && !noGrok.has(opts.bearer ?? '');
       const res = viaAicoo
         ? await fetch(`${config.aicooBaseUrl}/api/v1/chat`, {
             method: 'POST',
@@ -104,7 +110,7 @@ export async function grok(prompt: string, opts: GrokOptions): Promise<GrokResul
               message: opts.system ? `${opts.system}\n\n${prompt}` : prompt,
               // "default" means the account's standard model — Aicoo rejects it
               // as an explicit value, so omit the field and let it choose.
-              ...(model && model !== 'default' ? { model } : {}),
+              ...(wantGrok ? { model } : {}),
               stream: false,
               ...(opts.conversationId ? { conversationId: opts.conversationId } : {}),
             }),
@@ -141,6 +147,12 @@ export async function grok(prompt: string, opts: GrokOptions): Promise<GrokResul
         usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
       };
       // Aicoo answers HTTP 200 with an error body for quota / model availability
+      if (json.type === 'error' && json.error === 'MODEL_NOT_AVAILABLE' && wantGrok) {
+        noGrok.add(opts.bearer ?? '');          // this account has no Grok — fall back and retry
+        lastError = `${json.error}: falling back to the account's standard model`;
+        lastStatus = 'retrying';
+        continue;
+      }
       if (json.type === 'error') {
         lastError = `${json.error ?? 'AICOO_ERROR'}: ${(json.message ?? '').slice(0, 200)}`;
         lastStatus = 'failed';

@@ -529,7 +529,7 @@ export interface YearbookInfo {
 }
 
 export interface TownNpc {
-  id: string; name: string; kind: string; x: number; y: number; blurb: string;
+  id: string; name: string; kind: string; x: number; y: number; blurb: string; doing?: string;
   offers: Array<{ id: string; label: string; cost: number; effect: string }>;
 }
 export interface TownInfo {

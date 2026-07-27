@@ -25,6 +25,7 @@ import { config } from '../../config.js';
 import { grok, ModelError } from './grok.js';
 import { remaining, reserveTurn, refundTurn } from './budget.js';
 import { absorb, narrate, knownTo, duplicatePromises, recordKnowledge } from './threads.js';
+import { commitCrime, falloutOf, wantedLevel } from './town-life.js';
 
 /** When an account is out of budget, its agent gets roasted instead of going silent. */
 const BROKE_LINES = [
@@ -134,6 +135,10 @@ summary 必须交代：你**真正的动机**（可能和你嘴上说的不一�
  - WAIT 什么都不做也是一种动作：等一个可能不会来的人（此时 message 写你没说出口的那句话）
  - INVESTIGATE 向第三方打听你怀疑的事
  - BETRAY 违背承诺、泄露秘密、背弃一段关系——如果这对你有利
+ - CRIME 做一件真正越界的事（会被小镇看见、会上通缉名单）：
+     steal-letter 偷走写给别人的情书｜stage-scene 故意让某人撞见你和别人｜
+     bribe-vendor 花钱买某人的行踪｜spread-lie 让小镇相信一件假事｜break-in 闯进别人的私下见面
+   选 CRIME 时，额外给出 "crime":"<上面的 id>"，target 就是**受害者**。这会真的降低对方对你的信任、拉高张力，而且对方会知道是你干的。
 
 然后真的说出来：写你会发给对方的那句话——鲜活、简短、一听就是你。
 ⚠️ 这句话里必须有**一个具体的东西**：一个时间、一个地点、一个你看见的动作、一个第三个人的名字，或一个条件。
@@ -154,7 +159,7 @@ summary 必须交代：你**真正的动机**（可能和你嘴上说的不一�
 坏例子："两颗心之间的距离"、"沉默中的涟漪"
 
 严格只返回这个 JSON：
-{ "move": "APPROACH|DEEPEN|COOL|REACT|SCHEME|ALLY|WAIT|INVESTIGATE|BETRAY", "target": "<handle>", "message": "<第一人称，对目标说的话>", "attraction": 0.x, "trust": 0.x, "tension": 0.x, "severity": "ambient|relationship|drama", "headline": "<第三人称、写事实、<=14 词>", "summary": "<1-2 句：起因 + 你做了什么 + 关系变化 + 悬念>", "consequence": "<关系变化，一个短句>", "followup": "<接下来可能发生什么>", "note": "<3-6 字>" }`;
+{ "move": "APPROACH|DEEPEN|COOL|REACT|SCHEME|ALLY|WAIT|INVESTIGATE|BETRAY|CRIME", "crime": "<仅当 move=CRIME 时给出>", "target": "<handle>", "message": "<第一人称，对目标说的话>", "attraction": 0.x, "trust": 0.x, "tension": 0.x, "severity": "ambient|relationship|drama", "headline": "<第三人称、写事实、<=14 词>", "summary": "<1-2 句：起因 + 你做了什么 + 关系变化 + 悬念>", "consequence": "<关系变化，一个短句>", "followup": "<接下来可能发生什么>", "note": "<3-6 字>" }`;
 
 export interface Rel {
   handle: string;
@@ -296,6 +301,9 @@ function situationFor(actorName: string, rels: Rel[], recent: TickEvent[]): stri
 
   for (const k of knownTo(actorName)) lines.push(`- 你知道一件关于 ${k.about} 的事：${k.fact}（${k.source}）`);
 
+  const heat = wantedLevel(actorName);
+  if (heat > 0) lines.push(`- ⚠️ 你现在的通缉度是 ${heat}/5，巡警老陈盯着你。再犯会更难收场。`);
+
   // your own last moves — so you don't run the same play twice in a row
   const mine = recent.filter((e) => e.actor.toLowerCase() === actorName.toLowerCase()).slice(0, 3);
   if (mine.length) {
@@ -321,6 +329,7 @@ const asSeverity = (v: unknown): Severity => (SEVERITIES.includes(v as Severity)
 
 interface Move {
   move: string;
+  crime?: string;
   target: string;
   message: string;
   attraction: number;   // the agent's own read of the target, folded into the decide (no separate judge call)
@@ -342,6 +351,7 @@ function parseMove(raw: string): Move | null {
     if (!p.target || !p.message) return null;
     return {
       move: String(p.move ?? 'APPROACH'),
+      crime: p.crime ? String(p.crime) : undefined,
       target: String(p.target),
       message: String(p.message),
       attraction: clamp01(p.attraction),
@@ -473,6 +483,44 @@ export async function runAgentTick(
 
   const target = roster.find((c) => c.handle === decision!.target || c.name === decision!.target);
   if (!target || target.name === actor.name) return null;
+
+  // CRIME: the agent crosses a line on its own. Real wanted level, real damage
+  // to the victim's feelings, and the victim finds out it was them.
+  if (decision.move === 'CRIME' && decision.crime) {
+    const done = commitCrime(actor.name, decision.crime, target.name);
+    const f = done ? falloutOf(decision.crime, actor.name, target.name) : null;
+    if (done && f) {
+      const victimKey = creds.get(target.ownerSub);
+      if (victimKey) {
+        const vrels = await readRels(victimKey, target.name).catch(() => []);
+        const cur = vrels.find((r) => r.handle.toLowerCase() === actor.name.toLowerCase());
+        const next = vrels.filter((r) => r.handle.toLowerCase() !== actor.name.toLowerCase());
+        next.push({
+          handle: actor.handle,
+          attraction: Math.max(0, Math.min(1, (cur?.attraction ?? 0.3) + f.attractionDelta)),
+          trust: Math.max(0, Math.min(1, (cur?.trust ?? 0.3) + f.trustDelta)),
+          tension: Math.max(0, Math.min(1, (cur?.tension ?? 0.2) + f.tensionDelta)),
+          note: f.rumour.slice(0, 60),
+        });
+        await writeRels(victimKey, target.name, next).catch(() => undefined);
+      }
+      recordKnowledge({ holder: target.name, about: actor.name, fact: f.rumour, source: '小镇上传开的' });
+      const ev: TickEvent = {
+        actor: actor.name, target: target.name, move: 'CRIME',
+        message: decision.message, reply: '',
+        attraction: decision.attraction, trust: decision.trust, tension: decision.tension,
+        note: done.label, severity: 'drama',
+        headline: decision.headline || f.rumour,
+        summary: decision.summary || `${actor.name} ${done.label}。${target.name} 会知道是谁干的。`,
+        consequence: decision.consequence || 'a crime lands on someone who can feel it',
+        followup: decision.followup || `${target.name} 会当面质问，还是先按住不说？`,
+        decideRunId, turnsLeft: remaining(actor.name), status: 'ok',
+      };
+      const th = absorb(ev);
+      if (th && th.beats.length >= 2) await narrate(th, bearer).catch(() => undefined);
+      return ev;
+    }
+  }
 
   // WAIT is a real move: the agent chooses NOT to spend a turn on anyone.
   if (decision.move === 'WAIT') {

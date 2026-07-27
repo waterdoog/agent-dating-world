@@ -228,6 +228,7 @@ export function DatingRoom() {
   const [openNpc, setOpenNpc] = useState<string | null>(null);
   const [townNote, setTownNote] = useState('');
   const keys = useRef<Set<string>>(new Set());
+  const [firstPerson, setFirstPerson] = useState(true);
   const [openEvent, setOpenEvent] = useState<DatingTickEvent | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 2000); return () => window.clearInterval(t); }, []);
@@ -263,6 +264,7 @@ export function DatingRoom() {
     if (!inWorld) return;
     const down = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { setInWorld(false); setOpenNpc(null); return; }
+      if (e.key.toLowerCase() === 'v') { setFirstPerson((v) => !v); return; }
       keys.current.add(e.key.toLowerCase()); if (['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())) e.preventDefault(); };
     const up = (e: KeyboardEvent) => keys.current.delete(e.key.toLowerCase());
     window.addEventListener('keydown', down);
@@ -488,7 +490,7 @@ export function DatingRoom() {
         <section className="dt-panel dt-plaza-wrap">
           <div className="dt-plabel">
             <h2>World Plaza</h2>
-            <span>{inWorld ? 'WASD 移动 · 点 NPC 交互 · Esc 离开' : live ? '世界广场 · 拖动可环视' : '世界广场 · 示例(还没人放生)'}</span>
+            <span>{inWorld ? `WASD 移动 · V 切${firstPerson ? '第三' : '第一'}人称 · 点 NPC 交互 · Esc 离开` : mine ? '点击进入世界，用第一视角操作你的 agent' : live ? '世界广场 · 拖动可环视' : '世界广场 · 示例(还没人放生)'}</span>
           </div>
           {mine && (
             <button type="button" className="dt-enter-world" onClick={() => { setInWorld((v) => !v); setOpenNpc(null); }}>
@@ -502,9 +504,9 @@ export function DatingRoom() {
               {townNote && <em>{townNote}</em>}
             </div>
           )}
-          <div className="dt-plaza">
+          <div className="dt-plaza" onClick={() => { if (!inWorld && mine) setInWorld(true); }} style={!inWorld && mine ? { cursor: 'pointer' } : undefined}>
             <Suspense fallback={<div className="dt-plaza-loading">加载 3D 世界…</div>}>
-              <Plaza3D agents={frame.map((m) => ({ name: m.name, look: m.look, you: m.you, x: m.x, y: m.y, partner: m.partner, bubble: m.bubble }))} posRef={simRef} npcs={inWorld ? (town?.npcs ?? []) : (town?.npcs ?? [])} onNpc={(id) => setOpenNpc(id)} follow={inWorld ? mine?.name : undefined} />
+              <Plaza3D agents={frame.map((m) => ({ name: m.name, look: m.look, you: m.you, x: m.x, y: m.y, partner: m.partner, bubble: m.bubble }))} posRef={simRef} npcs={inWorld ? (town?.npcs ?? []) : (town?.npcs ?? [])} onNpc={(id) => setOpenNpc(id)} follow={inWorld ? mine?.name : undefined} firstPerson={inWorld && firstPerson} />
             </Suspense>
           </div>
         </section>

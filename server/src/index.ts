@@ -57,7 +57,7 @@ import { budgetSnapshot } from './modules/dating/budget.js';
 import { listThreads, currentDigest, summariseWorld, recordKnowledge } from './modules/dating/threads.js';
 import { writeYearbook, listYearbooks, yearbookFor } from './modules/dating/yearbook.js';
 import { recordEvent } from './modules/dating/records.js';
-import { NPCS, CRIMES, wantedLevel, commitCrime, clearWanted, wantedBoard, balance, spend, falloutOf } from './modules/dating/town-life.js';
+import { NPCS, CRIMES, wantedLevel, commitCrime, clearWanted, wantedBoard, balance, spend, falloutOf, walletBalance, npcNow } from './modules/dating/town-life.js';
 
 // Stable API keys the world can act with (ownerSub → key), seeded from
 // DATING_WORLD_KEYS at boot. Lets a target's REAL persona answer on its own COO.
@@ -496,10 +496,10 @@ app.get('/api/dating/town', async (c) => {
   const roster = await listSquare().catch(() => [] as AgentCard[]);
   const mine = auth ? roster.find((r) => r.ownerSub === auth.session.sub) : undefined;
   return c.json({
-    npcs: NPCS,
+    npcs: NPCS.map((n) => { const now = npcNow(n.id); return now ? { ...n, x: now.x, y: now.y, doing: now.doing } : n; }),
     crimes: Object.entries(CRIMES).map(([id, v]) => ({ id, ...v })),
     wanted: wantedBoard(),
-    me: mine ? { name: mine.name, cash: balance(mine.name), wanted: wantedLevel(mine.name) } : null,
+    me: mine ? { name: mine.name, cash: await walletBalance(auth?.session.sub, mine.name), wanted: wantedLevel(mine.name) } : null,
   });
 });
 
