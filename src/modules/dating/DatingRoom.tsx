@@ -37,14 +37,6 @@ function worldClock(now: number) {
   return { year, day: doy + 1, season };
 }
 
-// season → an ambient light wash, so "1 real day = 1 world year" is felt.
-const SEASON_TINT: Record<string, string> = {
-  春: 'radial-gradient(ellipse at 50% 28%, oklch(0.92 0.09 140 / 0.13), transparent 70%)',
-  夏: 'radial-gradient(ellipse at 50% 18%, oklch(0.95 0.12 92 / 0.15), transparent 72%)',
-  秋: 'linear-gradient(oklch(0.86 0.1 62 / 0.15), oklch(0.8 0.08 46 / 0.06))',
-  冬: 'linear-gradient(oklch(0.9 0.05 236 / 0.17), oklch(0.85 0.04 240 / 0.08))',
-};
-
 // a world-feed row's relationship read, derived from the judged scores
 function relPhrase(e: DatingTickEvent): { text: string; tone: 'fight' | 'love' | 'crush' | 'calm' } {
   const a = e.attraction, t = e.tension;
@@ -77,53 +69,6 @@ function timeAgo(at: number | undefined, now: number): string {
 function Sprite({ look, size }: { look: DatingLook; size: number }) {
   const html = useMemo(() => agentSprite(look as AgentAppearance, size), [look, size]);
   return <span className="dt-sprite-slot" dangerouslySetInnerHTML={{ __html: html }} />;
-}
-
-// ── plaza environment props (ink-outlined, warm) ────────────────────
-const INK = 'oklch(0.24 0.04 45)';
-function Tree({ x, y, s = 1 }: { x: number; y: number; s?: number }) {
-  return (
-    <svg className="dt-prop" style={{ left: `${x}%`, top: `${y}%` }} width={62 * s} height={68 * s} viewBox="0 0 62 68" aria-hidden="true">
-      <ellipse cx="31" cy="63" rx="17" ry="4" fill={INK} opacity="0.14" />
-      <rect x="27" y="41" width="8" height="18" rx="2" fill="oklch(0.5 0.06 52)" stroke={INK} strokeWidth="2.5" />
-      <path d="M31 5C16 5 10 20 12 30 6 34 8 47 20 47H42C54 47 56 34 50 30 52 20 46 5 31 5Z" fill="oklch(0.6 0.13 148)" stroke={INK} strokeWidth="2.5" strokeLinejoin="round" />
-      <path d="M20 18q9 -7 21 0" fill="none" stroke="oklch(0.73 0.11 148)" strokeWidth="3" strokeLinecap="round" opacity="0.6" />
-    </svg>
-  );
-}
-function Lamp({ x, y }: { x: number; y: number }) {
-  return (
-    <svg className="dt-prop" style={{ left: `${x}%`, top: `${y}%` }} width="34" height="78" viewBox="0 0 34 78" aria-hidden="true">
-      <ellipse cx="17" cy="74" rx="10" ry="3" fill={INK} opacity="0.14" />
-      <rect x="14" y="22" width="6" height="52" rx="3" fill="oklch(0.4 0.02 250)" stroke={INK} strokeWidth="2.2" />
-      <path d="M9 22 Q17 9 25 22 L25 13 Q17 3 9 13 Z" fill="oklch(0.82 0.15 88)" stroke={INK} strokeWidth="2.2" strokeLinejoin="round" />
-      <circle cx="17" cy="16" r="3" fill="oklch(0.96 0.09 92)" />
-    </svg>
-  );
-}
-function Board({ x, y }: { x: number; y: number }) {
-  return (
-    <svg className="dt-prop" style={{ left: `${x}%`, top: `${y}%` }} width="66" height="72" viewBox="0 0 66 72" aria-hidden="true">
-      <ellipse cx="33" cy="67" rx="20" ry="4" fill={INK} opacity="0.14" />
-      <rect x="13" y="42" width="6" height="24" fill="oklch(0.5 0.06 52)" stroke={INK} strokeWidth="2" />
-      <rect x="47" y="42" width="6" height="24" fill="oklch(0.5 0.06 52)" stroke={INK} strokeWidth="2" />
-      <rect x="6" y="9" width="54" height="40" rx="3" fill="oklch(0.62 0.08 55)" stroke={INK} strokeWidth="2.5" />
-      <rect x="12" y="15" width="42" height="28" rx="2" fill="oklch(0.95 0.02 84)" stroke={INK} strokeWidth="1.6" />
-      <line x1="18" y1="22" x2="49" y2="22" stroke={INK} strokeWidth="1.4" opacity="0.45" />
-      <line x1="18" y1="28" x2="49" y2="28" stroke={INK} strokeWidth="1.4" opacity="0.45" />
-      <line x1="18" y1="34" x2="40" y2="34" stroke={INK} strokeWidth="1.4" opacity="0.45" />
-    </svg>
-  );
-}
-function Bench({ x, y }: { x: number; y: number }) {
-  return (
-    <svg className="dt-prop" style={{ left: `${x}%`, top: `${y}%` }} width="72" height="34" viewBox="0 0 72 34" aria-hidden="true">
-      <ellipse cx="36" cy="31" rx="26" ry="3.5" fill={INK} opacity="0.14" />
-      <rect x="8" y="10" width="56" height="9" rx="2" fill="oklch(0.62 0.08 52)" stroke={INK} strokeWidth="2.2" />
-      <rect x="12" y="19" width="5" height="10" fill="oklch(0.5 0.06 52)" stroke={INK} strokeWidth="2" />
-      <rect x="55" y="19" width="5" height="10" fill="oklch(0.5 0.06 52)" stroke={INK} strokeWidth="2" />
-    </svg>
-  );
 }
 
 // ── plaza life: sprites wander, but they ONLY chat when a REAL interaction
