@@ -52,6 +52,7 @@ export interface ProfileGame {
   result: ProfileResult;
   score: number;
   opponentScore: number;
+  creditDelta: number;
   opponent: ProfileOpponent;
   createdAt: string | null;
   completedAt: string | null;
@@ -254,6 +255,10 @@ export function normalizeProfileView(payload: unknown): ProfileView {
       result: normalizeProfileResult(game.result, score, opponentScore),
       score,
       opponentScore,
+      creditDelta: integerValue(
+        game.creditDelta,
+        integerValue(game.n1CreditDelta),
+      ),
       opponent: {
         id: stringValue(opponent.id) || null,
         displayName: stringValue(

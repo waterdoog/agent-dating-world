@@ -36,7 +36,12 @@ import {
   enforceFighterRateLimit,
   ensureFighterUser,
   persistMiniGameArchive,
+  readFighterCreditBalance,
 } from './database/repository.js';
+import {
+  AGENT_FIGHTS_STAKE,
+  canAffordGameStake,
+} from './database/wallet.js';
 import {
   WorldStateLeaseLostError,
   mutateWorldState,
@@ -1438,6 +1443,13 @@ export async function readyFighterWorld(identity: FighterIdentity): Promise<Mini
     throw new FighterWorldError(409, 'This Fighter is already ready.');
   }
   await enforceFighterRateLimit(fighterId, 'ready', 5, 60 * 60_000);
+  const credits = await readFighterCreditBalance(fighterId);
+  if (!canAffordGameStake(credits, AGENT_FIGHTS_STAKE)) {
+    throw new FighterWorldError(
+      402,
+      `You need at least ${AGENT_FIGHTS_STAKE} N1 Credits to enter Agent Fights.`
+    );
+  }
 
   // Capsule provisioning is deterministic for this draft and intentionally
   // happens outside the database row lock.

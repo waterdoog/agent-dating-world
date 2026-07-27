@@ -387,12 +387,23 @@
 }
 
 .match-result {
+  flex-wrap: wrap;
   gap: var(--space-sm);
   color: var(--ink);
   background: var(--paper-dark);
   font-size: 0.72rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.match-credit-delta {
+  margin-inline-start: auto;
+  padding: 3px 5px;
+  border: 1px solid currentColor;
+  font-size: 0.56rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .result-win .match-result {

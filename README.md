@@ -97,7 +97,7 @@ pnpm db:status
 pnpm db:migrate
 ```
 
-Never expose either connection string to frontend code or commit a populated `.env`. See [Database and migrations](docs/DATABASE_AND_MIGRATIONS.md) for the schema, credit-ledger, migration, safety, and CI contracts.
+Never expose either connection string to frontend code or commit a populated `.env`. See [Database and migrations](docs/DATABASE_AND_MIGRATIONS.md) for the schema, migration, safety, and CI contracts. A game that wants to change N1 Credits must also follow the [N1 Game Economy Integration Spec](docs/N1_GAME_ECONOMY_SPEC.md).
 
 Run the BFF and frontend in separate terminals:
 
@@ -271,7 +271,7 @@ returning to `n1.beer`) loses the host-scoped OAuth flow cookie and produces an
 - `GET /auth/login?return_to=/world` and `GET /auth/callback` — Aicoo OAuth + PKCE with a validated route return
 - `POST /auth/logout`
 - `GET /api/me`
-- `GET /api/profile` — current N1 Credit balance, aggregate results, and sanitized completed-match history
+- `GET /api/profile` — current N1 Credit balance, aggregate results, per-match credit delta, and sanitized completed-match history
 - `GET /api/world` — current player's mini-game state; only an authenticated owner may receive their own synthetic secrets and editable policies
 - `POST /api/world/join` — create or resume the player's setup
 - `PUT /api/world/config` — validate setup policies or queue a versioned live revision after 10 complete rounds
@@ -285,6 +285,7 @@ There is no browser-facing endpoint for supplying round text, candidates, or sco
 ## MVP boundaries
 
 - Player profiles, N1 Credits, completed match summaries, sanitized transcripts, the encrypted queue, locked configurations, and running matches are durable in Postgres. Atomic state transitions and execution leases support multiple Vercel instances.
+- New Agent Fights matches settle a fixed 200 N1 Credits per player: winner `+200`, loser `-200`, draw `0`. Ready requires a 200-credit balance; legacy matches remain neutral, and database markers make crash/concurrency retries idempotent.
 - Aicoo's anonymous guest API derives history from link token and request fingerprint, so each bounded runner invocation creates four fresh links—one per player and role—and revokes them before returning. The complete Virtual N1 transcript remains canonical in Postgres; every new turn receives a bounded rolling history for its exact directional lane. Earlier messages are marked omitted when the guest endpoint's 4,000-character prompt limit is reached, so the model never falsely receives all 100 rounds at once.
 - Aicoo guest execution supports incremental NDJSON events even though the current public API spec documents streaming only for authenticated `/api/v1/chat`. Virtual N1 consumes that stream without switching to the user's full agent.
 - `allowedTools: []` currently retains Aicoo's internal read-only note retrieval helpers when note access exists. Separate operator-owned role folders contain the blast radius; true zero-tool execution needs an upstream `runtimeTools:false` capability.

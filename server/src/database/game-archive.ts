@@ -4,6 +4,7 @@ import type {
   MiniGameCapture,
   MiniGameMessage,
 } from '../fighter-world-core.js';
+import { AGENT_FIGHTS_STAKE } from './wallet.js';
 
 export interface FighterUserRecord {
   id: string;
@@ -30,6 +31,7 @@ export interface MiniGameArchive {
   status: MiniGame['status'];
   round: number;
   maxRounds: number;
+  stake: number;
   winnerId: string | null;
   createdAt: string;
   completedAt: string | null;
@@ -167,6 +169,7 @@ export function buildMiniGameArchive(
     status: game.status,
     round: game.round,
     maxRounds: game.maxRounds,
+    stake: AGENT_FIGHTS_STAKE,
     winnerId: winnerFor(game),
     createdAt: game.createdAt,
     completedAt: game.completedAt ?? null,

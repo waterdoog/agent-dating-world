@@ -13,6 +13,11 @@ import {
   runtimeDatabaseUrl,
 } from './database/config.js';
 import { readMigrations } from './database/migrations.js';
+import {
+  AGENT_FIGHTS_STAKE,
+  buildGameCreditSettlements,
+  canAffordGameStake,
+} from './database/wallet.js';
 
 function player(
   id: string,
@@ -94,6 +99,60 @@ test('archive removes exact vault values and omits all private configuration', (
   assert.equal(archive.participants[0].result, 'win');
   assert.equal(archive.participants[1].result, 'loss');
   assert.equal(archive.messages[0].redacted, true);
+  assert.equal(archive.stake, AGENT_FIGHTS_STAKE);
+});
+
+test('Agent Fights settlement is zero-sum and uses stable per-player keys', () => {
+  const settlements = buildGameCreditSettlements('game-1', AGENT_FIGHTS_STAKE, [
+    { fighterId: 'alpha', result: 'win' },
+    { fighterId: 'bravo', result: 'loss' },
+  ]);
+  assert.deepEqual(
+    settlements.map(({ fighterId, amount }) => ({ fighterId, amount })),
+    [
+      { fighterId: 'alpha', amount: 200 },
+      { fighterId: 'bravo', amount: -200 },
+    ]
+  );
+  assert.equal(settlements[0].idempotencyKey, 'agent-fights:game-1:alpha:settlement:v1');
+  assert.equal(settlements[1].idempotencyKey, 'agent-fights:game-1:bravo:settlement:v1');
+  assert.equal(
+    settlements.reduce((total, settlement) => total + settlement.amount, 0),
+    0
+  );
+});
+
+test('a draw creates two durable zero-value settlement markers', () => {
+  const settlements = buildGameCreditSettlements('draw-1', AGENT_FIGHTS_STAKE, [
+    { fighterId: 'alpha', result: 'draw' },
+    { fighterId: 'bravo', result: 'draw' },
+  ]);
+  assert.deepEqual(settlements.map((settlement) => settlement.amount), [0, 0]);
+});
+
+test('Agent Fights requires the full 200-credit bankroll before Ready', () => {
+  assert.equal(canAffordGameStake(199, AGENT_FIGHTS_STAKE), false);
+  assert.equal(canAffordGameStake(200, AGENT_FIGHTS_STAKE), true);
+  assert.equal(canAffordGameStake(1000, AGENT_FIGHTS_STAKE), true);
+});
+
+test('wallet settlement rejects incomplete or contradictory results', () => {
+  assert.throws(
+    () =>
+      buildGameCreditSettlements('bad-1', AGENT_FIGHTS_STAKE, [
+        { fighterId: 'alpha', result: 'win' },
+        { fighterId: 'bravo', result: 'draw' },
+      ]),
+    /cannot be settled/
+  );
+  assert.throws(
+    () =>
+      buildGameCreditSettlements('bad-2', AGENT_FIGHTS_STAKE, [
+        { fighterId: 'alpha', result: 'win' },
+        { fighterId: 'alpha', result: 'loss' },
+      ]),
+    /distinct Fighters/
+  );
 });
 
 test('vault redaction is case-insensitive and covers both players', () => {
@@ -177,6 +236,19 @@ test('numbered migration defines idempotent archives and excludes forbidden secr
     ['sealed_state', 'revision', 'created_at', 'updated_at']
   );
   assert.match(sql, /idempotency_key text NOT NULL UNIQUE/);
+  const walletMigration = migrations.find(
+    (migration) => migration.filename === '0004_agent_fight_wallet_settlement.sql'
+  );
+  assert.ok(walletMigration);
+  assert.match(walletMigration.sql, /ADD COLUMN n1_stake bigint NOT NULL DEFAULT 0/);
+  assert.match(walletMigration.sql, /fighter_game_credit_settlements/);
+  assert.match(walletMigration.sql, /settlement_version = 0 AND amount = 0/);
+  assert.match(walletMigration.sql, /reason = 'game_settlement'/);
+  assert.match(walletMigration.sql, /n1_credit_ledger_game_settlement_idx/);
+  assert.match(
+    walletMigration.sql,
+    /ON CONFLICT \(game_id, fighter_id\) DO NOTHING/
+  );
   assert.doesNotMatch(
     sql,
     /vault_value|oauth_token|access_token|refresh_token|share_token|operator_key|attack_policy|defense_policy|raw_state|state_json/
