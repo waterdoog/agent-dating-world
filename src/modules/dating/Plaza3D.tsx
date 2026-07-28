@@ -424,7 +424,7 @@ export default function Plaza3D({ agents, posRef, npcs = [], onNpc, follow, firs
         {follow && <FollowCam name={follow} posRef={posRef} firstPerson={firstPerson} />}
         <ContactShadows position={[0, 0.015, 0]} opacity={0.26} scale={40} blur={2} far={8} />
       </Suspense>
-      {!follow && <OrbitControls enablePan={false} minPolarAngle={0.45} maxPolarAngle={1.15} minDistance={6} maxDistance={16} target={[0.5, 0.3, 1.5]} makeDefault />}
+      {!follow && <OrbitControls enablePan={false} minPolarAngle={0.45} maxPolarAngle={1.15} minDistance={10} maxDistance={110} target={[0.5, 0.3, 1.5]} makeDefault />}
     </Canvas>
   );
 }
