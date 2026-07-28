@@ -115,13 +115,21 @@ export async function grok(prompt: string, opts: GrokOptions): Promise<GrokResul
       // Grok gets its standard model rather than a hard failure, and the run
       // records whichever model actually answered.
       const wantGrok = model && model !== 'default' && !noGrok.has(opts.bearer ?? '');
+      // Aicoo caps a guest message at 4000 chars; trim the middle of the
+      // context rather than letting the whole turn fail.
+      const MAX_MSG = 3900;
+      const composed = opts.system ? `${opts.system}\n\n${prompt}` : prompt;
+      const message =
+        composed.length <= MAX_MSG
+          ? composed
+          : `${composed.slice(0, MAX_MSG - 900)}\n…（略）…\n${composed.slice(-880)}`;
       const res = viaGuest
         ? await fetch(`${config.aicooBaseUrl}/api/chat/guest-v04`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${opts.bearer}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
               token: opts.shareToken,
-              message: opts.system ? `${opts.system}\n\n${prompt}` : prompt,
+              message,
               stream: false,
               mode: 'agent',
               ...(opts.conversationId ? { sessionKey: opts.conversationId } : {}),

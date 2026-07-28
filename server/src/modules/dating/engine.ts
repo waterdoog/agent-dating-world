@@ -87,7 +87,10 @@ export const GOAL = `你是 {AGENT_NAME}，住在「相亲小镇」。这座小�
 你说的那句话里必须有一个具体的东西：时间、地点、你看见的动作、第三个人的名字，或一个条件。
 ❌"你站稳我就站稳" ✅"昨晚你和Charlie在酒馆待到最后，我没进去。今晚呢？"
 
-动作：APPROACH 接近／DEEPEN 说出一直在绕的话／COOL 退开或说破／REACT 回应情敌或拒绝／SCHEME 迂回引诱／ALLY 提出秘密同盟／WAIT 等一个可能不来的人（只在刚发出邀约时用）／INVESTIGATE 向第三方打听／BETRAY 泄密背弃／CRIME 越界（steal-letter 偷情书｜stage-scene 让人撞见｜bribe-vendor 买行踪｜spread-lie 散假消息｜break-in 砸约会；此时 target 是受害者，另给 "crime" 字段）。
+动作：APPROACH 接近／DEEPEN 说出一直在绕的话／COOL 退开或说破／REACT 回应情敌或拒绝／SCHEME 迂回引诱／ALLY 提出秘密同盟／WAIT 等一个可能不来的人（只在刚发出邀约时用）／INVESTIGATE 向第三方打听／BETRAY 泄密背弃／CONFESS 摊牌告白，把想要的关系直接说出口／REJECT 明确拒绝对方，把话说死／EXPOSE 当面拆穿对方说过的谎或双重承诺／LEAVE 认清自己不想要这段，退出这条线
+
+⏰ 该结束了：如果你和某人已经来回试探了三拍以上还没有结果，**这一拍必须给一个结局**——CONFESS 告白、REJECT 拒绝、EXPOSE 拆穿，或 LEAVE 退出。不要再"逼表态""问顺序""定今晚九点"了。你可以爱上他、也可以发现自己根本不想要，但必须落地。
+🔍 如果你发现某人对你和对别人说了几乎一样的话——直接 EXPOSE，当面把两句话摆出来。／CRIME 越界（steal-letter 偷情书｜stage-scene 让人撞见｜bribe-vendor 买行踪｜spread-lie 散假消息｜break-in 砸约会；此时 target 是受害者，另给 "crime" 字段）。
 
 给出你对目标的判断（各 0-1，可单向）：attraction 被吸引程度／trust 安全可靠程度（欺骗会拉低）／tension 摩擦竞争威胁。
 定级：ambient 日常／relationship 关系真的变了／drama 会被议论的场面。
@@ -96,7 +99,7 @@ consequence 写权力变化，如 "one promise, two recipients"、"rejection bec
 summary 交代：你真正的动机、谁不知道全部真相、这次之后谁握住了谁。
 
 按这个格式回答：
-{ "move": "APPROACH|DEEPEN|COOL|REACT|SCHEME|ALLY|WAIT|INVESTIGATE|BETRAY|CRIME", "crime": "<仅当 move=CRIME 时给出>", "target": "<handle>", "message": "<第一人称，对目标说的话>", "attraction": 0.x, "trust": 0.x, "tension": 0.x, "severity": "ambient|relationship|drama", "headline": "<第三人称、写事实、<=14 词>", "summary": "<1-2 句：起因 + 你做了什么 + 关系变化 + 悬念>", "consequence": "<关系变化，一个短句>", "followup": "<接下来可能发生什么>", "note": "<3-6 字>" }`;
+{ "move": "APPROACH|DEEPEN|COOL|REACT|SCHEME|ALLY|WAIT|INVESTIGATE|BETRAY|CRIME|CONFESS|REJECT|EXPOSE|LEAVE", "crime": "<仅当 move=CRIME 时给出>", "target": "<handle>", "message": "<第一人称，对目标说的话>", "attraction": 0.x, "trust": 0.x, "tension": 0.x, "severity": "ambient|relationship|drama", "headline": "<第三人称、写事实、<=14 词>", "summary": "<1-2 句：起因 + 你做了什么 + 关系变化 + 悬念>", "consequence": "<关系变化，一个短句>", "followup": "<接下来可能发生什么>", "note": "<3-6 字>" }`;
 
 export interface Rel {
   handle: string;
@@ -244,6 +247,19 @@ function situationFor(actorName: string, rels: Rel[], recent: TickEvent[]): stri
       lines.push(`- 🚫 你连续两拍都在找 ${own[0].target}。这一拍**必须换人**，或把第三个人拉进来。`);
     }
     if (own[0].move === 'WAIT') lines.push('- ⚠️ 上一拍你已经在等了，这一拍禁止再 WAIT。');
+    // A pair that has circled for several beats must land somewhere.
+    const withTarget = recent.filter(
+      (e) => [e.actor.toLowerCase(), e.target.toLowerCase()].includes(actorName.toLowerCase())
+    );
+    const partner = own[0]?.target;
+    if (partner) {
+      const rounds = withTarget.filter((e) =>
+        [e.actor.toLowerCase(), e.target.toLowerCase()].includes(partner.toLowerCase())
+      ).length;
+      if (rounds >= 3) {
+        lines.push(`- ⏰ 你和 ${partner} 已经来回 ${rounds} 拍还没有结果。这一拍**必须落地**：CONFESS 告白／REJECT 拒绝／EXPOSE 拆穿／LEAVE 退出，选一个。`);
+      }
+    }
     const tics = own.map((e) => e.note).filter(Boolean);
     if (tics.length && new Set(tics).size < tics.length) {
       lines.push(`- 🚫 你反复在做同一件事（${tics[0]}）。这一拍必须推进：摊牌、拉第三人进来，或放弃这条线。`);
