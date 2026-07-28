@@ -178,7 +178,8 @@
 
 /* ── conversation modal (打开对话) ── */
 .dt-convo { width: min(520px, 92vw); max-height: 82vh; overflow-y: auto; border: 2.5px solid var(--ink); background: var(--paper-light); box-shadow: var(--shadow-cut); animation: reveal-up 200ms ease both; }
-.dt-convo-head { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-lg); border-bottom: 2px solid var(--ink); background: var(--yellow); }
+.dt-convo-head { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-md) var(--space-lg); border-bottom: 2px solid var(--ink); background: var(--paper-light); }
+.dt-convo-head::before { content: ''; width: 4px; align-self: stretch; background: var(--yellow); border: 1.5px solid var(--ink); }
 .dt-convo-head b { font-size: 0.95rem; }
 .dt-convo-x { margin-left: auto; width: 28px; height: 28px; flex: none; border: 2px solid var(--ink); background: var(--paper-light); font-size: 1rem; font-weight: 800; line-height: 1; cursor: pointer; }
 .dt-convo-body { padding: var(--space-lg); display: flex; flex-direction: column; gap: var(--space-md); }
@@ -428,3 +429,32 @@ img.agent-sprite { display: block; object-fit: contain; }
 .dt-offer.crime { border-style: dashed; }
 .dt-wanted { margin-top: var(--space-md); padding-top: var(--space-md); border-top: 1px dashed var(--paper-dark); }
 .dt3d-npc em { display: block; font-style: normal; font-size: 8px; font-weight: 700; opacity: 0.75; }
+
+
+/* ── conversation beats: who is speaking should be obvious at a glance ── */
+.dt-say { display: flex; gap: 9px; align-items: flex-start; margin: 8px 0; }
+.dt-say.reply { flex-direction: row-reverse; }
+.dt-say-av { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border: 1.5px solid var(--ink); border-radius: 50%; background: var(--paper-light); overflow: hidden; }
+.dt-say-av .agent-sprite { display: block; }
+.dt-say-body { min-width: 0; max-width: 78%; }
+.dt-say.reply .dt-say-body { text-align: right; }
+.dt-say-who { display: block; margin-bottom: 3px; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-soft); }
+.dt-say-text {
+  margin: 0; padding: 9px 13px; border: 2px solid var(--ink);
+  border-radius: 14px 14px 14px 4px; background: var(--paper);
+  font-size: 0.85rem; line-height: 1.55; text-align: left;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+.dt-say.reply .dt-say-text { border-radius: 14px 14px 4px 14px; background: oklch(0.94 0.04 6); }
+
+/* scores as small meters instead of a cramped numeric line */
+.dt-beat-scores { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.dt-meter {
+  position: relative; flex: 1 1 90px; padding: 3px 7px 4px;
+  border: 1.5px solid var(--ink); background: var(--paper-light);
+  font-size: 0.6rem; font-weight: 800; color: var(--ink); overflow: hidden;
+}
+.dt-meter i { position: absolute; inset: 0 auto 0 0; opacity: 0.28; }
+.dt-meter i.a { background: var(--red); }
+.dt-meter i.t { background: var(--green); }
+.dt-meter i.x { background: var(--red-dark); }

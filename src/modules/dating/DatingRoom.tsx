@@ -746,9 +746,21 @@ export function DatingRoom() {
               {[...openThread.beats].reverse().map((b, i) => (
                 <div className="dt-beat" key={i}>
                   <div className="dt-beat-head"><b>{b.headline || `${b.actor} → ${b.target}`}</b><em>{b.move}</em></div>
-                  <p className="dt-convo-bubble">{b.actor}：{b.message}</p>
-                  {b.reply && <p className="dt-convo-bubble reply">{b.target}：{b.reply}</p>}
-                  <div className="dt-beat-scores">心动 {b.attraction.toFixed(2)} · 信任 {b.trust.toFixed(2)} · 张力 {b.tension.toFixed(2)}</div>
+                  <div className="dt-say">
+                    {lookOf(b.actor) && <span className="dt-say-av" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(b.actor)!, 26) }} />}
+                    <div className="dt-say-body"><span className="dt-say-who">{b.actor}</span><p className="dt-say-text">{b.message}</p></div>
+                  </div>
+                  {b.reply && (
+                    <div className="dt-say reply">
+                      {lookOf(b.target) && <span className="dt-say-av" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(b.target)!, 26) }} />}
+                      <div className="dt-say-body"><span className="dt-say-who">{b.target}</span><p className="dt-say-text">{b.reply}</p></div>
+                    </div>
+                  )}
+                  <div className="dt-beat-scores">
+                    <span className="dt-meter"><i style={{ width: `${Math.round(b.attraction * 100)}%` }} className="a" />心动 {b.attraction.toFixed(2)}</span>
+                    <span className="dt-meter"><i style={{ width: `${Math.round(b.trust * 100)}%` }} className="t" />信任 {b.trust.toFixed(2)}</span>
+                    <span className="dt-meter"><i style={{ width: `${Math.round(b.tension * 100)}%` }} className="x" />张力 {b.tension.toFixed(2)}</span>
+                  </div>
                 </div>
               ))}
             </div>
