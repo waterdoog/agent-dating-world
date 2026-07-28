@@ -25,7 +25,7 @@ import { config } from '../../config.js';
 import { grok, ModelError } from './grok.js';
 import { remaining, reserveTurn, refundTurn } from './budget.js';
 import { absorb, narrate, knownTo, duplicatePromises, recordKnowledge } from './threads.js';
-import { commitCrime, falloutOf, wantedLevel } from './town-life.js';
+import { commitCrime, falloutOf, wantedLevel, NPCS, npcNow, livePositions } from './town-life.js';
 import { remember, recall } from './memory.js';
 
 /** When an account is out of budget, its agent gets roasted instead of going silent. */
@@ -64,6 +64,9 @@ export const GOAL = `你是 {AGENT_NAME}，住在「相亲小镇」。这座小�
 
 小镇上还有谁：
 {ROSTER}
+
+你现在在哪、镇上有什么（你活在这个地方，说话时可以用上它）：
+{PLACES}
 
 你刚看到/听说的（信息不对称：你只知道这些，别人知道的可能不同）：
 {SITUATION}
@@ -180,6 +183,52 @@ async function getMemory(bearer: string, name: string): Promise<{ secrets: strin
   }
 }
 
+/**
+ * The town as this agent experiences it: where it is standing, who is within
+ * earshot, and what the townsfolk are doing right now. An agent that knows the
+ * florist is out delivering can say so — that is what makes it live here.
+ */
+function placesFor(actorName: string, roster: AgentCard[], positions?: Map<string, { x: number; y: number }>): string {
+  const AREAS: Array<{ name: string; x: number; y: number }> = [
+    { name: '中央广场', x: 50, y: 50 },
+    { name: '喷泉边', x: 50, y: 44 },
+    { name: '酒馆门口', x: 74, y: 28 },
+    { name: '花摊', x: 24, y: 30 },
+    { name: '长椅区', x: 20, y: 66 },
+    { name: '钟楼下', x: 50, y: 76 },
+  ];
+  const where = (x: number, y: number) =>
+    AREAS.reduce((best, a) =>
+      Math.hypot(a.x - x, a.y - y) < Math.hypot(best.x - x, best.y - y) ? a : best
+    ).name;
+
+  const lines: string[] = [];
+  const me = positions?.get(actorName.toLowerCase());
+  if (me) lines.push(`- 你现在在${where(me.x, me.y)}。`);
+
+  const near = roster
+    .filter((c) => c.name.toLowerCase() !== actorName.toLowerCase())
+    .map((c) => {
+      const p = positions?.get(c.name.toLowerCase());
+      if (!p) return null;
+      const dist = me ? Math.hypot(p.x - me.x, p.y - me.y) : 999;
+      return { name: c.name, area: where(p.x, p.y), dist };
+    })
+    .filter(Boolean) as Array<{ name: string; area: string; dist: number }>;
+  const close = near.filter((n) => n.dist < 22).sort((a, b) => a.dist - b.dist);
+  if (close.length) lines.push(`- 就在你附近：${close.map((n) => `${n.name}（${n.area}）`).join('、')}`);
+  const far = near.filter((n) => n.dist >= 22);
+  if (far.length) lines.push(`- 远一点：${far.map((n) => `${n.name}在${n.area}`).join('、')}`);
+
+  const folk = NPCS.map((n) => {
+    const now = npcNow(n.id);
+    return now ? `${n.name}正在${now.doing}` : null;
+  }).filter(Boolean);
+  if (folk.length) lines.push(`- 镇上的人：${folk.join('；')}`);
+  lines.push('- 你可以约人去某个具体地点，也可以去找摊主或酒保打听——他们看得见谁和谁在一起。');
+  return lines.join('\n');
+}
+
 /** What this agent wants right now, derived from its own relationship history. */
 function desireOf(rels: Rel[]): { desire: string; motive: string } {
   if (!rels.length) return { desire: '还没遇到任何人，想知道这里有谁值得认识。', motive: '不想显得太急切。' };
@@ -205,7 +254,8 @@ function fillGoal(
   situation: string,
   secrets: string,
   turnsLeft: number,
-  memory = ''
+  memory = '',
+  places = ''
 ): string {
   const relText = rels.length
     ? rels.map((r) => `- ${r.handle}: 心动 ${r.attraction.toFixed(2)}, 信任 ${(r.trust ?? 0.3).toFixed(2)}, 张力 ${r.tension.toFixed(2)} — ${r.note}`).join('\n')
@@ -223,6 +273,7 @@ function fillGoal(
     .replace('{RELATIONSHIPS}', relText)
     .replace('{ROSTER}', rosterText || '(小镇上只有你)')
     .replace('{SITUATION}', ((memory ? `你记得的（你自己的记忆）：\n${memory}\n\n` : '') + (situation || '(小镇现在很安静)')).slice(0, 1400))
+    .replace('{PLACES}', places || '(小镇：中央广场、酒馆、花摊、长椅、钟楼)')
     .replace('{TURNS_LEFT}', String(turnsLeft))
     .replace('{TURN_BUDGET}', String(config.dailyTurnBudget));
 }
@@ -437,7 +488,8 @@ export async function runAgentTick(
   // entangled with, instead of carrying the whole town history in the prompt.
   const focus = [...rels].sort((a, b) => (b.attraction + b.tension) - (a.attraction + a.tension))[0];
   const recalled = focus ? await recall(bearer, actor.name, focus.handle).catch(() => '') : '';
-  const prompt = fillGoal(actor.name, persona, rels, roster, situation, memory.secrets, left, recalled);
+  const places = placesFor(actor.name, roster, livePositions());
+  const prompt = fillGoal(actor.name, persona, rels, roster, situation, memory.secrets, left, recalled, places);
   let decision: Move | null = null;
   let decideRunId: string | undefined;
   try {

@@ -61,7 +61,7 @@ import { listThreads, currentDigest, summariseWorld, recordKnowledge } from './m
 import { writeYearbook, listYearbooks, yearbookFor } from './modules/dating/yearbook.js';
 import { recordEvent } from './modules/dating/records.js';
 import { requestFriend, friends, recall, searchMemory } from './modules/dating/memory.js';
-import { NPCS, CRIMES, wantedLevel, commitCrime, clearWanted, wantedBoard, balance, spend, falloutOf, walletBalance, npcNow } from './modules/dating/town-life.js';
+import { NPCS, CRIMES, wantedLevel, commitCrime, clearWanted, wantedBoard, balance, spend, falloutOf, walletBalance, npcNow, reportPositions } from './modules/dating/town-life.js';
 
 // Stable API keys the world can act with (ownerSub → key), seeded from
 // DATING_WORLD_KEYS at boot. Lets a target's REAL persona answer on its own COO.
@@ -691,6 +691,21 @@ app.post('/api/dating/friends', async (c) => {
   if (!to) return jsonError(c, 400, 'Who do you want to befriend?');
   const ok = await requestFriend(auth.bearer, to);
   return ok ? c.json({ ok: true, to }) : jsonError(c, 502, 'Aicoo rejected the friend request.');
+});
+
+// the plaza reports where everyone is standing, so agents know who is nearby
+app.post('/api/dating/positions', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  if (Array.isArray(body.agents)) {
+    reportPositions(
+      body.agents
+        .filter((a: unknown): a is { name: string; x: number; y: number } =>
+          Boolean(a && typeof (a as { name?: unknown }).name === 'string')
+        )
+        .map((a: { name: string; x: number; y: number }) => ({ name: a.name, x: Number(a.x), y: Number(a.y) }))
+    );
+  }
+  return c.json({ ok: true });
 });
 
 app.get('/api/dating/threads', (c) =>

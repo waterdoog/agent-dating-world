@@ -259,6 +259,16 @@ export function DatingRoom() {
     return () => { alive = false; window.clearInterval(id); };
   }, []);
 
+  // Tell the server where everyone is standing, so agents know who is within
+  // earshot when they take their next turn.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const list = simRef.current.map((m) => ({ name: m.name, x: m.x, y: m.y }));
+      if (list.length) api.dating.positions(list).catch(() => undefined);
+    }, 20000);
+    return () => window.clearInterval(id);
+  }, []);
+
   // WASD / arrows drive YOUR agent while you're inside the world
   useEffect(() => {
     if (!inWorld) return;

@@ -232,3 +232,20 @@ export function spend(agent: string, amount: number): boolean {
   purse.set(k, have - amount);
   return true;
 }
+
+/**
+ * Where each agent currently stands, reported by the plaza simulation. Agents
+ * use this to know who is within earshot — the difference between "I heard"
+ * and "I can see you from here".
+ */
+const positions = new Map<string, { x: number; y: number; at: number }>();
+export function reportPositions(list: Array<{ name: string; x: number; y: number }>): void {
+  const at = Date.now();
+  for (const p of list) positions.set(p.name.toLowerCase(), { x: p.x, y: p.y, at });
+}
+export function livePositions(): Map<string, { x: number; y: number }> {
+  const fresh = new Map<string, { x: number; y: number }>();
+  const cutoff = Date.now() - 120_000;   // ignore stale reports
+  for (const [k, v] of positions) if (v.at > cutoff) fresh.set(k, { x: v.x, y: v.y });
+  return fresh;
+}

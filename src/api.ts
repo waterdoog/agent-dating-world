@@ -850,6 +850,8 @@ export const api = {
     town: () => request<TownInfo>('GET', '/api/dating/town'),
     deal: (npc: string, offer: string) => request<{ npc: string; offer: string; effect: string; cash: number; wanted: number }>('POST', '/api/dating/town/deal', { npc, offer }),
     crime: (crime: string, detail?: string) => request<{ level: number; label: string }>('POST', '/api/dating/town/crime', { crime, detail }),
+    positions: (agents: Array<{ name: string; x: number; y: number }>) =>
+      request<{ ok: boolean }>('POST', '/api/dating/positions', { agents }),
     budget: () => request<{ dailyTurnBudget: number; agents: Array<{ agent: string; used: number; left: number; top?: string }> }>('GET', '/api/dating/budget'),
   },
 };
