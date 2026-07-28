@@ -46,6 +46,7 @@ export function yearbookFor(agent: string, year: number): Yearbook | undefined {
  * history, the beats it appeared in, and how it actually spent its turns.
  */
 export async function writeYearbook(args: {
+  shareToken?: string;
   agent: string;
   persona: string;
   year: number;
@@ -53,7 +54,7 @@ export async function writeYearbook(args: {
   events: TickEvent[];
   bearer: string;
 }): Promise<Yearbook | null> {
-  const { agent, persona, year, rels, events, bearer } = args;
+  const { agent, persona, year, rels, events, bearer, shareToken } = args;
   const mine = events.filter(
     (e) => e.actor.toLowerCase() === agent.toLowerCase() || e.target.toLowerCase() === agent.toLowerCase()
   );
@@ -87,7 +88,7 @@ export async function writeYearbook(args: {
     `{"headline":"<你怎么概括自己这一年，一句话>","story":"<2-4 句，你的语气、你的偏见>","verdicts":[{"who":"<某人>","line":"<你对他的评价，一句，你的语气>"}],"dramas":["<这一年你忘不掉的事，各一句>"],"stillWaiting":"<你还在等什么；如果什么都不等，就说清楚>"}`;
 
   try {
-    const { text, run } = await grok(prompt, { purpose: 'yearbook', agent, bearer, json: true, temperature: 0.95 });
+    const { text, run } = await grok(prompt, { purpose: 'yearbook', agent, bearer, shareToken, json: true, temperature: 0.95 });
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) return null;
     const p = JSON.parse(m[0]) as Partial<Yearbook> & { verdicts?: YearbookVerdict[]; dramas?: string[] };

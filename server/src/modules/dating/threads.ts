@@ -130,7 +130,7 @@ export function absorb(e: TickEvent): StoryThread | null {
  * Ask Grok to narrate where a thread has got to. Real model call, recorded;
  * on failure the thread simply keeps its previous narration (never faked).
  */
-export async function narrate(thread: StoryThread, bearer: string): Promise<StoryThread> {
+export async function narrate(thread: StoryThread, bearer: string, shareToken?: string): Promise<StoryThread> {
   const beats = [...thread.beats].reverse()
     .map((b) => `- ${b.actor} → ${b.target} [${b.move}] ${b.headline}\n    「${b.message}」${b.reply ? ` / 回：「${b.reply}」` : '（没有回应）'}  心动${b.attraction.toFixed(2)} 信任${b.trust.toFixed(2)} 张力${b.tension.toFixed(2)}`)
     .join('\n');
@@ -148,7 +148,7 @@ export async function narrate(thread: StoryThread, bearer: string): Promise<Stor
     `按这个格式回答：{"title":"<具体事实，<=14 词>","arc":"<1-2 句>","openQuestion":"<一句悬念>"}`;
 
   try {
-    const { text, run } = await grok(prompt, { purpose: 'story-thread', agent: thread.cast.join('~'), bearer, json: true, temperature: 0.8 });
+    const { text, run } = await grok(prompt, { purpose: 'story-thread', agent: thread.cast.join('~'), bearer, shareToken, json: true, temperature: 0.8 });
     const m = text.match(/\{[\s\S]*\}/);
     if (m) {
       const p = JSON.parse(m[0]) as { title?: string; arc?: string; openQuestion?: string };
@@ -185,7 +185,7 @@ export function currentDigest(): WorldDigest | null {
  * Summarise the town from its real threads. Facts only — the digest may not
  * introduce anyone or anything that has not actually happened.
  */
-export async function summariseWorld(bearer: string): Promise<WorldDigest | null> {
+export async function summariseWorld(bearer: string, shareToken?: string): Promise<WorldDigest | null> {
   const live = listThreads(6).filter((t) => t.beats.length);
   if (!live.length) return digest;
   const body = live
@@ -209,7 +209,7 @@ export async function summariseWorld(bearer: string): Promise<WorldDigest | null
     `按这个格式回答：{"lines":[{"headline":"...","shift":"...","detail":"..."}]}`;
 
   try {
-    const { text, run } = await grok(prompt, { purpose: 'world-feed-summary', bearer, json: true, temperature: 0.7 });
+    const { text, run } = await grok(prompt, { purpose: 'world-feed-summary', bearer, shareToken, json: true, temperature: 0.7 });
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) return digest;
     const parsed = JSON.parse(m[0]) as { lines?: Array<{ headline?: string; shift?: string; detail?: string }> };

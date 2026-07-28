@@ -69,12 +69,15 @@ const worldCreds = new Map<string, string>();
 // The town digest is re-written from real threads, at most once every few
 // minutes, using whichever account the world is running on.
 let lastDigestAt = 0;
-const DIGEST_EVERY_MS = 4 * 60_000;
+const DIGEST_EVERY_MS = 9 * 60_000;   // keep the digest well clear of agent turns
 function maybeSummarise(): void {
   const bearer = worldCreds.values().next().value;
   if (!bearer || Date.now() - lastDigestAt < DIGEST_EVERY_MS) return;
   lastDigestAt = Date.now();
-  void summariseWorld(bearer).catch(() => undefined);
+  // the narrator runs in an agent's sandbox too, so it never touches a personal chat
+  void listSquare()
+    .then((r) => summariseWorld(bearer, r[0]?.shareToken))
+    .catch(() => undefined);
 }
 
 // One world year = one real day. At each turn of the year every agent writes
@@ -100,6 +103,7 @@ async function maybeCloseYear(): Promise<void> {
       rels: await readRels(bearer, card.name).catch(() => []),
       events,
       bearer,
+      shareToken: card.shareToken,   // narrate inside the agent's own sandbox
     }).catch(() => undefined);
   }
 }

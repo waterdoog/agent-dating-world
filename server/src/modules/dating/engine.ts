@@ -462,7 +462,7 @@ export async function runAgentTick(
         decideRunId, turnsLeft: remaining(actor.name), status: 'ok',
       };
       const th = absorb(ev);
-      if (th && th.beats.length >= 2) await narrate(th, bearer).catch(() => undefined);
+      if (th && th.beats.length >= 2) await narrate(th, bearer, actor.shareToken).catch(() => undefined);
       return ev;
     }
   }
@@ -545,7 +545,7 @@ export async function runAgentTick(
   // fold this beat into the pair's continuing story, and re-narrate the thread
   // when it has enough history to actually be a story.
   const thread = absorb(event);
-  if (thread && thread.beats.length >= 2) await narrate(thread, bearer).catch(() => undefined);
+  if (thread && thread.beats.length >= 2) await narrate(thread, bearer, actor.shareToken).catch(() => undefined);
 
   return event;
 }
@@ -640,6 +640,6 @@ export async function encounterWith(
     decideRunId, replyRunId, turnsLeft: remaining(actor.name), status: 'ok',
   };
   const thread = absorb(event);
-  if (thread && thread.beats.length >= 2) await narrate(thread, bearer).catch(() => undefined);
+  if (thread && thread.beats.length >= 2) await narrate(thread, bearer, actor.shareToken).catch(() => undefined);
   return event;
 }
