@@ -30,7 +30,7 @@ export const NPCS: Npc[] = [
     id: 'florist',
     name: '花摊 · 老周',
     kind: 'vendor',
-    x: 24, y: 30,
+    x: 34, y: 18,
     blurb: '卖花，也卖消息。谁最近给谁送过花，他记得一清二楚。',
     offers: [
       { id: 'bouquet', label: '买一束花', cost: 20, effect: '送出后对方心动 +0.08' },
@@ -41,7 +41,7 @@ export const NPCS: Npc[] = [
     id: 'bar',
     name: '酒馆 · 阿岚',
     kind: 'bartender',
-    x: 74, y: 28,
+    x: 76, y: 44,
     blurb: '深夜还开着。她见过每一场分手，也见过每一次偷偷的碰面。',
     offers: [
       { id: 'private-booth', label: '订一个包厢', cost: 40, effect: '今晚的私下见面不会被广场看见' },
@@ -52,7 +52,7 @@ export const NPCS: Npc[] = [
     id: 'cop',
     name: '巡警 · 老陈',
     kind: 'police',
-    x: 50, y: 76,
+    x: 30, y: 40,
     blurb: '管治安，也管闹得太难看的场面。通缉度高了，他会来找你。',
     offers: [
       { id: 'report', label: '举报某人', cost: 0, effect: '目标通缉度 +1（如果你说的是真的）' },
@@ -63,7 +63,7 @@ export const NPCS: Npc[] = [
     id: 'gossip',
     name: '长椅 · 阿姨团',
     kind: 'gossip',
-    x: 20, y: 66,
+    x: 26, y: 72,
     blurb: '整天坐在长椅上。她们不参与任何关系，但她们知道所有关系。',
     offers: [
       { id: 'listen', label: '坐下来听一会儿', cost: 10, effect: '听到一条小镇传闻' },
@@ -142,28 +142,28 @@ const CRIME_FALLOUT: Record<string, (actor: string, victim: string) => CrimeFall
  */
 const SCHEDULE: Record<string, Array<{ x: number; y: number; doing: string }>> = {
   florist: [
-    { x: 24, y: 30, doing: '摆摊' },
-    { x: 46, y: 44, doing: '推着花车绕广场' },
-    { x: 24, y: 30, doing: '收摊前最后一轮' },
-    { x: 70, y: 60, doing: '给酒馆送花' },
+    { x: 34, y: 18, doing: '摆摊' },
+    { x: 44, y: 20, doing: '推着花车走过步行街' },
+    { x: 34, y: 18, doing: '收摊前最后一轮' },
+    { x: 70, y: 42, doing: '给酒馆送花' },
   ],
   bar: [
-    { x: 74, y: 28, doing: '擦杯子' },
-    { x: 74, y: 28, doing: '开门迎客' },
-    { x: 58, y: 40, doing: '出来抽根烟' },
-    { x: 74, y: 28, doing: '守着深夜的最后一桌' },
+    { x: 76, y: 44, doing: '擦杯子' },
+    { x: 74, y: 40, doing: '在门口台阶上迎客' },
+    { x: 84, y: 58, doing: '去后巷倒垃圾' },
+    { x: 76, y: 44, doing: '守着深夜的最后一桌' },
   ],
   cop: [
-    { x: 50, y: 76, doing: '站岗' },
-    { x: 30, y: 52, doing: '巡逻西侧' },
-    { x: 68, y: 48, doing: '巡逻东侧' },
-    { x: 50, y: 76, doing: '回到岗亭' },
+    { x: 30, y: 40, doing: '在钟楼下站岗' },
+    { x: 46, y: 30, doing: '巡逻主路' },
+    { x: 47, y: 22, doing: '往暗巷里看了一眼' },
+    { x: 52, y: 46, doing: '穿过广场' },
   ],
   gossip: [
-    { x: 20, y: 66, doing: '坐着看' },
-    { x: 20, y: 66, doing: '交换今天的消息' },
-    { x: 38, y: 70, doing: '挪到能看见东灯的位置' },
-    { x: 20, y: 66, doing: '收工前再看一眼' },
+    { x: 26, y: 72, doing: '坐在长椅上看' },
+    { x: 26, y: 72, doing: '交换今天的消息' },
+    { x: 36, y: 60, doing: '挪到看得见广场的位置' },
+    { x: 26, y: 72, doing: '收工前再看一眼' },
   ],
 };
 

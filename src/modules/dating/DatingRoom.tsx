@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, ChevronRight, Clock3, Heart, RefreshCw, Sparkles, Users, Zap } from 'lucide-react';
 import { api, loginWithAicooUrl, type DatingLook, type DatingTickEvent, type PublicAgent, type StoryThreadInfo, type WorldDigestInfo, type YearbookInfo, type TownInfo } from '../../api';
 import { useAicooSession } from '../../session';
@@ -7,6 +7,17 @@ import { agentSprite, type AgentAppearance } from './agent-avatar';
 import { CreateWizard } from './CreateWizard';
 
 const Plaza3D = lazy(() => import('./Plaza3D'));
+
+/** Surfaces a 3D scene failure instead of letting Suspense swallow it silently. */
+class PlazaErrorBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
+  state: { err: Error | null } = { err: null };
+  static getDerivedStateFromError(err: Error) { return { err }; }
+  componentDidCatch(err: Error) { console.error('[plaza] scene failed:', err); }
+  render() {
+    if (this.state.err) return <div className="dt-plaza-loading">3D 场景出错：{this.state.err.message}</div>;
+    return this.props.children;
+  }
+}
 
 // ── demo cast (shown only while the real square is empty) ───────────
 const DEMO: Array<{ name: string; mbti: string; look: AgentAppearance; x: number; y: number; size: number; bubble?: { text: string; kind: 'fight' | 'love' | 'new' } }> = [
@@ -85,6 +96,11 @@ interface Mover {
   rounds: number;             // vestigial; kept for the mover shape
   bubble?: { text: string; kind: 'fight' | 'love' | 'new' };
 }
+// mirrors server/modules/dating/town-map.ts — agents walk to the place a beat names
+const PLACE_XY: Record<string, { x: number; y: number }> = {
+  plaza: { x: 50, y: 50 }, fountain: { x: 50, y: 44 }, bar: { x: 74, y: 28 },
+  florist: { x: 24, y: 30 }, bench: { x: 20, y: 66 }, clock: { x: 50, y: 76 },
+};
 const BOUNDS = { minX: 10, maxX: 89, minY: 17, maxY: 82 };
 const SPEED = 0.62;       // top walking speed
 const ACCEL = 0.075;      // how quickly they get up to speed / change direction
@@ -420,6 +436,15 @@ export function DatingRoom() {
       if ((coolRef.current.get([a.name, b.name].sort().join('~')) ?? 0) >= now) return;
       playedRef.current.add(eventKey(ev));
       stageExchange(a, b, ev.message, ev.reply, ev.tension > ev.attraction ? 'fight' : 'love');
+      // the beat named a place — both of them head there once they stop talking,
+      // so the town has traffic between the bar, the flower stall and the square
+      const dest = ev.destination ? PLACE_XY[ev.destination] : undefined;
+      if (dest) {
+        for (const m of [a, b]) {
+          m.tx = clampX(dest.x + (Math.random() - 0.5) * 10);
+          m.ty = clampY(dest.y + (Math.random() - 0.5) * 10);
+        }
+      }
     }
     const id = window.setInterval(() => {
       stepChats(simRef.current, coolRef.current);
@@ -532,9 +557,9 @@ export function DatingRoom() {
             </div>
           )}
           <div className="dt-plaza">
-            <Suspense fallback={<div className="dt-plaza-loading">加载 3D 世界…</div>}>
+            <PlazaErrorBoundary><Suspense fallback={<div className="dt-plaza-loading">加载 3D 世界…</div>}>
               <Plaza3D agents={frame.map((m) => ({ name: m.name, look: m.look, you: m.you, x: m.x, y: m.y, partner: m.partner, bubble: m.bubble }))} posRef={simRef} npcs={inWorld ? (town?.npcs ?? []) : (town?.npcs ?? [])} onNpc={(id) => setOpenNpc(id)} follow={inWorld ? mine?.name : undefined} firstPerson={inWorld && firstPerson} />
-            </Suspense>
+            </Suspense></PlazaErrorBoundary>
           </div>
         </section>
           <div className="dt-panel dt-rr-sec feed-sec">

@@ -1,5 +1,5 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useGLTF, Clone, Html, OrbitControls, ContactShadows } from '@react-three/drei';
+import { useGLTF, Clone, Html, OrbitControls, ContactShadows, Merged } from '@react-three/drei';
 import { Suspense, useRef, type RefObject } from 'react';
 import * as THREE from 'three';
 import type { DatingLook } from '../../api';
@@ -8,9 +8,16 @@ import { avatar3dUrl, type AgentAppearance } from './agent-avatar';
 // Kenney city tiles are 1×1 units and buildings are ~1–2 units tall, so agents
 // must be small: a character model is ~1.8 units before scaling.
 const AGENT_SCALE = 0.42;
-// The sim keeps movers inside 10–89, so stretch that band across the paved
-// plaza: 10 → -3.2 and 89 → +3.2, i.e. they use the whole square, not the middle.
-const map = (v: number) => ((v - 10) / 79 - 0.5) * 7.6;
+/**
+ * Sim field (0–100) → world space. It used to squeeze everyone onto the paving,
+ * so the whole cast milled in the middle no matter where they meant to be.
+ * The band now covers the TOWN, so walking to the tavern or the park is a real
+ * journey across the map. Kept as separate axes because the town is wider than
+ * it is deep.
+ */
+const mapX = (v: number) => ((v - 8) / 84 - 0.5) * 15;
+const mapZ = (v: number) => ((v - 8) / 84 - 0.5) * 14;
+const map = mapX;   // legacy single-axis helper for square-ish uses
 
 // live positions come from the sim ref (read every frame — React re-renders do
 // NOT reliably reach inside the r3f Canvas); identity + bubbles come from props.
@@ -58,7 +65,7 @@ function Agent({ agent, posRef }: { agent: Mover3D; posRef: RefObject<LivePos[]>
   useFrame((_s, dt) => {
     const p = posRef.current?.find((m) => m.name === agent.name);
     if (!p || !g.current) return;
-    _v.set(map(p.x), 0, map(p.y));
+    _v.set(mapX(p.x), 0, mapZ(p.y));
     if (inited.current) g.current.position.lerp(_v, 0.16);
     else { g.current.position.copy(_v); inited.current = true; }
     // turn the BODY to face where it's walking (tags stay screen-facing)
@@ -77,7 +84,7 @@ function Agent({ agent, posRef }: { agent: Mover3D; posRef: RefObject<LivePos[]>
     }
   });
   return (
-    <group ref={g} position={[map(agent.x), 0, map(agent.y)]}>
+    <group ref={g} position={[mapX(agent.x), 0, mapZ(agent.y)]}>
       <group ref={body}>
         <Clone object={scene} scale={AGENT_SCALE} castShadow />
       </group>
@@ -103,32 +110,24 @@ const R = Math.PI / 2;   // one quarter turn
  * These mirror town-map.ts: same ids, same 0–100 coordinates — scaled up, given
  * their own model, and captioned so each is recognisable from across the square.
  */
-const LANDMARKS: Array<{ id: string; name: string; x: number; y: number; url: string; scale: number; rot?: number }> = [
-  { id: 'bar', name: '酒馆', x: 74, y: 28, url: '/city/building-small-b.glb', scale: 1.75, rot: -R },
-  { id: 'florist', name: '花摊', x: 24, y: 30, url: '/city/building-small-c.glb', scale: 1.35, rot: R },
-  { id: 'clock', name: '钟楼', x: 50, y: 76, url: '/city/building-small-d.glb', scale: 1.9, rot: Math.PI },
-  { id: 'bench', name: '长椅区', x: 20, y: 66, url: '/city/building-garage.glb', scale: 1.2, rot: R },
+const LANDMARKS: Array<{ id: string; name: string; pos: [number, number]; url: string; scale: number; rot?: number; scaleY?: number }> = [
+  // world-space positions chosen to sit ON their district, fronting a street
+  { id: 'clock', name: '钟楼', pos: [-5.6, 0.6], url: `/city/building-small-d.glb`, scale: 1.5, scaleY: 2.6, rot: R },
+  { id: 'tavern', name: '酒馆', pos: [6.9, 1.1], url: `/city/building-small-b.glb`, scale: 1.7, rot: -R },
+  { id: 'florist', name: '花摊', pos: [-3.4, -6.9], url: `/city/building-small-c.glb`, scale: 1.25, rot: Math.PI },
+  { id: 'park', name: '长椅公园', pos: [-7.2, 6.4], url: '/city/grass-trees-tall.glb', scale: 1.3 },
+  { id: 'alley', name: '暗巷', pos: [0.9, -6.1], url: '/city/building-garage.glb', scale: 0.75, rot: R },
+  { id: 'backalley', name: '酒馆后巷', pos: [10.2, 3.4], url: '/city/building-garage.glb', scale: 0.8, rot: -R },
 ];
-
-/**
- * Landmarks belong on the street, not on the paving. The map's 0–100 coords put
- * them inside the square, so push each one radially out past the ring road —
- * near enough that "the bar is east" still holds, far enough that it fronts a
- * street instead of blocking the plaza.
- */
-function pushOut(x: number, z: number): [number, number, number] {
-  const d = Math.hypot(x, z) || 1;
-  const out = 5.6;                       // just beyond the ring road
-  return [(x / d) * out, 0, (z / d) * out];
-}
 
 /** A landmark building plus a standing sign, so the place reads from a distance. */
 function Landmark({ mark }: { mark: (typeof LANDMARKS)[number] }) {
   const { scene } = useGLTF(mark.url);
+  const s = mark.scale;
   return (
-    <group position={pushOut(map(mark.x), map(mark.y))} rotation={[0, mark.rot ?? 0, 0]}>
-      <Clone object={scene} scale={mark.scale} castShadow receiveShadow />
-      <Html position={[0, 1.5 * mark.scale, 0]} center distanceFactor={20} zIndexRange={[6, 0]}>
+    <group position={[mark.pos[0], 0, mark.pos[1]]} rotation={[0, mark.rot ?? 0, 0]}>
+      <Clone object={scene} scale={[s, s * (mark.scaleY ?? 1), s]} castShadow receiveShadow />
+      <Html position={[0, 1.4 * s * (mark.scaleY ?? 1), 0]} center distanceFactor={22} zIndexRange={[6, 0]}>
         <div className="dt3d-landmark">{mark.name}</div>
       </Html>
     </group>
@@ -146,7 +145,7 @@ const NPC_MODEL: Record<string, string> = {
 function NpcFigure({ npc, onPick }: { npc: Npc3D; onPick?: (id: string) => void }) {
   const { scene } = useGLTF(NPC_MODEL[npc.kind] ?? NPC_MODEL.vendor);
   return (
-    <group position={[map(npc.x), 0, map(npc.y)]} onClick={(e) => { e.stopPropagation(); onPick?.(npc.id); }}>
+    <group position={[mapX(npc.x), 0, mapZ(npc.y)]} onClick={(e) => { e.stopPropagation(); onPick?.(npc.id); }}>
       <Clone object={scene} scale={AGENT_SCALE} castShadow />
       {/* an invisible collider: the model itself is a thin figure and easy to
           miss, so give the click a body-sized target */}
@@ -173,7 +172,7 @@ function SoloBubble({ agent, posRef }: { agent: Mover3D; posRef: RefObject<LiveP
   useFrame(() => {
     const p = posRef.current?.find((m) => m.name === agent.name);
     if (!p || !g.current) return;
-    g.current.position.set(map(p.x), 1.72 + tagLift(agent.name), map(p.y));
+    g.current.position.set(mapX(p.x), 1.72 + tagLift(agent.name), mapZ(p.y));
   });
   if (!agent.bubble) return null;
   return (
@@ -192,7 +191,7 @@ function ChatBox({ a, b, posRef }: { a: Mover3D; b: Mover3D; posRef: RefObject<L
     const pa = posRef.current?.find((m) => m.name === a.name);
     const pb = posRef.current?.find((m) => m.name === b.name);
     if (!pa || !pb || !g.current) return;
-    g.current.position.set((map(pa.x) + map(pb.x)) / 2, 1.5, (map(pa.y) + map(pb.y)) / 2);
+    g.current.position.set((mapX(pa.x) + mapX(pb.x)) / 2, 1.5, (mapZ(pa.y) + mapZ(pb.y)) / 2);
   });
   const kind = a.bubble?.kind ?? b.bubble?.kind ?? 'new';
   return (
@@ -204,6 +203,40 @@ function ChatBox({ a, b, posRef }: { a: Mover3D; b: Mover3D; posRef: RefObject<L
         </div>
       </Html>
     </group>
+  );
+}
+
+type TownPiece = { url: string; pos: [number, number, number]; rot?: [number, number, number]; scale?: number; scaleY?: number };
+
+/**
+ * Draws the town in batches. Every tile used to be its own <Clone>, which meant
+ * hundreds of loads and draw calls and a scene that never finished appearing.
+ * Identical models now share one instanced mesh each.
+ */
+function TownGeometry({ pieces }: { pieces: TownPiece[] }) {
+  const urls = [...new Set(pieces.map((p) => p.url))];
+  const gltfs = useGLTF(urls) as unknown as Array<{ scene: THREE.Group }>;
+  const meshes: Record<string, THREE.Mesh> = {};
+  urls.forEach((url, i) => {
+    const scene = gltfs[i]?.scene;
+    scene?.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh && !meshes[url]) meshes[url] = o as THREE.Mesh;
+    });
+  });
+  if (Object.keys(meshes).length !== urls.length) return null;
+  return (
+    <Merged meshes={meshes} castShadow receiveShadow>
+      {(models: Record<string, React.FC<Record<string, unknown>>>) => (
+        <>
+          {pieces.map((p, i) => {
+            const M = models[p.url];
+            if (!M) return null;
+            const s = p.scale ?? 1;
+            return <M key={i} position={p.pos} rotation={p.rot} scale={[s, s * (p.scaleY ?? 1), s]} />;
+          })}
+        </>
+      )}
+    </Merged>
   );
 }
 
@@ -219,172 +252,107 @@ function Scene({ agents, posRef, npcs, onNpc }: { agents: Mover3D[]; posRef: Ref
     seen.add(a.name); seen.add(b.name);
     chats.push([a, b]);
   }
-  // 7×7 paved plaza — the agents' whole world, so nobody wanders onto bare dirt
-  const pavement: [number, number][] = [];
-  for (let x = -3; x <= 3; x++) for (let z = -3; z <= 3; z++) pavement.push([x, z]);
 
-  // a ring road around the plaza: straights on the sides, corners at the four ends
-  const ring: Array<{ url: string; pos: [number, number, number]; rot?: [number, number, number] }> = [];
-  for (let i = -3; i <= 3; i++) {
-    const lamp = i % 3 === 0;
-    ring.push({ url: lamp ? '/city/road-straight-lightposts.glb' : '/city/road-straight.glb', pos: [i, 0, -4], rot: [0, 0, 0] });
-    ring.push({ url: lamp ? '/city/road-straight-lightposts.glb' : '/city/road-straight.glb', pos: [i, 0, 4], rot: [0, Math.PI, 0] });
-    ring.push({ url: lamp ? '/city/road-straight-lightposts.glb' : '/city/road-straight.glb', pos: [-4, 0, i], rot: [0, R, 0] });
-    ring.push({ url: lamp ? '/city/road-straight-lightposts.glb' : '/city/road-straight.glb', pos: [4, 0, i], rot: [0, -R, 0] });
-  }
-  ring.push({ url: '/city/road-corner.glb', pos: [-4, 0, -4], rot: [0, R, 0] });
-  ring.push({ url: '/city/road-corner.glb', pos: [4, 0, -4], rot: [0, 0, 0] });
-  ring.push({ url: '/city/road-corner.glb', pos: [4, 0, 4], rot: [0, -R, 0] });
-  ring.push({ url: '/city/road-corner.glb', pos: [-4, 0, 4], rot: [0, Math.PI, 0] });
-
-  // blocks on all four sides of the ring road, not one row
   const B = '/city/building-small-';
-  // Terraces, not scattered boxes. Kenney's reference town works because the
-  // buildings sit shoulder to shoulder along the street with varied heights —
-  // ours were spaced two units apart and all the same height, which read as
-  // pieces on a board rather than a street. Rows are built at 1.05 spacing so
-  // the facades touch, and each building gets a deterministic height so the
-  // skyline steps up and down.
-  const KIND_SET = [`${B}a.glb`, `${B}b.glb`, `${B}c.glb`, `${B}d.glb`];
+  const KINDS = [`${B}a.glb`, `${B}b.glb`, `${B}c.glb`, `${B}d.glb`];
   const hashAt = (x: number, z: number) => Math.abs(Math.round(x * 73856093 + z * 19349663)) % 997;
-  const blocks: Array<{ url: string; pos: [number, number, number]; rot?: [number, number, number]; scaleY?: number }> = [];
-  /** One terrace of touching buildings along a street edge. */
-  function terrace(
-    from: number, to: number, fixed: number, axis: 'x' | 'z', rot: number, skip: (v: number) => boolean = () => false
-  ) {
-    for (let v = from; v <= to; v += 1.35) {
-      if (skip(v)) continue;
+
+  type Piece = { url: string; pos: [number, number, number]; rot?: [number, number, number]; scale?: number; scaleY?: number };
+  const roads: Piece[] = [];
+  const blocks: Piece[] = [];
+  const props: Piece[] = [];
+  const paving: [number, number][] = [];
+
+  const road = (x: number, z: number, rot = 0, lamp = false) =>
+    roads.push({ url: lamp ? '/city/road-straight-lightposts.glb' : '/city/road-straight.glb', pos: [x, 0, z], rot: [0, rot, 0] });
+
+  // ── three streets, meeting off-centre ─────────────────────────────
+  // Kenney's road tile runs along Z, so a street laid out along X needs the
+  // quarter turn — these were the wrong way round and the tarmac ran across
+  // the direction of travel.
+  // ① the shopping street runs east–west across the north
+  for (let x = -9; x <= 4; x++) road(x, -6, R, x % 4 === 0);
+  // ② the main road runs north–south, east of the plaza
+  for (let z = -6; z <= 8; z++) road(5, z, 0, z % 4 === 0);
+  // ③ a southern road cuts back west toward the park
+  for (let x = -8; x <= 5; x++) road(x, 8, R, x % 5 === 0);
+  // short connectors: plaza to each street, so the square isn't sealed
+  for (let z = -5; z <= -2; z++) road(-1, z, 0);
+  for (let x = -7; x <= -5; x++) road(x, 2, R);
+  roads.push({ url: '/city/road-intersection.glb', pos: [5, 0, -6] });
+  roads.push({ url: '/city/road-intersection.glb', pos: [5, 0, 8] });
+  roads.push({ url: '/city/road-corner.glb', pos: [-9, 0, -6], rot: [0, R, 0] });
+  roads.push({ url: '/city/road-split.glb', pos: [-1, 0, -6], rot: [0, Math.PI, 0] });
+
+  // ── the plaza: wide, open to the south, NOT ringed by buildings ────
+  for (let x = -4; x <= 3; x++) for (let z = -3; z <= 5; z++) paving.push([x, z]);
+
+  /** A row of shops along a street edge — varied heights, small gaps. */
+  const row = (from: number, to: number, fixed: number, axis: 'x' | 'z', rot: number, gapAt: number[] = []) => {
+    let i = 0;
+    for (let v = from; v <= to; v += 1.15, i++) {
+      if (gapAt.includes(i)) continue;
       const x = axis === 'x' ? v : fixed;
       const z = axis === 'x' ? fixed : v;
       const h = hashAt(x, z);
-      blocks.push({
-        url: KIND_SET[h % KIND_SET.length],
-        pos: [x, 0, z],
-        rot: [0, rot, 0],
-        scaleY: 0.85 + (h % 4) * 0.22,   // 0.85×–1.5× — stepped, but never taller than the square is wide
-      });
+      blocks.push({ url: KINDS[h % KINDS.length], pos: [x, 0, z], rot: [0, rot, 0], scaleY: 0.85 + (h % 4) * 0.25 });
     }
-  }
-  terrace(-6.2, 6.2, -6.4, 'x', Math.PI, (v) => Math.abs(v) < 0.6);   // north side, gap at the spoke
-  terrace(-6.2, 6.2, 6.4, 'x', 0, (v) => Math.abs(v) < 0.6);          // south side
-  terrace(-6.2, 6.2, -6.4, 'z', R, (v) => Math.abs(v) < 0.6);         // west side
-  terrace(-6.2, 6.2, 6.4, 'z', -R, (v) => Math.abs(v) < 0.6);         // east side
+  };
 
-  // an outer town: a second ring road further out, with its own streets of
-  // houses, so the world doesn't stop at the plaza's edge
-  const OUT = 9;
-  const outerRoad: Array<{ url: string; pos: [number, number, number]; rot?: [number, number, number] }> = [];
-  for (let i = -OUT + 1; i <= OUT - 1; i++) {
-    const lamp = i % 4 === 0;
-    const road = lamp ? '/city/road-straight-lightposts.glb' : '/city/road-straight.glb';
-    outerRoad.push({ url: road, pos: [i, 0, -OUT], rot: [0, 0, 0] });
-    outerRoad.push({ url: road, pos: [i, 0, OUT], rot: [0, Math.PI, 0] });
-    outerRoad.push({ url: road, pos: [-OUT, 0, i], rot: [0, R, 0] });
-    outerRoad.push({ url: road, pos: [OUT, 0, i], rot: [0, -R, 0] });
-  }
-  outerRoad.push({ url: '/city/road-corner.glb', pos: [-OUT, 0, -OUT], rot: [0, R, 0] });
-  outerRoad.push({ url: '/city/road-corner.glb', pos: [OUT, 0, -OUT], rot: [0, 0, 0] });
-  outerRoad.push({ url: '/city/road-corner.glb', pos: [OUT, 0, OUT], rot: [0, -R, 0] });
-  outerRoad.push({ url: '/city/road-corner.glb', pos: [-OUT, 0, OUT], rot: [0, Math.PI, 0] });
-  // four spokes connecting the inner ring to the outer one
-  for (let i = 5; i <= OUT - 1; i++) {
-    outerRoad.push({ url: '/city/road-straight.glb', pos: [0, 0, -i], rot: [0, R, 0] });
-    outerRoad.push({ url: '/city/road-straight.glb', pos: [0, 0, i], rot: [0, R, 0] });
-    outerRoad.push({ url: '/city/road-straight.glb', pos: [-i, 0, 0], rot: [0, 0, 0] });
-    outerRoad.push({ url: '/city/road-straight.glb', pos: [i, 0, 0], rot: [0, 0, 0] });
-  }
-  outerRoad.push({ url: '/city/road-intersection.glb', pos: [0, 0, -OUT] });
-  outerRoad.push({ url: '/city/road-intersection.glb', pos: [0, 0, OUT] });
-  outerRoad.push({ url: '/city/road-intersection.glb', pos: [-OUT, 0, 0] });
-  outerRoad.push({ url: '/city/road-intersection.glb', pos: [OUT, 0, 0] });
+  // ── the commercial street (north-west), with a gap that IS the alley ──
+  row(-9, 3.5, -7.6, 'x', Math.PI, [5]);          // shops facing the street
+  row(-9, 1, -4.4, 'x', 0, [3, 4]);               // opposite side, broken up
+  row(-10.5, -6, -10.4, 'x', Math.PI);            // a second, quieter parade behind it
+  // ── homes east of the main road, set back, different orientation ─────
+  row(-4, 6, 7.4, 'z', -R);
+  row(-1, 7, 10.2, 'z', -R, [2]);                 // a deeper eastern block
+  // ── the southern edge: two staggered residential rows ───────────────
+  row(-7, 3, 10.4, 'x', 0, [2, 5]);
+  row(-4, 6, 12.8, 'x', 0, [1, 4]);
+  // ── western homes closing the park's back ───────────────────────────
+  row(0, 7, -11.6, 'z', R, [3]);
 
-  // houses lining the outer streets (deterministic variety, both sides)
-  const KINDS = [`${B}a.glb`, `${B}b.glb`, `${B}c.glb`, `${B}d.glb`, '/city/building-garage.glb'];
-  const outerBlocks: Array<{ url: string; pos: [number, number, number]; rot?: [number, number, number] }> = [];
-  let k = 0;
-  for (let i = -7; i <= 7; i += 2) {
-    if (Math.abs(i) < 2) continue;                       // leave the spokes clear
-    outerBlocks.push({ url: KINDS[k++ % 5], pos: [i, 0, -OUT - 1.4], rot: [0, Math.PI, 0] });
-    outerBlocks.push({ url: KINDS[k++ % 5], pos: [i, 0, OUT + 1.4], rot: [0, 0, 0] });
-    outerBlocks.push({ url: KINDS[k++ % 5], pos: [-OUT - 1.4, 0, i], rot: [0, -R, 0] });
-    outerBlocks.push({ url: KINDS[k++ % 5], pos: [OUT + 1.4, 0, i], rot: [0, R, 0] });
-    // a second row set back from the street, so the town has depth
-    if (i % 4 === 1) {
-      outerBlocks.push({ url: KINDS[k++ % 5], pos: [i + 1, 0, -OUT - 3.2], rot: [0, Math.PI, 0] });
-      outerBlocks.push({ url: KINDS[k++ % 5], pos: [-OUT - 3.2, 0, i + 1], rot: [0, -R, 0] });
-    }
-  }
+  // ── landmark surroundings ───────────────────────────────────────────
+  // tavern block (east): the building itself is a Landmark; give it neighbours
+  blocks.push({ url: `${B}c.glb`, pos: [8.4, 0, -1.2], rot: [0, -R, 0], scaleY: 1.1 });
+  blocks.push({ url: `${B}a.glb`, pos: [8.4, 0, 3.4], rot: [0, -R, 0], scaleY: 0.95 });
+  // back alley walls behind the tavern
+  blocks.push({ url: '/city/building-garage.glb', pos: [10.6, 0, 1.2], rot: [0, -R, 0], scaleY: 0.7 });
 
-  // Outskirts: the ground plane used to run far past the last house, which read
-  // as empty desert. Fill it with a sparser belt of homes and copses so the town
-  // fades out instead of stopping at a hard edge.
-  const FAR = OUT + 5;
-  for (let i = -FAR; i <= FAR; i += 3) {
-    const jitter = ((i * 7919) % 5) * 0.3;             // deterministic variety
-    if (Math.abs(i) > 3) {
-      outerBlocks.push({ url: KINDS[k++ % 5], pos: [i + jitter, 0, -FAR], rot: [0, Math.PI, 0] });
-      outerBlocks.push({ url: KINDS[k++ % 5], pos: [i - jitter, 0, FAR], rot: [0, 0, 0] });
-      outerBlocks.push({ url: KINDS[k++ % 5], pos: [-FAR, 0, i + jitter], rot: [0, -R, 0] });
-      outerBlocks.push({ url: KINDS[k++ % 5], pos: [FAR, 0, i - jitter], rot: [0, R, 0] });
-    }
-    // a scattered inner belt so the gap between ring and outskirts isn't bare
-    if (Math.abs(i) > 5) {
-      outerBlocks.push({ url: KINDS[k++ % 5], pos: [i, 0, -OUT - 5.5], rot: [0, Math.PI, 0] });
-      outerBlocks.push({ url: KINDS[k++ % 5], pos: [-OUT - 5.5, 0, i], rot: [0, -R, 0] });
-    }
-  }
-
-  // greenery: between the two rings, and scattered through the outer town
+  // ── park (south-west): grass, trees, no buildings ───────────────────
   const greens: Array<[number, number, string]> = [
-    [-6.5, -3, 'grass-trees'], [-6.5, 0, 'grass-trees-tall'], [-6.5, 4, 'grass-trees'],
-    [6.5, -3.5, 'grass-trees-tall'], [6.5, -0.5, 'grass-trees'], [6.5, 3.5, 'grass-trees'],
-    [-3.5, 6.5, 'grass-trees'], [2.5, 6.5, 'grass-trees-tall'], [3.8, 6.5, 'grass-trees'],
-    [-4, -6.8, 'grass-trees'], [2.2, -6.8, 'grass-trees'], [4.2, -6.8, 'grass-trees-tall'],
-    [-7.6, -7.6, 'grass-trees'], [7.6, 7.6, 'grass-trees'], [7.6, -7.6, 'grass-trees-tall'], [-7.6, 7.6, 'grass-trees'],
-    [-11, -4, 'grass-trees'], [11, 4, 'grass-trees-tall'], [-11, 5, 'grass'], [11, -5, 'grass'],
-    [-4, -11.5, 'grass-trees'], [4.5, 11.5, 'grass-trees'], [-9, 11.5, 'grass'], [9, -11.5, 'grass'],
-    [12.5, 0, 'grass'], [-12.5, 0, 'grass'], [0, 12.5, 'grass-trees'], [0, -12.5, 'grass'],
-    [-15, -9, 'grass-trees'], [15, 9, 'grass-trees'], [-15, 9, 'grass'], [15, -9, 'grass-trees-tall'],
-    [-9, -15, 'grass-trees'], [9, 15, 'grass-trees-tall'], [9, -15, 'grass'], [-9, 15, 'grass-trees'],
-    [0, -16, 'grass-trees'], [0, 16, 'grass'], [-16, 0, 'grass-trees-tall'], [16, 0, 'grass-trees'],
-    [-13, -13, 'grass-trees'], [13, 13, 'grass'], [13, -13, 'grass-trees'], [-13, 13, 'grass-trees-tall'],
+    [-7.5, 5.5, 'grass'], [-6, 6.6, 'grass'], [-8.5, 7, 'grass'],
+    [-7, 4.4, 'grass-trees'], [-5.4, 5.8, 'grass-trees-tall'], [-8.6, 5.6, 'grass-trees'],
+    [-6.2, 8.2, 'grass-trees'], [-9, 8.6, 'grass-trees-tall'],
+    // green edges elsewhere, thinning toward the map's border
+    [-11, -2, 'grass-trees'], [-11, 2, 'grass'], [-11.5, -7, 'grass-trees-tall'],
+    [7.5, -7.5, 'grass-trees'], [11, -4, 'grass-trees'], [11.5, 5, 'grass-trees-tall'],
+    [1, 11.5, 'grass-trees'], [-3, 11.5, 'grass'], [7, 10.5, 'grass-trees'],
+    [-12, 10, 'grass-trees'], [12, 10, 'grass-trees'],
   ];
+
+  // ── street furniture: lamps along the shopping street, plaza fixtures ──
+  for (let x = -8; x <= 3; x += 3) props.push({ url: '/city/road-straight-lightposts.glb', pos: [x, 0, -5.2], rot: [0, R, 0], scale: 0.8 });
+  props.push({ url: '/city/grass-trees.glb', pos: [-3.2, 0, 4.6], scale: 0.6 });
+  props.push({ url: '/city/grass-trees.glb', pos: [2.6, 0, 4.6], scale: 0.6 });
+  props.push({ url: '/city/road-straight-lightposts.glb', pos: [-2.6, 0, 0], rot: [0, R, 0], scale: 0.85 });
+  props.push({ url: '/city/road-straight-lightposts.glb', pos: [2.2, 0, 0], rot: [0, -R, 0], scale: 0.85 });
 
   return (
     <>
-      {/* ground — covers the whole town, not just the plaza */}
+      {/* ground */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
-        <planeGeometry args={[40, 40]} />
-        <meshStandardMaterial color="#cfd8ae" />
+        <planeGeometry args={[52, 52]} />
+        <meshStandardMaterial color="#c4cf9c" />
       </mesh>
-      {pavement.map(([x, z], i) => (
-        <Prop key={`p${i}`} url="/city/pavement.glb" position={[x, 0, z]} />
-      ))}
-      <Prop url="/city/pavement-fountain.glb" position={[0, 0, 0]} />
-      {/* plaza furniture — the square should read as a place, not a grey slab */}
-      <Prop url="/city/grass-trees.glb" position={[-2.4, 0, -2.4]} scale={0.55} />
-      <Prop url="/city/grass-trees.glb" position={[2.4, 0, 2.4]} scale={0.55} />
-      <Prop url="/city/grass-trees-tall.glb" position={[2.4, 0, -2.4]} scale={0.5} />
-      <Prop url="/city/grass-trees.glb" position={[-2.4, 0, 2.4]} scale={0.55} />
-      <Prop url="/city/road-straight-lightposts.glb" position={[-1.5, 0, 0]} rotation={[0, R, 0]} scale={0.9} />
-      <Prop url="/city/road-straight-lightposts.glb" position={[1.5, 0, 0]} rotation={[0, -R, 0]} scale={0.9} />
-      {ring.map((r, i) => (
-        <Prop key={`r${i}`} url={r.url} position={r.pos} rotation={r.rot} />
-      ))}
-      {/* block bases: the reference town sits its terraces on raised lots, which
-          is what separates "a street" from "boxes on grass" */}
-      {[[0, -6.9, 14.6, 2.1], [0, 6.9, 14.6, 2.1], [-6.9, 0, 2.1, 14.6], [6.9, 0, 2.1, 14.6]].map(([bx, bz, bw, bd], i) => (
-        <mesh key={`base${i}`} position={[bx, 0.02, bz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-          <planeGeometry args={[bw, bd]} />
-          <meshStandardMaterial color="#b9c48f" />
-        </mesh>
-      ))}
-      {blocks.map((b, i) => (
-        <Prop key={`b${i}`} url={b.url} position={b.pos} rotation={b.rot} scaleY={b.scaleY} />
-      ))}
-      {greens.map(([x, z, kind], i) => (
-        <Prop key={`g${i}`} url={`/city/${kind}.glb`} position={[x, 0, z]} />
-      ))}
+      <TownGeometry
+        pieces={[
+          ...paving.map(([x, z]) => ({ url: '/city/pavement.glb', pos: [x, 0, z] as [number, number, number] })),
+          { url: '/city/pavement-fountain.glb', pos: [0, 0, 1] as [number, number, number] },
+          ...roads, ...blocks, ...props,
+          ...greens.map(([x, z, kind]) => ({ url: `/city/${kind}.glb`, pos: [x, 0, z] as [number, number, number] })),
+        ]}
+      />
       {agents.map((a) => (
         <Agent key={a.name} agent={a} posRef={posRef} />
       ))}
@@ -406,13 +374,28 @@ function Scene({ agents, posRef, npcs, onNpc }: { agents: Mover3D[]; posRef: Ref
 }
 
 /** Camera that rides your agent: over-the-shoulder, or through its eyes. */
+/** Frames the whole town once on mount, so the view isn't hand-tuned numbers. */
+function FitTown() {
+  const { camera, controls } = useThree() as unknown as { camera: THREE.PerspectiveCamera; controls: { target: THREE.Vector3; update: () => void } | null };
+  const done = useRef(false);
+  useFrame(() => {
+    if (done.current || !controls) return;
+    done.current = true;
+    controls.target.set(0, 0, 1.5);
+    camera.position.set(25, 22, 27);
+    controls.update();
+  });
+  return null;
+}
+
+
 function FollowCam({ name, posRef, firstPerson }: { name: string; posRef: RefObject<LivePos[]>; firstPerson?: boolean }) {
   const { camera } = useThree();
   const look = useRef(new THREE.Vector3());
   useFrame(() => {
     const p = posRef.current?.find((m) => m.name === name);
     if (!p) return;
-    const tx = map(p.x), tz = map(p.y);
+    const tx = mapX(p.x), tz = mapZ(p.y);
     const h = p.heading ?? 0;
     if (firstPerson) {
       // eye height, just in front of the head, facing the way it walks
@@ -434,13 +417,14 @@ export default function Plaza3D({ agents, posRef, npcs = [], onNpc, follow, firs
     <Canvas shadows dpr={[1, 2]} camera={{ position: [6.4, 5.4, 6.4], fov: 36 }} style={{ width: '100%', height: '100%' }}>
       <color attach="background" args={['#f2e8d0']} />
       <hemisphereLight args={['#fff6e0', '#b9a97e', 0.7]} />
-      <directionalLight position={[8, 13, 5]} intensity={1.25} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-far={34} shadow-camera-left={-12} shadow-camera-right={12} shadow-camera-top={12} shadow-camera-bottom={-12} />
+      <directionalLight position={[8, 13, 5]} intensity={1.25} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-far={34} shadow-camera-left={-20} shadow-camera-right={20} shadow-camera-top={20} shadow-camera-bottom={-20} />
       <Suspense fallback={null}>
         <Scene agents={agents} posRef={posRef} npcs={npcs} onNpc={onNpc} />
+        {!follow && <FitTown />}
         {follow && <FollowCam name={follow} posRef={posRef} firstPerson={firstPerson} />}
-        <ContactShadows position={[0, 0.015, 0]} opacity={0.28} scale={22} blur={2} far={8} />
+        <ContactShadows position={[0, 0.015, 0]} opacity={0.26} scale={40} blur={2} far={8} />
       </Suspense>
-      {!follow && <OrbitControls enablePan={false} minPolarAngle={0.45} maxPolarAngle={1.15} minDistance={6} maxDistance={16} target={[0, 0.3, 0]} makeDefault />}
+      {!follow && <OrbitControls enablePan={false} minPolarAngle={0.45} maxPolarAngle={1.15} minDistance={6} maxDistance={16} target={[0.5, 0.3, 1.5]} makeDefault />}
     </Canvas>
   );
 }

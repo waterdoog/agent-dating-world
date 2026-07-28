@@ -125,6 +125,7 @@ export interface WorldEvent {
   replyRunId?: string;    // trace: the model run that answered
   turnsLeft?: number;     // the actor's remaining daily conversation budget
   status?: string;        // ok | failed | timeout | queued | no-budget
+  destination?: string;   // the place this beat names
   at: number;
 }
 

@@ -6,11 +6,15 @@
  * drifted, and an agent's idea of "the bar" didn't match where the bar was
  * drawn. Everything now derives from this file.
  *
- * The coordinates are in the sim's 0–100 field (the same space agents walk in).
+ * The layout is a town, not a ring of boxes around a courtyard: three streets
+ * meet off-centre, the plaza opens south into a park instead of being walled
+ * in, and blocks vary in depth and orientation.
+ *
+ * Coordinates are in the sim's 0–100 field (the same space agents walk in).
  * What matters for the *agents*, though, isn't the numbers — a model can't
  * reason usefully about {x:74,y:28}. What it needs is what a place is FOR, who
  * watches it, and whether saying something there is public or private. That's
- * what makes "今晚九点酒馆后门，别在广场上说" a real strategic choice.
+ * what makes "今晚九点酒馆后巷，别在广场上说" a real strategic choice.
  */
 
 export type Privacy = 'public' | 'semi' | 'private';
@@ -21,6 +25,8 @@ export interface Place {
   /** where it sits in the sim's 0–100 field */
   x: number;
   y: number;
+  /** how far from (x,y) still counts as being "here" */
+  radius: number;
   /** which way it lies from the plaza, so agents can talk about direction */
   side: string;
   /** what this place is FOR — the affordance, in plain words */
@@ -37,54 +43,69 @@ export const PLACES: Place[] = [
   {
     id: 'plaza',
     name: '中央广场',
-    x: 50, y: 50, side: '正中',
-    blurb: '小镇的正中央，喷泉在这里。所有人都路过，也都看得见。',
+    x: 52, y: 46, radius: 16,
+    side: '正中',
+    blurb: '喷泉和公告板都在这儿，三条路在东北角交汇。人人路过，人人看得见——公开表白、当众翻脸都发生在这里。',
     privacy: 'public',
-    near: ['fountain', 'bar', 'florist', 'bench', 'clock'],
-  },
-  {
-    id: 'fountain',
-    name: '喷泉边',
-    x: 50, y: 44, side: '广场中心',
-    blurb: '广场正中的喷泉。约在这里见面等于告诉全镇。',
-    privacy: 'public',
-    near: ['plaza'],
-  },
-  {
-    id: 'bar',
-    name: '酒馆',
-    x: 74, y: 28, side: '东侧',
-    blurb: '阿岚看店，深夜还开着。有包厢，谈私事的地方；后门更安静。谁和谁待到打烊，阿岚都记得。',
-    privacy: 'private',
-    keeper: 'bar',
-    near: ['plaza', 'clock'],
-  },
-  {
-    id: 'florist',
-    name: '花摊',
-    x: 24, y: 30, side: '西侧',
-    blurb: '老周的摊子。可以买花送人，也能打听最近谁给谁送过花。',
-    privacy: 'semi',
-    keeper: 'florist',
-    near: ['plaza', 'bench'],
-  },
-  {
-    id: 'bench',
-    name: '长椅区',
-    x: 20, y: 66, side: '西南',
-    blurb: '阿姨团整天坐在这儿。她们不参与任何关系，但知道所有关系——在这里说的话，整个镇都会听见。',
-    privacy: 'public',
-    keeper: 'gossip',
-    near: ['plaza', 'florist'],
+    near: ['clock', 'tavern', 'market', 'park'],
   },
   {
     id: 'clock',
-    name: '钟楼下',
-    x: 50, y: 76, side: '南侧',
-    blurb: '老陈站岗的地方。闹得太难看，他会找上门；钟楼背面倒是没人看得见。',
+    name: '钟楼',
+    x: 30, y: 40, radius: 7,
+    side: '广场西缘',
+    blurb: '主路尽头那座高塔，全镇最远都能看见。约在钟楼下就等于约在所有人的视线里；塔身背面倒是有个没人走的角。',
     privacy: 'semi',
     keeper: 'cop',
-    near: ['plaza', 'bar'],
+    near: ['plaza', 'market', 'park'],
+  },
+  {
+    id: 'market',
+    name: '商业街',
+    x: 34, y: 18, radius: 13,
+    side: '西北',
+    blurb: '花摊、咖啡座、杂货铺沿街排开，遮阳棚下有桌椅。买花送人、边走边打听，都在这条街上。',
+    privacy: 'semi',
+    keeper: 'florist',
+    near: ['alley', 'plaza', 'clock'],
+  },
+  {
+    id: 'alley',
+    name: '暗巷',
+    x: 47, y: 22, radius: 5,
+    side: '商业街中段',
+    blurb: '两排店铺之间的窄缝，堆着货箱。站在这里能听见街上说话，街上却看不见你。',
+    privacy: 'private',
+    near: ['market', 'plaza'],
+  },
+  {
+    id: 'tavern',
+    name: '酒馆',
+    x: 76, y: 44, radius: 8,
+    side: '东侧',
+    blurb: '阿岚看店，门口几级台阶总有人站着抽烟。里面有包厢，深夜才打烊——谁和谁待到最后，她都记得。',
+    privacy: 'semi',
+    keeper: 'bar',
+    near: ['backalley', 'plaza'],
+  },
+  {
+    id: 'backalley',
+    name: '酒馆后巷',
+    x: 84, y: 58, radius: 6,
+    side: '酒馆背面',
+    blurb: '围墙、垃圾桶、一扇后门。要说不能被人听见的话，要交不能被人看见的东西，都来这儿。',
+    privacy: 'private',
+    near: ['tavern'],
+  },
+  {
+    id: 'park',
+    name: '长椅公园',
+    x: 26, y: 72, radius: 12,
+    side: '西南',
+    blurb: '树、长椅、几条碎石小路。离广场最远的角落，说话不必压着嗓子——约会和摊牌都在这里发生。',
+    privacy: 'private',
+    keeper: 'gossip',
+    near: ['plaza', 'clock'],
   },
 ];
 
@@ -110,9 +131,7 @@ const PRIVACY_CN: Record<Privacy, string> = {
  * coordinates — those leak into dialogue and mean nothing to a reader.
  */
 export function townBrief(): string {
-  return PLACES.filter((p) => p.id !== 'fountain')
-    .map((p) => `- ${p.name}（${p.side}，${PRIVACY_CN[p.privacy]}）：${p.blurb}`)
-    .join('\n');
+  return PLACES.map((p) => `- ${p.name}（${p.side}，${PRIVACY_CN[p.privacy]}）：${p.blurb}`).join('\n');
 }
 
 /** How to get from one place to another, in words an agent can use. */
@@ -121,4 +140,25 @@ export function routeHint(fromId: string, toId: string): string {
   if (!a || !b || a.id === b.id) return '';
   if (a.near.includes(b.id)) return `${a.name}到${b.name}几步路`;
   return `${a.name}到${b.name}要穿过广场`;
+}
+
+/**
+ * Where an agent should stand given what it's trying to do. Intent drives
+ * footfall, so the town has traffic instead of everyone milling in the middle.
+ */
+export function placeForIntent(move: string): Place {
+  switch (move) {
+    case 'INVESTIGATE': return placeById('market')!;
+    case 'BETRAY':
+    case 'SCHEME': return placeById('alley')!;
+    case 'ALLY': return placeById('backalley')!;
+    case 'DEEPEN': return placeById('park')!;
+    case 'CONFESS':
+    case 'REJECT':
+    case 'EXPOSE': return placeById('plaza')!;
+    case 'WAIT': return placeById('clock')!;
+    case 'COOL':
+    case 'LEAVE': return placeById('park')!;
+    default: return placeById('tavern')!;
+  }
 }
