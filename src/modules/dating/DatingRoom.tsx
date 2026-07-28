@@ -500,13 +500,21 @@ export function DatingRoom() {
         <section className="dt-panel dt-plaza-wrap">
           <div className="dt-plabel">
             <h2>World Plaza</h2>
-            <span>{inWorld ? `WASD 移动 · V 切${firstPerson ? '第三' : '第一'}人称 · 点 NPC 交互 · Esc 离开` : mine ? '点击进入世界，用第一视角操作你的 agent' : live ? '世界广场 · 拖动可环视' : '世界广场 · 示例(还没人放生)'}</span>
+            <span>{inWorld ? `WASD 移动 · 点 NPC 交互 · Esc 离开` : live ? '世界广场 · 拖动可环视' : '世界广场 · 示例(还没人放生)'}</span>
           </div>
-          {mine && (
-            <button type="button" className="dt-enter-world" onClick={() => { setInWorld((v) => !v); setOpenNpc(null); }}>
-              {inWorld ? '离开世界' : '进入世界'}
-            </button>
-          )}
+          <div className="dt-viewctl">
+            {inWorld && (
+              <div className="dt-viewtabs" role="group" aria-label="视角">
+                <button type="button" className={firstPerson ? 'on' : ''} onClick={() => setFirstPerson(true)}>第一视角</button>
+                <button type="button" className={firstPerson ? '' : 'on'} onClick={() => setFirstPerson(false)}>第三视角</button>
+              </div>
+            )}
+            {mine && (
+              <button type="button" className="dt-enter-world" onClick={() => { setInWorld((v) => !v); setOpenNpc(null); }}>
+                {inWorld ? '离开世界' : '进入世界'}
+              </button>
+            )}
+          </div>
           {inWorld && town?.me && (
             <div className="dt-hud">
               <span>💰 {town.me.cash}</span>
@@ -514,7 +522,7 @@ export function DatingRoom() {
               {townNote && <em>{townNote}</em>}
             </div>
           )}
-          <div className="dt-plaza" onClick={() => { if (!inWorld && mine) setInWorld(true); }} style={!inWorld && mine ? { cursor: 'pointer' } : undefined}>
+          <div className="dt-plaza">
             <Suspense fallback={<div className="dt-plaza-loading">加载 3D 世界…</div>}>
               <Plaza3D agents={frame.map((m) => ({ name: m.name, look: m.look, you: m.you, x: m.x, y: m.y, partner: m.partner, bubble: m.bubble }))} posRef={simRef} npcs={inWorld ? (town?.npcs ?? []) : (town?.npcs ?? [])} onNpc={(id) => setOpenNpc(id)} follow={inWorld ? mine?.name : undefined} firstPerson={inWorld && firstPerson} />
             </Suspense>

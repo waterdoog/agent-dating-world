@@ -458,3 +458,11 @@ img.agent-sprite { display: block; object-fit: contain; }
 .dt-meter i.a { background: var(--red); }
 .dt-meter i.t { background: var(--green); }
 .dt-meter i.x { background: var(--red-dark); }
+
+
+/* view controls sit together, top-right of the plaza */
+.dt-viewctl { position: absolute; top: 12px; right: 14px; z-index: 6; display: flex; align-items: center; gap: 8px; }
+.dt-viewtabs { display: flex; border: 2px solid var(--ink); background: var(--paper-light); box-shadow: 2px 2px 0 var(--ink); overflow: hidden; }
+.dt-viewtabs button { padding: 5px 10px; border: 0; background: transparent; font-size: 0.66rem; font-weight: 800; color: var(--ink-soft); cursor: pointer; }
+.dt-viewtabs button + button { border-left: 1.5px solid var(--ink); }
+.dt-viewtabs button.on { background: var(--yellow); color: var(--ink); }

@@ -250,6 +250,25 @@ function Scene({ agents, posRef, npcs, onNpc }: { agents: Mover3D[]; posRef: Ref
     }
   }
 
+  // Outskirts: the ground plane used to run far past the last house, which read
+  // as empty desert. Fill it with a sparser belt of homes and copses so the town
+  // fades out instead of stopping at a hard edge.
+  const FAR = OUT + 5;
+  for (let i = -FAR; i <= FAR; i += 3) {
+    const jitter = ((i * 7919) % 5) * 0.3;             // deterministic variety
+    if (Math.abs(i) > 3) {
+      outerBlocks.push({ url: KINDS[k++ % 5], pos: [i + jitter, 0, -FAR], rot: [0, Math.PI, 0] });
+      outerBlocks.push({ url: KINDS[k++ % 5], pos: [i - jitter, 0, FAR], rot: [0, 0, 0] });
+      outerBlocks.push({ url: KINDS[k++ % 5], pos: [-FAR, 0, i + jitter], rot: [0, -R, 0] });
+      outerBlocks.push({ url: KINDS[k++ % 5], pos: [FAR, 0, i - jitter], rot: [0, R, 0] });
+    }
+    // a scattered inner belt so the gap between ring and outskirts isn't bare
+    if (Math.abs(i) > 5) {
+      outerBlocks.push({ url: KINDS[k++ % 5], pos: [i, 0, -OUT - 5.5], rot: [0, Math.PI, 0] });
+      outerBlocks.push({ url: KINDS[k++ % 5], pos: [-OUT - 5.5, 0, i], rot: [0, -R, 0] });
+    }
+  }
+
   // greenery: between the two rings, and scattered through the outer town
   const greens: Array<[number, number, string]> = [
     [-6.5, -3, 'grass-trees'], [-6.5, 0, 'grass-trees-tall'], [-6.5, 4, 'grass-trees'],
@@ -260,6 +279,10 @@ function Scene({ agents, posRef, npcs, onNpc }: { agents: Mover3D[]; posRef: Ref
     [-11, -4, 'grass-trees'], [11, 4, 'grass-trees-tall'], [-11, 5, 'grass'], [11, -5, 'grass'],
     [-4, -11.5, 'grass-trees'], [4.5, 11.5, 'grass-trees'], [-9, 11.5, 'grass'], [9, -11.5, 'grass'],
     [12.5, 0, 'grass'], [-12.5, 0, 'grass'], [0, 12.5, 'grass-trees'], [0, -12.5, 'grass'],
+    [-15, -9, 'grass-trees'], [15, 9, 'grass-trees'], [-15, 9, 'grass'], [15, -9, 'grass-trees-tall'],
+    [-9, -15, 'grass-trees'], [9, 15, 'grass-trees-tall'], [9, -15, 'grass'], [-9, 15, 'grass-trees'],
+    [0, -16, 'grass-trees'], [0, 16, 'grass'], [-16, 0, 'grass-trees-tall'], [16, 0, 'grass-trees'],
+    [-13, -13, 'grass-trees'], [13, 13, 'grass'], [13, -13, 'grass-trees'], [-13, 13, 'grass-trees-tall'],
   ];
 
   return (

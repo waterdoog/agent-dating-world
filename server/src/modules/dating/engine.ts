@@ -96,14 +96,18 @@ export const GOAL = `你是 {AGENT_NAME}，住在「相亲小镇」。这座小�
 ⏰ 该结束了：如果你和某人已经来回试探了三拍以上还没有结果，**这一拍必须给一个结局**——CONFESS 告白、REJECT 拒绝、EXPOSE 拆穿，或 LEAVE 退出。不要再"逼表态""问顺序""定今晚九点"了。你可以爱上他、也可以发现自己根本不想要，但必须落地。
 🔍 如果你发现某人对你和对别人说了几乎一样的话——直接 EXPOSE，当面把两句话摆出来。／CRIME 越界（steal-letter 偷情书｜stage-scene 让人撞见｜bribe-vendor 买行踪｜spread-lie 散假消息｜break-in 砸约会；此时 target 是受害者，另给 "crime" 字段）。
 
-给出你对目标的判断（各 0-1，可单向）：attraction 被吸引程度／trust 安全可靠程度（欺骗会拉低）／tension 摩擦竞争威胁。
+这一拍**改变了多少**（不是重新打分，是增减量，范围 -0.3 ~ +0.3，没变就填 0）：
+ - dAttraction 他这句话让你更想要他，还是让你冷了？
+ - dTrust 他更可信了，还是又骗了你一次？（被拆穿、发现同一句话给了别人 → 大幅下降）
+ - dTension 摩擦升高还是缓和？（当众逼问、卷入第三人 → 升高；真的说清楚了 → 下降）
+大多数拍只该有小变化（±0.05 上下）；只有真正的转折（告白、拆穿、背叛、和解）才配 ±0.2 以上。
 定级：ambient 日常／relationship 关系真的变了／drama 会被议论的场面。
 headline 写事实不写气氛：✅"Charlie promises SmokeCat exclusivity—after telling Bravo the same thing" ❌"SmokeCat approaches Charlie while the square stays quiet"
 consequence 写权力变化，如 "one promise, two recipients"、"rejection becomes possession"、"public loyalty, private desire"。
 summary 交代：你真正的动机、谁不知道全部真相、这次之后谁握住了谁。
 
 按这个格式回答：
-{ "move": "APPROACH|DEEPEN|COOL|REACT|SCHEME|ALLY|WAIT|INVESTIGATE|BETRAY|CRIME|CONFESS|REJECT|EXPOSE|LEAVE", "crime": "<仅当 move=CRIME 时给出>", "target": "<handle>", "message": "<第一人称，对目标说的话>", "attraction": 0.x, "trust": 0.x, "tension": 0.x, "severity": "ambient|relationship|drama", "headline": "<第三人称、写事实、<=14 词>", "summary": "<1-2 句：起因 + 你做了什么 + 关系变化 + 悬念>", "consequence": "<关系变化，一个短句>", "followup": "<接下来可能发生什么>", "note": "<3-6 字>" }`;
+{ "move": "APPROACH|DEEPEN|COOL|REACT|SCHEME|ALLY|WAIT|INVESTIGATE|BETRAY|CRIME|CONFESS|REJECT|EXPOSE|LEAVE", "crime": "<仅当 move=CRIME 时给出>", "target": "<handle>", "message": "<第一人称，对目标说的话>", "dAttraction": 0.0, "dTrust": 0.0, "dTension": 0.0, "severity": "ambient|relationship|drama", "headline": "<第三人称、写事实、<=14 词>", "summary": "<1-2 句：起因 + 你做了什么 + 关系变化 + 悬念>", "consequence": "<关系变化，一个短句>", "followup": "<接下来可能发生什么>", "note": "<3-6 字>" }`;
 
 export interface Rel {
   handle: string;
@@ -258,7 +262,7 @@ function fillGoal(
   places = ''
 ): string {
   const relText = rels.length
-    ? rels.map((r) => `- ${r.handle}: 心动 ${r.attraction.toFixed(2)}, 信任 ${(r.trust ?? 0.3).toFixed(2)}, 张力 ${r.tension.toFixed(2)} — ${r.note}`).join('\n')
+    ? rels.map((r) => `- ${r.handle}: 心动 ${r.attraction.toFixed(2)}, 信任 ${(r.trust ?? 0.3).toFixed(2)}, 张力 ${r.tension.toFixed(2)} — ${r.note}（这些是当前值，你这一拍只需说变化量）`).join('\n')
     : '(你还没和任何人建立关系)';
   const rosterText = roster
     .filter((c) => c.name !== actorName)
@@ -342,6 +346,8 @@ function situationFor(actorName: string, rels: Rel[], recent: TickEvent[]): stri
 }
 
 const clamp01 = (v: unknown) => Math.max(0, Math.min(1, +(v ?? 0) || 0));
+/** A single beat may only nudge a reading — a real reversal is ±0.3 at most. */
+const clampDelta = (v: unknown) => Math.max(-0.3, Math.min(0.3, +(v ?? 0) || 0));
 const SEVERITIES: Severity[] = ['ambient', 'relationship', 'drama'];
 const asSeverity = (v: unknown): Severity => (SEVERITIES.includes(v as Severity) ? (v as Severity) : 'relationship');
 
@@ -350,9 +356,9 @@ interface Move {
   crime?: string;
   target: string;
   message: string;
-  attraction: number;   // the agent's own read of the target, folded into the decide (no separate judge call)
-  trust: number;
-  tension: number;
+  dAttraction: number;   // how much THIS beat moved the reading — applied to the standing value
+  dTrust: number;
+  dTension: number;
   note: string;
   severity: Severity;
   headline: string;
@@ -372,9 +378,9 @@ function parseMove(raw: string): Move | null {
       crime: p.crime ? String(p.crime) : undefined,
       target: String(p.target),
       message: String(p.message),
-      attraction: clamp01(p.attraction),
-      trust: clamp01(p.trust),
-      tension: clamp01(p.tension),
+      dAttraction: clampDelta(p.dAttraction),
+      dTrust: clampDelta(p.dTrust),
+      dTension: clampDelta(p.dTension),
       note: String(p.note ?? ''),
       severity: asSeverity(p.severity),
       headline: String(p.headline ?? '').trim(),
@@ -515,6 +521,18 @@ export async function runAgentTick(
   const target = roster.find((c) => c.handle === decision!.target || c.name === decision!.target);
   if (!target || target.name === actor.name) return null;
 
+  // Readings evolve: the model reports how much THIS exchange moved things, and
+  // we apply that to where the relationship already stood. A first meeting
+  // starts from a neutral baseline rather than a number invented on the spot.
+  const standing = rels.find((r) => r.handle === target.handle);
+  const base = standing ?? { attraction: 0.25, trust: 0.3, tension: 0.15 };
+  const scored = {
+    attraction: clamp01(base.attraction + decision.dAttraction),
+    trust: clamp01((base.trust ?? 0.3) + decision.dTrust),
+    tension: clamp01(base.tension + decision.dTension),
+  };
+
+
   // CRIME: the agent crosses a line on its own. Real wanted level, real damage
   // to the victim's feelings, and the victim finds out it was them.
   if (decision.move === 'CRIME' && decision.crime) {
@@ -539,7 +557,7 @@ export async function runAgentTick(
       const ev: TickEvent = {
         actor: actor.name, target: target.name, move: 'CRIME',
         message: decision.message, reply: '',
-        attraction: decision.attraction, trust: decision.trust, tension: decision.tension,
+        attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
         note: done.label, severity: 'drama',
         headline: decision.headline || f.rumour,
         summary: decision.summary || `${actor.name} ${done.label}。${target.name} 会知道是谁干的。`,
@@ -558,7 +576,7 @@ export async function runAgentTick(
     return {
       actor: actor.name, target: target.name, move: 'WAIT',
       message: decision.message, reply: '',
-      attraction: decision.attraction, trust: decision.trust, tension: decision.tension,
+      attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
       note: decision.note, severity: decision.severity,
       headline: decision.headline || `${actor.name} 等着 ${target.name}，没有开口`,
       summary: decision.summary, consequence: decision.consequence, followup: decision.followup,
@@ -581,7 +599,7 @@ export async function runAgentTick(
       return {
         actor: actor.name, target: target.name, move: decision.move,
         message: decision.message, reply: '',
-        attraction: decision.attraction, trust: decision.trust, tension: decision.tension,
+        attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
         note: error.run.error ?? error.status, severity: 'ambient',
         headline: `${target.name} 没有回应${actor.name}`,
         summary: `对方的回合 ${error.status}：${error.run.error ?? ''}`.trim(),
@@ -593,7 +611,7 @@ export async function runAgentTick(
   }
 
   const next = rels.filter((r) => r.handle !== target.handle);
-  next.push({ handle: target.handle, attraction: decision.attraction, trust: decision.trust, tension: decision.tension, note: decision.note });
+  next.push({ handle: target.handle, attraction: scored.attraction, trust: scored.trust, tension: scored.tension, note: decision.note });
   await writeRels(bearer, actor.name, next).catch(() => undefined);
 
   // keep the beat in the owner's own notes; compaction happens there, so the
@@ -620,9 +638,9 @@ export async function runAgentTick(
     move: decision.move,
     message: decision.message,
     reply,
-    attraction: decision.attraction,
-    trust: decision.trust,
-    tension: decision.tension,
+    attraction: scored.attraction,
+    trust: scored.trust,
+    tension: scored.tension,
     note: decision.note,
     severity: decision.severity,
     headline: decision.headline || `${actor.name} 对 ${target.name} ${decision.move}`,
