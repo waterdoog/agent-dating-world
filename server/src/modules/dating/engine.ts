@@ -217,7 +217,7 @@ function fillGoal(
     .replace('{SECRETS}', (secrets || '(你没有藏着什么——目前为止)').slice(0, 300))
     .replace('{RELATIONSHIPS}', relText)
     .replace('{ROSTER}', rosterText || '(小镇上只有你)')
-    .replace('{SITUATION}', (situation || '(小镇现在很安静)').slice(0, 600))
+    .replace('{SITUATION}', (situation || '(小镇现在很安静)').slice(0, 1100))
     .replace('{TURNS_LEFT}', String(turnsLeft))
     .replace('{TURN_BUDGET}', String(config.dailyTurnBudget));
 }
@@ -231,10 +231,30 @@ function fillGoal(
  */
 function situationFor(actorName: string, rels: Rel[], recent: TickEvent[]): string {
   const known = new Set([actorName.toLowerCase(), ...rels.map((r) => r.handle.toLowerCase())]);
-  const lines = recent
+  const lines: string[] = [];
+
+  // What YOU just did comes first: it is the one thing that must survive any
+  // truncation, or the agent repeats itself forever.
+  const own = recent.filter((e) => e.actor.toLowerCase() === actorName.toLowerCase()).slice(0, 3);
+  if (own.length) {
+    lines.push(`- 你自己最近做过：${own.map((e) => `[${e.move}]→${e.target}「${e.headline}」`).join('；')}`);
+    const banned = [...new Set(own.slice(0, 2).map((e) => e.move))];
+    lines.push(`- 🚫 这一拍**禁止**再用：${banned.join('、')}。必须换一个真正不同的动作。`);
+    if (own.length >= 2 && own[0].target.toLowerCase() === own[1].target.toLowerCase()) {
+      lines.push(`- 🚫 你连续两拍都在找 ${own[0].target}。这一拍**必须换人**，或把第三个人拉进来。`);
+    }
+    if (own[0].move === 'WAIT') lines.push('- ⚠️ 上一拍你已经在等了，这一拍禁止再 WAIT。');
+    const tics = own.map((e) => e.note).filter(Boolean);
+    if (tics.length && new Set(tics).size < tics.length) {
+      lines.push(`- 🚫 你反复在做同一件事（${tics[0]}）。这一拍必须推进：摊牌、拉第三人进来，或放弃这条线。`);
+    }
+  }
+
+  const shared = recent
     .filter((e) => e.headline && (known.has(e.actor.toLowerCase()) || known.has(e.target.toLowerCase()) || e.severity === 'drama'))
-    .slice(0, 6)
+    .slice(0, 4)
     .map((e) => `- ${e.headline}${e.consequence ? `（${e.consequence}）` : ''}`);
+  lines.push(...shared);
 
   for (const k of knownTo(actorName)) lines.push(`- 你知道一件关于 ${k.about} 的事：${k.fact}（${k.source}）`);
 
@@ -242,14 +262,6 @@ function situationFor(actorName: string, rels: Rel[], recent: TickEvent[]): stri
   if (heat > 0) lines.push(`- ⚠️ 你现在的通缉度是 ${heat}/5，巡警老陈盯着你。再犯会更难收场。`);
 
   // your own last moves — so you don't run the same play twice in a row
-  const mine = recent.filter((e) => e.actor.toLowerCase() === actorName.toLowerCase()).slice(0, 3);
-  if (mine.length) {
-    lines.push(`- 你自己最近做过：${mine.map((e) => `[${e.move}]→${e.target}「${e.headline}」`).join('；')}。别再重复同一招。`);
-    if (mine[0].move === 'WAIT') {
-      lines.push('- ⚠️ 你上一拍已经在等了。这一拍**禁止再 WAIT**——去做点具体的事，或者转向别人。');
-    }
-  }
-
   // did someone say the same thing to this agent AND to someone else?
   for (const d of duplicatePromises()) {
     if (d.a.toLowerCase() === actorName.toLowerCase() || d.b.toLowerCase() === actorName.toLowerCase()) {
