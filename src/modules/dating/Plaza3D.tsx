@@ -382,7 +382,7 @@ function FitTown() {
     if (done.current || !controls) return;
     done.current = true;
     controls.target.set(0, 0, 1.5);
-    camera.position.set(25, 22, 27);
+    camera.position.set(32, 28, 34);
     controls.update();
   });
   return null;
@@ -417,7 +417,7 @@ export default function Plaza3D({ agents, posRef, npcs = [], onNpc, follow, firs
     <Canvas shadows dpr={[1, 2]} camera={{ position: [6.4, 5.4, 6.4], fov: 36 }} style={{ width: '100%', height: '100%' }}>
       <color attach="background" args={['#f2e8d0']} />
       <hemisphereLight args={['#fff6e0', '#b9a97e', 0.7]} />
-      <directionalLight position={[8, 13, 5]} intensity={1.25} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-far={34} shadow-camera-left={-20} shadow-camera-right={20} shadow-camera-top={20} shadow-camera-bottom={-20} />
+      <directionalLight position={[8, 13, 5]} intensity={1.25} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-far={90} shadow-camera-left={-30} shadow-camera-right={30} shadow-camera-top={30} shadow-camera-bottom={-30} />
       <Suspense fallback={null}>
         <Scene agents={agents} posRef={posRef} npcs={npcs} onNpc={onNpc} />
         {!follow && <FitTown />}
