@@ -60,6 +60,7 @@ import { budgetSnapshot } from './modules/dating/budget.js';
 import { listThreads, currentDigest, summariseWorld, recordKnowledge } from './modules/dating/threads.js';
 import { writeYearbook, listYearbooks, yearbookFor } from './modules/dating/yearbook.js';
 import { recordEvent } from './modules/dating/records.js';
+import { requestFriend, friends, recall, searchMemory } from './modules/dating/memory.js';
 import { NPCS, CRIMES, wantedLevel, commitCrime, clearWanted, wantedBoard, balance, spend, falloutOf, walletBalance, npcNow } from './modules/dating/town-life.js';
 
 // Stable API keys the world can act with (ownerSub → key), seeded from
@@ -656,6 +657,40 @@ app.post('/api/dating/town/crime', async (c) => {
     }
   }
   return c.json({ ok: true, ...done, fallout });
+});
+
+// ─── relationship memory, kept in each owner's own Aicoo notes ────
+app.get('/api/dating/memory', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  const roster = await listSquare().catch(() => [] as AgentCard[]);
+  const mine = roster.find((r) => r.ownerSub === auth.session.sub);
+  if (!mine) return jsonError(c, 404, 'Release an agent first.');
+  const about = c.req.query('about');
+  const q = c.req.query('q');
+  if (q) return c.json({ hits: await searchMemory(auth.bearer, q) });
+  if (about) return c.json({ agent: mine.name, about, memory: await recall(auth.bearer, mine.name, about) });
+  const all = await Promise.all(
+    roster.filter((r) => r.name !== mine.name)
+      .map(async (r) => ({ about: r.name, memory: await recall(auth.bearer, mine.name, r.name, 300) }))
+  );
+  return c.json({ agent: mine.name, memories: all.filter((m) => m.memory) });
+});
+
+app.get('/api/dating/friends', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  return c.json({ friends: await friends(auth.bearer) });
+});
+
+app.post('/api/dating/friends', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  const body = await c.req.json().catch(() => ({}));
+  const to = typeof body.to === 'string' ? body.to.trim() : '';
+  if (!to) return jsonError(c, 400, 'Who do you want to befriend?');
+  const ok = await requestFriend(auth.bearer, to);
+  return ok ? c.json({ ok: true, to }) : jsonError(c, 502, 'Aicoo rejected the friend request.');
 });
 
 app.get('/api/dating/threads', (c) =>

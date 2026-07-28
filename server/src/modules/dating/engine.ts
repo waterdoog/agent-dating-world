@@ -26,6 +26,7 @@ import { grok, ModelError } from './grok.js';
 import { remaining, reserveTurn, refundTurn } from './budget.js';
 import { absorb, narrate, knownTo, duplicatePromises, recordKnowledge } from './threads.js';
 import { commitCrime, falloutOf, wantedLevel } from './town-life.js';
+import { remember, recall } from './memory.js';
 
 /** When an account is out of budget, its agent gets roasted instead of going silent. */
 const BROKE_LINES = [
@@ -203,7 +204,8 @@ function fillGoal(
   roster: AgentCard[],
   situation: string,
   secrets: string,
-  turnsLeft: number
+  turnsLeft: number,
+  memory = ''
 ): string {
   const relText = rels.length
     ? rels.map((r) => `- ${r.handle}: 心动 ${r.attraction.toFixed(2)}, 信任 ${(r.trust ?? 0.3).toFixed(2)}, 张力 ${r.tension.toFixed(2)} — ${r.note}`).join('\n')
@@ -220,7 +222,7 @@ function fillGoal(
     .replace('{SECRETS}', (secrets || '(你没有藏着什么——目前为止)').slice(0, 300))
     .replace('{RELATIONSHIPS}', relText)
     .replace('{ROSTER}', rosterText || '(小镇上只有你)')
-    .replace('{SITUATION}', (situation || '(小镇现在很安静)').slice(0, 1100))
+    .replace('{SITUATION}', ((memory ? `你记得的（你自己的记忆）：\n${memory}\n\n` : '') + (situation || '(小镇现在很安静)')).slice(0, 1400))
     .replace('{TURNS_LEFT}', String(turnsLeft))
     .replace('{TURN_BUDGET}', String(config.dailyTurnBudget));
 }
@@ -431,7 +433,11 @@ export async function runAgentTick(
   ]);
   const situation = situationFor(actor.name, rels, (await listEvents().catch(() => [])) as TickEvent[]);
 
-  const prompt = fillGoal(actor.name, persona, rels, roster, situation, memory.secrets, left);
+  // Pull back what this agent actually remembers about the person it is most
+  // entangled with, instead of carrying the whole town history in the prompt.
+  const focus = [...rels].sort((a, b) => (b.attraction + b.tension) - (a.attraction + a.tension))[0];
+  const recalled = focus ? await recall(bearer, actor.name, focus.handle).catch(() => '') : '';
+  const prompt = fillGoal(actor.name, persona, rels, roster, situation, memory.secrets, left, recalled);
   let decision: Move | null = null;
   let decideRunId: string | undefined;
   try {
@@ -537,6 +543,13 @@ export async function runAgentTick(
   const next = rels.filter((r) => r.handle !== target.handle);
   next.push({ handle: target.handle, attraction: decision.attraction, trust: decision.trust, tension: decision.tension, note: decision.note });
   await writeRels(bearer, actor.name, next).catch(() => undefined);
+
+  // keep the beat in the owner's own notes; compaction happens there, so the
+  // prompt never has to carry the full history again
+  void remember(bearer, actor.name, target.name, {
+    at: Date.now(), move: decision.move, said: decision.message, heard: reply,
+    consequence: decision.consequence,
+  }, actor.shareToken).catch(() => undefined);
 
   // information now moves between agents: what was leaked, or dug up, is
   // something the OTHER party genuinely knows from here on.
