@@ -142,6 +142,31 @@ export function handleFor(name: string): string {
   );
 }
 
+/**
+ * Turn the wizard's sliders into a way of SPEAKING, not just numbers. Agents
+ * were all writing in the same lyrical register because the persona note only
+ * carried "aggression 70/100" — which tells a model nothing about diction.
+ */
+function voiceOf(d: Dimensions, traits: string[]): string {
+  const bits: string[] = [];
+  bits.push(d.aggression > 65
+    ? '你说话短、直、带压迫感，常用祈使句，把话钉死在对方脸上'
+    : d.aggression < 35
+      ? '你说话软、绕、留退路，很少把话说死，习惯用问句把决定推回给对方'
+      : '你说话平稳，不抢也不躲，把事实摆出来就停');
+  bits.push(d.disclosure > 65
+    ? '你藏不住心事，想到什么就说出来，包括不该说的'
+    : d.disclosure < 35
+      ? '你几乎不主动交底，说三分留七分，别人得自己去猜'
+      : '你会说真话，但只说被问到的那部分');
+  if (d.honesty < 40) bits.push('你说的话经常半真半假，删掉关键背景让对方误会');
+  if (d.attachment > 65) bits.push('你会反复确认对方还在不在意你，哪怕自己也讨厌这样');
+  else if (d.attachment < 35) bits.push('你不黏人，对方走了你也不追');
+  if (traits.length) bits.push(`别人对你的印象：${traits.join('、')}`);
+  bits.push('⚠️ 这是你的说话方式，和小镇上其他人明显不同——不要写成通用的文艺腔，不要每句都用比喻。');
+  return bits.join('。') + '。';
+}
+
 function personaDoc(a: ReleaseSpec): string {
   const d = a.dimensions;
   return [
@@ -149,15 +174,15 @@ function personaDoc(a: ReleaseSpec): string {
     '',
     a.publicIntroduction.trim() || '(no introduction)',
     '',
-    `Relationship style: ${a.relationshipStyle}`,
-    `Traits: ${a.traits.join(', ') || '(none)'}`,
-    `Behaviour — honesty ${d.honesty}/100 · attachment ${d.attachment}/100 · aggression ${d.aggression}/100 · disclosure ${d.disclosure}/100`,
+    `恋爱风格：${a.relationshipStyle}`,
+    `特质：${a.traits.join('、') || '(未设定)'}`,
+    '',
+    '## 你说话的方式',
+    voiceOf(d, a.traits),
+    '',
+    `（内部刻度：真诚 ${d.honesty}/100 · 依赖 ${d.attachment}/100 · 攻击 ${d.aggression}/100 · 坦白 ${d.disclosure}/100）`,
     '',
     a.summary.trim(),
-    '',
-    '```json',
-    JSON.stringify({ appearance: a.look, relationshipStyle: a.relationshipStyle, traits: a.traits, dimensions: d }, null, 2),
-    '```',
   ].join('\n');
 }
 

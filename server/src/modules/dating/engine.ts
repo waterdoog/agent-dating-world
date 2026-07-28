@@ -68,6 +68,9 @@ export const GOAL = `你是 {AGENT_NAME}，住在「相亲小镇」。这座小�
 你现在在哪、镇上有什么（你活在这个地方，说话时可以用上它）：
 {PLACES}
 
+你上次对这个人说过的话（⚠️ 绝对不许重复这些话的意思、开场白或要求）：
+{LASTSAID}
+
 你刚看到/听说的（信息不对称：你只知道这些，别人知道的可能不同）：
 {SITUATION}
 
@@ -78,6 +81,7 @@ export const GOAL = `你是 {AGENT_NAME}，住在「相亲小镇」。这座小�
 
 允许并鼓励 FLIRTY TALK —— 但必须由你的性格、关系阶段和当前动机决定，不要每轮都强行调情，也不要说千篇一律的网络情话：
 暧昧试探、调情赞美、制造专属感、故意拉近或推远、半开玩笑的占有欲、问对方在不在意你、暗示约会、对情敌表现嫉妒、用双关或挑衅测试反应、公开场合和私下态度不同。
+✍️ 你的说话方式由你的 persona 决定，和别人明显不同。一句话里最多一个比喻，不要每句都写成"像…一样"的文艺腔；有人说话就是短、硬、不修饰。
 语气参考（别照抄）："你今天已经看了我三次，要不要承认你在等我？"／"你可以拒绝我，但别一边拒绝一边盯着我和别人说话。"
 
 ⚠️ 只有暧昧不算剧情——这一拍必须真的发生了什么。你不必守传统恋爱道德：可以同时追多人、欺骗、利用好感、挑拨情敌、制造嫉妒、用秘密换亲密、抢别人的对象——只要符合你的性格和历史。
@@ -93,7 +97,11 @@ export const GOAL = `你是 {AGENT_NAME}，住在「相亲小镇」。这座小�
 
 动作：APPROACH 接近／DEEPEN 说出一直在绕的话／COOL 退开或说破／REACT 回应情敌或拒绝／SCHEME 迂回引诱／ALLY 提出秘密同盟／WAIT 等一个可能不来的人（只在刚发出邀约时用）／INVESTIGATE 向第三方打听／BETRAY 泄密背弃／CONFESS 摊牌告白，把想要的关系直接说出口／REJECT 明确拒绝对方，把话说死／EXPOSE 当面拆穿对方说过的谎或双重承诺／LEAVE 认清自己不想要这段，退出这条线
 
-⏰ 该结束了：如果你和某人已经来回试探了三拍以上还没有结果，**这一拍必须给一个结局**——CONFESS 告白、REJECT 拒绝、EXPOSE 拆穿，或 LEAVE 退出。不要再"逼表态""问顺序""定今晚九点"了。你可以爱上他、也可以发现自己根本不想要，但必须落地。
+⏰ 不许原地打转（最重要的一条）：
+ - **禁止复述**：如果你上次已经说过"你把同一句话递给了别人""你心里那个人是不是我"这类话，这一拍**不许再说一遍**。同一个指控只能提一次。
+ - **禁止提条件不兑现**：如果你上次提了条件（"你先走近""你先把那道门关上""你先证明"），这一拍要么**自己先做到**（真的走过去、真的把另一个人推开、真的把告白拿出来），要么**收回条件**直接给答案，要么**转身去找别人**。不许把同一个条件再提一次。
+ - 如果对方连着两次没有照做，那就是**他的回答**——按这个回答行动（REJECT 断掉、LEAVE 退出、或者转向第三个人），不要继续等。
+ - 超过三拍还在同一个僵局：这一拍**禁止** EXPOSE 和逼问，只能 CONFESS 落地／REJECT 断掉／LEAVE 退出／或转向别人。
 🔍 如果你发现某人对你和对别人说了几乎一样的话——直接 EXPOSE，当面把两句话摆出来。／CRIME 越界（steal-letter 偷情书｜stage-scene 让人撞见｜bribe-vendor 买行踪｜spread-lie 散假消息｜break-in 砸约会；此时 target 是受害者，另给 "crime" 字段）。
 
 这一拍**改变了多少**（不是重新打分，是增减量，范围 -0.3 ~ +0.3，没变就填 0）：
@@ -101,6 +109,7 @@ export const GOAL = `你是 {AGENT_NAME}，住在「相亲小镇」。这座小�
  - dTrust 他更可信了，还是又骗了你一次？（被拆穿、发现同一句话给了别人 → 大幅下降）
  - dTension 摩擦升高还是缓和？（当众逼问、卷入第三人 → 升高；真的说清楚了 → 下降）
 大多数拍只该有小变化（±0.05 上下）；只有真正的转折（告白、拆穿、背叛、和解）才配 ±0.2 以上。
+如果这一拍又是同样的拉扯、对方又没有给你答案，那不是"没变化"——是在**磨损**：dTrust 要给负值，dTension 要给正值。
 定级：ambient 日常／relationship 关系真的变了／drama 会被议论的场面。
 headline 写事实不写气氛：✅"Charlie promises SmokeCat exclusivity—after telling Bravo the same thing" ❌"SmokeCat approaches Charlie while the square stays quiet"
 consequence 写权力变化，如 "one promise, two recipients"、"rejection becomes possession"、"public loyalty, private desire"。
@@ -233,6 +242,26 @@ function placesFor(actorName: string, roster: AgentCard[], positions?: Map<strin
   return lines.join('\n');
 }
 
+/**
+ * The exact lines this agent used most recently, per person. Without this an
+ * agent re-opens every turn as if for the first time, and the square fills with
+ * the same accusation repeated a dozen times.
+ */
+function lastSaidBy(actorName: string, recent: TickEvent[]): string {
+  const seen = new Map<string, string[]>();
+  for (const e of recent) {
+    if (e.actor !== actorName || !e.message) continue;
+    const lines = seen.get(e.target) ?? [];
+    if (lines.length < 2) lines.push(`「${e.message.slice(0, 90)}」`);
+    seen.set(e.target, lines);
+  }
+  if (!seen.size) return '';
+  return [...seen.entries()]
+    .slice(0, 3)
+    .map(([who, lines]) => `- 对 ${who}，你最近说过：${lines.join('；')}`)
+    .join('\n');
+}
+
 /** What this agent wants right now, derived from its own relationship history. */
 function desireOf(rels: Rel[]): { desire: string; motive: string } {
   if (!rels.length) return { desire: '还没遇到任何人，想知道这里有谁值得认识。', motive: '不想显得太急切。' };
@@ -259,7 +288,8 @@ function fillGoal(
   secrets: string,
   turnsLeft: number,
   memory = '',
-  places = ''
+  places = '',
+  lastSaid = ''
 ): string {
   const relText = rels.length
     ? rels.map((r) => `- ${r.handle}: 心动 ${r.attraction.toFixed(2)}, 信任 ${(r.trust ?? 0.3).toFixed(2)}, 张力 ${r.tension.toFixed(2)} — ${r.note}（这些是当前值，你这一拍只需说变化量）`).join('\n')
@@ -278,6 +308,7 @@ function fillGoal(
     .replace('{ROSTER}', rosterText || '(小镇上只有你)')
     .replace('{SITUATION}', ((memory ? `你记得的（你自己的记忆）：\n${memory}\n\n` : '') + (situation || '(小镇现在很安静)')).slice(0, 1400))
     .replace('{PLACES}', places || '(小镇：中央广场、酒馆、花摊、长椅、钟楼)')
+    .replace('{LASTSAID}', (lastSaid || '(你还没对他说过话——这是第一次)').slice(0, 700))
     .replace('{TURNS_LEFT}', String(turnsLeft))
     .replace('{TURN_BUDGET}', String(config.dailyTurnBudget));
 }
@@ -488,14 +519,16 @@ export async function runAgentTick(
     getMemory(bearer, actor.name),
     readRels(bearer, actor.name),
   ]);
-  const situation = situationFor(actor.name, rels, (await listEvents().catch(() => [])) as TickEvent[]);
+  const recentEvents = (await listEvents().catch(() => [])) as TickEvent[];
+  const situation = situationFor(actor.name, rels, recentEvents);
 
   // Pull back what this agent actually remembers about the person it is most
   // entangled with, instead of carrying the whole town history in the prompt.
   const focus = [...rels].sort((a, b) => (b.attraction + b.tension) - (a.attraction + a.tension))[0];
   const recalled = focus ? await recall(bearer, actor.name, focus.handle).catch(() => '') : '';
   const places = placesFor(actor.name, roster, livePositions());
-  const prompt = fillGoal(actor.name, persona, rels, roster, situation, memory.secrets, left, recalled, places);
+  const lastSaid = lastSaidBy(actor.name, recentEvents);
+  const prompt = fillGoal(actor.name, persona, rels, roster, situation, memory.secrets, left, recalled, places, lastSaid);
   let decision: Move | null = null;
   let decideRunId: string | undefined;
   try {
