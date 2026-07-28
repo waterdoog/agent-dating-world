@@ -495,3 +495,10 @@ img.agent-sprite { display: block; object-fit: contain; }
   border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper);
   font-family: inherit; font-size: 0.66rem; font-weight: 800;
 }
+
+/* landmark signs: quieter than a name tag, but readable across the square */
+.dt3d-landmark {
+  padding: 2px 9px; border: 2px solid var(--ink); border-radius: 2px;
+  background: var(--yellow); font-size: 11px; font-weight: 800; letter-spacing: 0.04em;
+  white-space: nowrap; box-shadow: 2px 2px 0 var(--ink); pointer-events: none;
+}

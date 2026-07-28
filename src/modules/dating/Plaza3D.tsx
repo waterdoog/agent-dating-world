@@ -34,9 +34,10 @@ export interface Mover3D {
   bubble?: { text: string; kind: 'fight' | 'love' | 'new' };
 }
 
-function Prop({ url, position, rotation, scale = 1 }: { url: string; position: [number, number, number]; rotation?: [number, number, number]; scale?: number }) {
+function Prop({ url, position, rotation, scale = 1, scaleY }: { url: string; position: [number, number, number]; rotation?: [number, number, number]; scale?: number; scaleY?: number }) {
   const { scene } = useGLTF(url);
-  return <Clone object={scene} position={position} rotation={rotation} scale={scale} castShadow receiveShadow />;
+  const s3: [number, number, number] = [scale, scale * (scaleY ?? 1), scale];
+  return <Clone object={scene} position={position} rotation={rotation} scale={s3} castShadow receiveShadow />;
 }
 
 const _v = new THREE.Vector3();
@@ -95,6 +96,44 @@ function Agent({ agent, posRef }: { agent: Mover3D; posRef: RefObject<LivePos[]>
 }
 
 const R = Math.PI / 2;   // one quarter turn
+
+/**
+ * Landmarks. The town was a field of identical coloured boxes, so the bar and
+ * the florist were indistinguishable and "meet me at the bar" pointed nowhere.
+ * These mirror town-map.ts: same ids, same 0–100 coordinates — scaled up, given
+ * their own model, and captioned so each is recognisable from across the square.
+ */
+const LANDMARKS: Array<{ id: string; name: string; x: number; y: number; url: string; scale: number; rot?: number }> = [
+  { id: 'bar', name: '酒馆', x: 74, y: 28, url: '/city/building-small-b.glb', scale: 1.75, rot: -R },
+  { id: 'florist', name: '花摊', x: 24, y: 30, url: '/city/building-small-c.glb', scale: 1.35, rot: R },
+  { id: 'clock', name: '钟楼', x: 50, y: 76, url: '/city/building-small-d.glb', scale: 1.9, rot: Math.PI },
+  { id: 'bench', name: '长椅区', x: 20, y: 66, url: '/city/building-garage.glb', scale: 1.2, rot: R },
+];
+
+/**
+ * Landmarks belong on the street, not on the paving. The map's 0–100 coords put
+ * them inside the square, so push each one radially out past the ring road —
+ * near enough that "the bar is east" still holds, far enough that it fronts a
+ * street instead of blocking the plaza.
+ */
+function pushOut(x: number, z: number): [number, number, number] {
+  const d = Math.hypot(x, z) || 1;
+  const out = 5.6;                       // just beyond the ring road
+  return [(x / d) * out, 0, (z / d) * out];
+}
+
+/** A landmark building plus a standing sign, so the place reads from a distance. */
+function Landmark({ mark }: { mark: (typeof LANDMARKS)[number] }) {
+  const { scene } = useGLTF(mark.url);
+  return (
+    <group position={pushOut(map(mark.x), map(mark.y))} rotation={[0, mark.rot ?? 0, 0]}>
+      <Clone object={scene} scale={mark.scale} castShadow receiveShadow />
+      <Html position={[0, 1.5 * mark.scale, 0]} center distanceFactor={20} zIndexRange={[6, 0]}>
+        <div className="dt3d-landmark">{mark.name}</div>
+      </Html>
+    </group>
+  );
+}
 
 const NPC_MODEL: Record<string, string> = {
   vendor: '/characters3d/character-f.glb',
@@ -200,22 +239,36 @@ function Scene({ agents, posRef, npcs, onNpc }: { agents: Mover3D[]; posRef: Ref
 
   // blocks on all four sides of the ring road, not one row
   const B = '/city/building-small-';
-  const blocks: Array<{ url: string; pos: [number, number, number]; rot?: [number, number, number] }> = [
-    { url: `${B}a.glb`, pos: [-5, 0, -5] },
-    { url: `${B}c.glb`, pos: [-3, 0, -5.5] },
-    { url: '/city/building-garage.glb', pos: [-1, 0, -5.5], rot: [0, Math.PI, 0] },
-    { url: `${B}b.glb`, pos: [1, 0, -5.5] },
-    { url: `${B}d.glb`, pos: [3, 0, -5.5] },
-    { url: `${B}a.glb`, pos: [5, 0, -5], rot: [0, -R, 0] },
-    { url: `${B}c.glb`, pos: [5.5, 0, -2], rot: [0, -R, 0] },
-    { url: `${B}d.glb`, pos: [5.5, 0, 1], rot: [0, -R, 0] },
-    { url: `${B}b.glb`, pos: [5, 0, 5], rot: [0, Math.PI, 0] },
-    { url: '/city/building-garage.glb', pos: [2, 0, 5.5], rot: [0, 0, 0] },
-    { url: `${B}c.glb`, pos: [-2, 0, 5.5] },
-    { url: `${B}a.glb`, pos: [-5, 0, 5], rot: [0, R, 0] },
-    { url: `${B}d.glb`, pos: [-5.5, 0, 2], rot: [0, R, 0] },
-    { url: `${B}b.glb`, pos: [-5.5, 0, -1], rot: [0, R, 0] },
-  ];
+  // Terraces, not scattered boxes. Kenney's reference town works because the
+  // buildings sit shoulder to shoulder along the street with varied heights —
+  // ours were spaced two units apart and all the same height, which read as
+  // pieces on a board rather than a street. Rows are built at 1.05 spacing so
+  // the facades touch, and each building gets a deterministic height so the
+  // skyline steps up and down.
+  const KIND_SET = [`${B}a.glb`, `${B}b.glb`, `${B}c.glb`, `${B}d.glb`];
+  const hashAt = (x: number, z: number) => Math.abs(Math.round(x * 73856093 + z * 19349663)) % 997;
+  const blocks: Array<{ url: string; pos: [number, number, number]; rot?: [number, number, number]; scaleY?: number }> = [];
+  /** One terrace of touching buildings along a street edge. */
+  function terrace(
+    from: number, to: number, fixed: number, axis: 'x' | 'z', rot: number, skip: (v: number) => boolean = () => false
+  ) {
+    for (let v = from; v <= to; v += 1.35) {
+      if (skip(v)) continue;
+      const x = axis === 'x' ? v : fixed;
+      const z = axis === 'x' ? fixed : v;
+      const h = hashAt(x, z);
+      blocks.push({
+        url: KIND_SET[h % KIND_SET.length],
+        pos: [x, 0, z],
+        rot: [0, rot, 0],
+        scaleY: 0.85 + (h % 4) * 0.22,   // 0.85×–1.5× — stepped, but never taller than the square is wide
+      });
+    }
+  }
+  terrace(-6.2, 6.2, -6.4, 'x', Math.PI, (v) => Math.abs(v) < 0.6);   // north side, gap at the spoke
+  terrace(-6.2, 6.2, 6.4, 'x', 0, (v) => Math.abs(v) < 0.6);          // south side
+  terrace(-6.2, 6.2, -6.4, 'z', R, (v) => Math.abs(v) < 0.6);         // west side
+  terrace(-6.2, 6.2, 6.4, 'z', -R, (v) => Math.abs(v) < 0.6);         // east side
 
   // an outer town: a second ring road further out, with its own streets of
   // houses, so the world doesn't stop at the plaza's edge
@@ -318,14 +371,25 @@ function Scene({ agents, posRef, npcs, onNpc }: { agents: Mover3D[]; posRef: Ref
       {ring.map((r, i) => (
         <Prop key={`r${i}`} url={r.url} position={r.pos} rotation={r.rot} />
       ))}
+      {/* block bases: the reference town sits its terraces on raised lots, which
+          is what separates "a street" from "boxes on grass" */}
+      {[[0, -6.9, 14.6, 2.1], [0, 6.9, 14.6, 2.1], [-6.9, 0, 2.1, 14.6], [6.9, 0, 2.1, 14.6]].map(([bx, bz, bw, bd], i) => (
+        <mesh key={`base${i}`} position={[bx, 0.02, bz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+          <planeGeometry args={[bw, bd]} />
+          <meshStandardMaterial color="#b9c48f" />
+        </mesh>
+      ))}
       {blocks.map((b, i) => (
-        <Prop key={`b${i}`} url={b.url} position={b.pos} rotation={b.rot} />
+        <Prop key={`b${i}`} url={b.url} position={b.pos} rotation={b.rot} scaleY={b.scaleY} />
       ))}
       {greens.map(([x, z, kind], i) => (
         <Prop key={`g${i}`} url={`/city/${kind}.glb`} position={[x, 0, z]} />
       ))}
       {agents.map((a) => (
         <Agent key={a.name} agent={a} posRef={posRef} />
+      ))}
+      {LANDMARKS.map((m) => (
+        <Landmark key={m.id} mark={m} />
       ))}
       {npcs.map((n) => (
         <NpcFigure key={n.id} npc={n} onPick={onNpc} />

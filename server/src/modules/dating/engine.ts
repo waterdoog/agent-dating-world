@@ -132,6 +132,20 @@ export interface Rel {
   note: string;
 }
 
+/** Which place a beat points at, so the plaza can walk them there. */
+export function destinationOf(text: string): string | undefined {
+  const hits: Array<[string, string]> = [
+    ['酒馆', 'bar'], ['后门', 'bar'], ['包厢', 'bar'],
+    ['花摊', 'florist'],
+    ['长椅', 'bench'],
+    ['钟楼', 'clock'],
+    ['喷泉', 'fountain'],
+    ['广场', 'plaza'],
+  ];
+  for (const [word, id] of hits) if (text.includes(word)) return id;
+  return undefined;
+}
+
 export type Severity = 'ambient' | 'relationship' | 'drama';
 
 export interface TickEvent {
@@ -154,6 +168,7 @@ export interface TickEvent {
   replyRunId?: string;    // the model run that answered
   turnsLeft?: number;     // the actor's remaining conversation budget today
   status?: 'ok' | 'failed' | 'timeout' | 'queued' | 'no-budget';
+  destination?: string;   // the place this beat names — both parties head there
 }
 
 const ROOT = 'Agent Dating';
