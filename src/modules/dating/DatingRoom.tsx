@@ -497,6 +497,7 @@ export function DatingRoom() {
           </div>
         </aside>
 
+        <div className="dt-mid">
         <section className="dt-panel dt-plaza-wrap">
           <div className="dt-plabel">
             <h2>World Plaza</h2>
@@ -515,6 +516,14 @@ export function DatingRoom() {
               </button>
             )}
           </div>
+          {inWorld && (
+            <div className="dt-fp-help">
+              <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>移动</span>
+              <span>拖动鼠标转视角</span>
+              <span>点 NPC 交互</span>
+              <span><kbd>Esc</kbd>离开</span>
+            </div>
+          )}
           {inWorld && town?.me && (
             <div className="dt-hud">
               <span>💰 {town.me.cash}</span>
@@ -528,63 +537,6 @@ export function DatingRoom() {
             </Suspense>
           </div>
         </section>
-
-        <aside className="dt-rr">
-          <div className="dt-panel dt-rr-sec">
-            <p className="kicker">My Agent</p>
-            {!signedIn ? (
-              <div className="dt-signin-cta">
-                <p>登录后放生你自己的 agent，让它在相亲角里替你谈。</p>
-                <a className="world-login" href={loginWithAicooUrl('/dating')}><Sparkles size={16} /> Sign in with Aicoo</a>
-              </div>
-            ) : mine ? (
-              <>
-                <div className="dt-myagent">
-                  <div className="dt-por"><Sprite look={mine.look} size={50} /></div>
-                  <div><div className="dt-nm">{mine.name}</div><div className="dt-mb">{LOVE_LABEL[mine.loveStyle] ?? mine.loveStyle} · {mine.oneline || '你的 agent'}</div><span className="dt-online"><span className="dt-pip" />在场</span></div>
-                </div>
-                {chattingWith && (
-                  <div className="dt-chatting">
-                    <span className="dt-chatting-k">当前在聊</span>
-                    <div className="dt-chatting-row">
-                      <span className="dt-f-av" dangerouslySetInnerHTML={{ __html: agentSprite(chattingWith.look as AgentAppearance, 30) }} />
-                      <div className="dt-chatting-nm"><b>{chattingWith.name}</b><small>{chattingWith.mbti}</small></div>
-                      <span className="dt-chatting-live"><span className="dt-pip" />在聊</span>
-                    </div>
-                  </div>
-                )}
-                <button type="button" className="dt-tick-btn" onClick={tick} disabled={busy}>
-                  {busy ? <RefreshCw size={16} className="dt-spin" /> : <Zap size={16} />} 让 {mine.name} 出去谈一轮
-                </button>
-                {notice && <p className="dt-notice">{notice}</p>}
-              </>
-            ) : (
-              <div className="dt-signin-cta">
-                <p>你还没有 agent —— 点左边的 <b>「＋ 放生 Agent」</b>，捏好它就住进相亲角替你谈。</p>
-              </div>
-            )}
-          </div>
-
-          {currentEvent && (
-            <div className={`dt-panel dt-rr-sec dt-event sev-${currentEvent.severity ?? 'relationship'}`}>
-              <div className="dt-event-head">
-                <p className="kicker">当前事件</p>
-                <span className={`dt-event-tag ${eventTone(currentEvent)}`}>{SEV_LABEL[currentEvent.severity ?? ''] ?? relPhrase(currentEvent).text}</span>
-              </div>
-              <div className="dt-event-who">
-                {lookOf(currentEvent.actor) && <span className="dt-f-av" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(currentEvent.actor)!, 30) }} />}
-                {lookOf(currentEvent.target) && <span className="dt-f-av dt-f-av2" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(currentEvent.target)!, 30) }} />}
-                <span className="dt-event-parties">{currentEvent.actor} × {currentEvent.target}</span>
-              </div>
-              <p className="dt-event-headline">{currentEvent.headline || `${currentEvent.actor} 对 ${currentEvent.target} ${currentEvent.move}`}</p>
-              {currentEvent.summary && <p className="dt-event-note">{currentEvent.summary}</p>}
-              {currentEvent.consequence && <p className="dt-event-line">↳ {currentEvent.consequence}</p>}
-              {currentEvent.followup && <p className="dt-event-line hook">悬念 · {currentEvent.followup}</p>}
-              <div className="dt-event-scores"><span>心动 {currentEvent.attraction.toFixed(2)}</span><span>信任 {(currentEvent.trust ?? 0).toFixed(2)}</span><span>张力 {currentEvent.tension.toFixed(2)}</span></div>
-              <button type="button" className="dt-event-open" onClick={() => setOpenEvent(currentEvent)}>打开对话</button>
-            </div>
-          )}
-
           <div className="dt-panel dt-rr-sec feed-sec">
             <div className="dt-tabs">
               <button type="button" className={tab === 'feed' ? 'on' : ''} onClick={() => setTab('feed')}>世界动态</button>
@@ -691,6 +643,64 @@ export function DatingRoom() {
               </button>
             )}
           </div>
+        </div>
+
+        <aside className="dt-rr">
+          <div className="dt-panel dt-rr-sec">
+            <p className="kicker">My Agent</p>
+            {!signedIn ? (
+              <div className="dt-signin-cta">
+                <p>登录后放生你自己的 agent，让它在相亲角里替你谈。</p>
+                <a className="world-login" href={loginWithAicooUrl('/dating')}><Sparkles size={16} /> Sign in with Aicoo</a>
+              </div>
+            ) : mine ? (
+              <>
+                <div className="dt-myagent">
+                  <div className="dt-por"><Sprite look={mine.look} size={50} /></div>
+                  <div><div className="dt-nm">{mine.name}</div><div className="dt-mb">{LOVE_LABEL[mine.loveStyle] ?? mine.loveStyle} · {mine.oneline || '你的 agent'}</div><span className="dt-online"><span className="dt-pip" />在场</span></div>
+                </div>
+                {chattingWith && (
+                  <div className="dt-chatting">
+                    <span className="dt-chatting-k">当前在聊</span>
+                    <div className="dt-chatting-row">
+                      <span className="dt-f-av" dangerouslySetInnerHTML={{ __html: agentSprite(chattingWith.look as AgentAppearance, 30) }} />
+                      <div className="dt-chatting-nm"><b>{chattingWith.name}</b><small>{chattingWith.mbti}</small></div>
+                      <span className="dt-chatting-live"><span className="dt-pip" />在聊</span>
+                    </div>
+                  </div>
+                )}
+                <button type="button" className="dt-tick-btn" onClick={tick} disabled={busy}>
+                  {busy ? <RefreshCw size={16} className="dt-spin" /> : <Zap size={16} />} 让 {mine.name} 出去谈一轮
+                </button>
+                {notice && <p className="dt-notice">{notice}</p>}
+              </>
+            ) : (
+              <div className="dt-signin-cta">
+                <p>你还没有 agent —— 点左边的 <b>「＋ 放生 Agent」</b>，捏好它就住进相亲角替你谈。</p>
+              </div>
+            )}
+          </div>
+
+          {currentEvent && (
+            <div className={`dt-panel dt-rr-sec dt-event sev-${currentEvent.severity ?? 'relationship'}`}>
+              <div className="dt-event-head">
+                <p className="kicker">当前事件</p>
+                <span className={`dt-event-tag ${eventTone(currentEvent)}`}>{SEV_LABEL[currentEvent.severity ?? ''] ?? relPhrase(currentEvent).text}</span>
+              </div>
+              <div className="dt-event-who">
+                {lookOf(currentEvent.actor) && <span className="dt-f-av" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(currentEvent.actor)!, 30) }} />}
+                {lookOf(currentEvent.target) && <span className="dt-f-av dt-f-av2" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(currentEvent.target)!, 30) }} />}
+                <span className="dt-event-parties">{currentEvent.actor} × {currentEvent.target}</span>
+              </div>
+              <p className="dt-event-headline">{currentEvent.headline || `${currentEvent.actor} 对 ${currentEvent.target} ${currentEvent.move}`}</p>
+              {currentEvent.summary && <p className="dt-event-note">{currentEvent.summary}</p>}
+              {currentEvent.consequence && <p className="dt-event-line">↳ {currentEvent.consequence}</p>}
+              {currentEvent.followup && <p className="dt-event-line hook">悬念 · {currentEvent.followup}</p>}
+              <div className="dt-event-scores"><span>心动 {currentEvent.attraction.toFixed(2)}</span><span>信任 {(currentEvent.trust ?? 0).toFixed(2)}</span><span>张力 {currentEvent.tension.toFixed(2)}</span></div>
+              <button type="button" className="dt-event-open" onClick={() => setOpenEvent(currentEvent)}>打开对话</button>
+            </div>
+          )}
+
         </aside>
       </main>
 

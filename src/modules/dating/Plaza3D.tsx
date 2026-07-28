@@ -109,8 +109,20 @@ function NpcFigure({ npc, onPick }: { npc: Npc3D; onPick?: (id: string) => void 
   return (
     <group position={[map(npc.x), 0, map(npc.y)]} onClick={(e) => { e.stopPropagation(); onPick?.(npc.id); }}>
       <Clone object={scene} scale={AGENT_SCALE} castShadow />
+      {/* an invisible collider: the model itself is a thin figure and easy to
+          miss, so give the click a body-sized target */}
+      <mesh position={[0, 0.38, 0]} visible={false}>
+        <boxGeometry args={[0.55, 0.8, 0.55]} />
+      </mesh>
       <Html position={[0, 0.86, 0]} center distanceFactor={17} zIndexRange={[8, 0]}>
-        <div className={`dt3d-npc ${npc.kind}`}>{npc.name}{npc.doing ? <em>{npc.doing}</em> : null}</div>
+        {/* the label is HTML, so it needs its own handler — clicking the name
+            used to hit nothing and also shadowed the model behind it */}
+        <div
+          className={`dt3d-npc ${npc.kind}`}
+          onPointerDown={(e) => { e.stopPropagation(); onPick?.(npc.id); }}
+        >
+          {npc.name}{npc.doing ? <em>{npc.doing}</em> : null}
+        </div>
       </Html>
     </group>
   );
