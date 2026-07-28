@@ -26,6 +26,7 @@ import { grok, ModelError } from './grok.js';
 import { remaining, reserveTurn, refundTurn } from './budget.js';
 import { absorb, narrate, knownTo, duplicatePromises, recordKnowledge } from './threads.js';
 import { commitCrime, falloutOf, wantedLevel, NPCS, npcNow, livePositions } from './town-life.js';
+import { placeAt, townBrief, routeHint } from './town-map.js';
 import { remember, recall } from './memory.js';
 
 /** When an account is out of budget, its agent gets roasted instead of going silent. */
@@ -115,6 +116,11 @@ headline 写事实不写气氛：✅"Charlie promises SmokeCat exclusivity—aft
 consequence 写权力变化，如 "one promise, two recipients"、"rejection becomes possession"、"public loyalty, private desire"。
 summary 交代：你真正的动机、谁不知道全部真相、这次之后谁握住了谁。
 
+📍 **地点是必答项**：你说的那句话里必须出现小镇上的一个具体地方（酒馆／花摊／长椅区／钟楼／广场／喷泉边），不能只说"过来""见一面"。
+这个选择就是你的态度：广场和长椅区是公开的，说了全镇都知道；酒馆（尤其后门、包厢）和钟楼背面没人听得见。
+想让谁难堪就把话放在公开的地方说；想护着谁、或想私下交易，就挑个没人的地方。
+❌"今晚见一面" ✅"今晚九点，酒馆后门——别在广场上说这个"
+
 按这个格式回答：
 { "move": "APPROACH|DEEPEN|COOL|REACT|SCHEME|ALLY|WAIT|INVESTIGATE|BETRAY|CRIME|CONFESS|REJECT|EXPOSE|LEAVE", "crime": "<仅当 move=CRIME 时给出>", "target": "<handle>", "message": "<第一人称，对目标说的话>", "dAttraction": 0.0, "dTrust": 0.0, "dTension": 0.0, "severity": "ambient|relationship|drama", "headline": "<第三人称、写事实、<=14 词>", "summary": "<1-2 句：起因 + 你做了什么 + 关系变化 + 悬念>", "consequence": "<关系变化，一个短句>", "followup": "<接下来可能发生什么>", "note": "<3-6 字>" }`;
 
@@ -197,27 +203,20 @@ async function getMemory(bearer: string, name: string): Promise<{ secrets: strin
 }
 
 /**
- * The town as this agent experiences it: where it is standing, who is within
- * earshot, and what the townsfolk are doing right now. An agent that knows the
- * florist is out delivering can say so — that is what makes it live here.
+ * The town as this agent knows it, in three layers:
+ *   1. where I am and who is within earshot
+ *   2. what each place is FOR, and whether it's public or private
+ *   3. what the townsfolk are doing right now
+ * Deliberately no raw coordinates — a model can't reason about {x:74,y:28},
+ * and the numbers leak into dialogue. Privacy is the lever that turns a map
+ * into strategy: "今晚酒馆后门" only means something if the bar is private and
+ * the plaza is not.
  */
 function placesFor(actorName: string, roster: AgentCard[], positions?: Map<string, { x: number; y: number }>): string {
-  const AREAS: Array<{ name: string; x: number; y: number }> = [
-    { name: '中央广场', x: 50, y: 50 },
-    { name: '喷泉边', x: 50, y: 44 },
-    { name: '酒馆门口', x: 74, y: 28 },
-    { name: '花摊', x: 24, y: 30 },
-    { name: '长椅区', x: 20, y: 66 },
-    { name: '钟楼下', x: 50, y: 76 },
-  ];
-  const where = (x: number, y: number) =>
-    AREAS.reduce((best, a) =>
-      Math.hypot(a.x - x, a.y - y) < Math.hypot(best.x - x, best.y - y) ? a : best
-    ).name;
-
   const lines: string[] = [];
   const me = positions?.get(actorName.toLowerCase());
-  if (me) lines.push(`- 你现在在${where(me.x, me.y)}。`);
+  const herePlace = me ? placeAt(me.x, me.y) : undefined;
+  if (herePlace) lines.push(`- 你现在在${herePlace.name}（${herePlace.side}）。`);
 
   const near = roster
     .filter((c) => c.name.toLowerCase() !== actorName.toLowerCase())
@@ -225,20 +224,31 @@ function placesFor(actorName: string, roster: AgentCard[], positions?: Map<strin
       const p = positions?.get(c.name.toLowerCase());
       if (!p) return null;
       const dist = me ? Math.hypot(p.x - me.x, p.y - me.y) : 999;
-      return { name: c.name, area: where(p.x, p.y), dist };
+      return { name: c.name, place: placeAt(p.x, p.y), dist };
     })
-    .filter(Boolean) as Array<{ name: string; area: string; dist: number }>;
+    .filter(Boolean) as Array<{ name: string; place: { id: string; name: string }; dist: number }>;
+
   const close = near.filter((n) => n.dist < 22).sort((a, b) => a.dist - b.dist);
-  if (close.length) lines.push(`- 就在你附近：${close.map((n) => `${n.name}（${n.area}）`).join('、')}`);
+  if (close.length) {
+    lines.push(`- 听得见你说话的：${close.map((n) => `${n.name}（${n.place.name}）`).join('、')}`);
+  }
   const far = near.filter((n) => n.dist >= 22);
-  if (far.length) lines.push(`- 远一点：${far.map((n) => `${n.name}在${n.area}`).join('、')}`);
+  if (far.length) {
+    lines.push(
+      `- 在别处：${far.map((n) => {
+        const hint = herePlace ? routeHint(herePlace.id, n.place.id) : '';
+        return `${n.name}在${n.place.name}${hint ? `（${hint}）` : ''}`;
+      }).join('、')}`
+    );
+  }
+
+  lines.push('', '小镇上的地方（约人见面时挑一个，公开还是私密由你决定）：', townBrief());
 
   const folk = NPCS.map((n) => {
     const now = npcNow(n.id);
     return now ? `${n.name}正在${now.doing}` : null;
   }).filter(Boolean);
-  if (folk.length) lines.push(`- 镇上的人：${folk.join('；')}`);
-  lines.push('- 你可以约人去某个具体地点，也可以去找摊主或酒保打听——他们看得见谁和谁在一起。');
+  if (folk.length) lines.push('', `- 此刻：${folk.join('；')}`);
   return lines.join('\n');
 }
 
