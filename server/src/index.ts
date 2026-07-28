@@ -765,7 +765,15 @@ app.post('/api/dating/release', async (c) => {
       dimensions,
       summary: typeof body.summary === 'string' ? body.summary.slice(0, 600) : '',
       memory,
-      look: { form: look.form, color: look.color, accessory: typeof look.accessory === 'string' ? look.accessory : 'none', seed: name },
+      // keep the avatar the player picked — dropping it here made every new
+      // agent fall back to the default cube figure
+      look: {
+        form: look.form,
+        color: look.color,
+        accessory: typeof look.accessory === 'string' ? look.accessory : 'none',
+        seed: name,
+        ...(typeof look.avatar === 'string' ? { avatar: look.avatar } : {}),
+      },
     });
     return c.json({ agent: publicCard(card) });
   } catch (error) {

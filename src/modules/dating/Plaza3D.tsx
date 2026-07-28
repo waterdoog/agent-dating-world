@@ -109,7 +109,7 @@ function NpcFigure({ npc, onPick }: { npc: Npc3D; onPick?: (id: string) => void 
   return (
     <group position={[map(npc.x), 0, map(npc.y)]} onClick={(e) => { e.stopPropagation(); onPick?.(npc.id); }}>
       <Clone object={scene} scale={AGENT_SCALE} castShadow />
-      <Html position={[0, 1.05, 0]} center distanceFactor={13} zIndexRange={[8, 0]}>
+      <Html position={[0, 0.86, 0]} center distanceFactor={17} zIndexRange={[8, 0]}>
         <div className={`dt3d-npc ${npc.kind}`}>{npc.name}{npc.doing ? <em>{npc.doing}</em> : null}</div>
       </Html>
     </group>
@@ -296,6 +296,13 @@ function Scene({ agents, posRef, npcs, onNpc }: { agents: Mover3D[]; posRef: Ref
         <Prop key={`p${i}`} url="/city/pavement.glb" position={[x, 0, z]} />
       ))}
       <Prop url="/city/pavement-fountain.glb" position={[0, 0, 0]} />
+      {/* plaza furniture — the square should read as a place, not a grey slab */}
+      <Prop url="/city/grass-trees.glb" position={[-2.4, 0, -2.4]} scale={0.55} />
+      <Prop url="/city/grass-trees.glb" position={[2.4, 0, 2.4]} scale={0.55} />
+      <Prop url="/city/grass-trees-tall.glb" position={[2.4, 0, -2.4]} scale={0.5} />
+      <Prop url="/city/grass-trees.glb" position={[-2.4, 0, 2.4]} scale={0.55} />
+      <Prop url="/city/road-straight-lightposts.glb" position={[-1.5, 0, 0]} rotation={[0, R, 0]} scale={0.9} />
+      <Prop url="/city/road-straight-lightposts.glb" position={[1.5, 0, 0]} rotation={[0, -R, 0]} scale={0.9} />
       {ring.map((r, i) => (
         <Prop key={`r${i}`} url={r.url} position={r.pos} rotation={r.rot} />
       ))}

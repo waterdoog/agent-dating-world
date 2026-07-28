@@ -1,6 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, RefreshCw, Sparkles, Upload, X } from 'lucide-react';
-import { agentSprite, AVATAR_CHOICES, type AgentAppearance } from './agent-avatar';
+import { agentSprite, avatar3dUrl, AVATAR_CHOICES, type AgentAppearance } from './agent-avatar';
+import { lazy, Suspense } from 'react';
+
+const AvatarSwatch = lazy(() => import('./AvatarPicker3D'));
 import { api, type PublicAgent, type ReleaseInput } from '../../api';
 
 const STYLE_MOOD: Record<string, string> = { open: 'curious', exclusive: 'angry', devoted: 'romantic', hunter: 'sly', dependent: 'shy', chaotic: 'cryptic', strategic: 'cold' };
@@ -165,7 +168,9 @@ export function CreateWizard({ onClose, onReleased }: { onClose: () => void; onR
                 <div className="dt-avatar-grid">
                   {AVATAR_CHOICES.map((url) => (
                     <button key={url} type="button" className={`dt-avatar-choice ${url === avatar ? 'on' : ''}`} onClick={() => setAvatar(url)} aria-label="avatar">
-                      <img src={url} alt="" width={46} height={46} draggable={false} />
+                      <Suspense fallback={<img src={url} alt="" width={58} height={58} draggable={false} />}>
+                        <AvatarSwatch url={avatar3dUrl({ avatar: url } as AgentAppearance)} size={58} />
+                      </Suspense>
                     </button>
                   ))}
                 </div>
