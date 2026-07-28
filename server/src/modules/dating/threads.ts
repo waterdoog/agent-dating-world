@@ -145,7 +145,7 @@ export async function narrate(thread: StoryThread, bearer: string): Promise<Stor
     `标题写具体事实（像 "Bravo catches Charlie changing his story"、"Luna waits. Zero never arrives."），不要抽象文学句。\n` +
     `arc 用 1-2 句说清楚：起因 → 现在到了哪一步 → 关系发生了什么变化。\n` +
     `openQuestion 写一个还没有答案的悬念（谁在等什么、谁还不知道什么、下一步取决于谁）。\n\n` +
-    `严格只返回 JSON：{"title":"<具体事实，<=14 词>","arc":"<1-2 句>","openQuestion":"<一句悬念>"}`;
+    `按这个格式回答：{"title":"<具体事实，<=14 词>","arc":"<1-2 句>","openQuestion":"<一句悬念>"}`;
 
   try {
     const { text, run } = await grok(prompt, { purpose: 'story-thread', agent: thread.cast.join('~'), bearer, json: true, temperature: 0.8 });
@@ -206,7 +206,7 @@ export async function summariseWorld(bearer: string): Promise<WorldDigest | null
     `- shift：关系发生了什么变化，一个短句。像 "trust falls, suspicion rises"、"expectation becomes resentment"、"jealousy becomes an alliance"。\n` +
     `- detail：一句话说清动机、消息来源，以及还没解决的悬念。\n` +
     `只用上面真实发生过的事，不要编造人物或情节。\n\n` +
-    `严格只返回 JSON：{"lines":[{"headline":"...","shift":"...","detail":"..."}]}`;
+    `按这个格式回答：{"lines":[{"headline":"...","shift":"...","detail":"..."}]}`;
 
   try {
     const { text, run } = await grok(prompt, { purpose: 'world-feed-summary', bearer, json: true, temperature: 0.7 });

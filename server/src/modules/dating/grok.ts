@@ -68,6 +68,11 @@ export interface GrokOptions {
   json?: boolean;           // ask for a strict JSON object back
   /** Aicoo bearer to execute this turn as — the account whose Grok access is used. */
   bearer?: string;
+  /**
+   * The acting agent's own scoped-share token. Preferred: a guest-v04 call runs
+   * in the agent's own sandbox and never appears in the owner's personal chat.
+   */
+  shareToken?: string;
   /** Keep a turn in one Aicoo conversation thread. */
   conversationId?: string;
 }
@@ -87,6 +92,14 @@ export async function grok(prompt: string, opts: GrokOptions): Promise<GrokResul
     input: prompt, output: '', at: started,
   };
 
+  const viaGuest = Boolean(opts.shareToken && opts.bearer);
+  // Calling the owner's main COO thread is opt-in: it shows up in their personal
+  // Aicoo chat. Without the flag (and without a share token) we refuse rather
+  // than spam someone's inbox.
+  if (!viaGuest && opts.bearer && !config.allowOwnerChat) {
+    throw new ModelError('failed', 'Refusing to post into the owner\'s personal Aicoo chat: give the agent a shareToken, or set TOWN_ALLOW_OWNER_CHAT=1 to opt in.',
+      record({ ...base, status: 'failed', error: 'owner-chat blocked (no shareToken, TOWN_ALLOW_OWNER_CHAT unset)', attempts: 0, elapsedMs: 0 }));
+  }
   const viaAicoo = Boolean(opts.bearer);
   if (!viaAicoo && !apiKey) {
     throw new ModelError('failed', 'No Grok access: pass an Aicoo bearer with Grok enabled, or set XAI_API_KEY.',
@@ -102,7 +115,20 @@ export async function grok(prompt: string, opts: GrokOptions): Promise<GrokResul
       // Grok gets its standard model rather than a hard failure, and the run
       // records whichever model actually answered.
       const wantGrok = model && model !== 'default' && !noGrok.has(opts.bearer ?? '');
-      const res = viaAicoo
+      const res = viaGuest
+        ? await fetch(`${config.aicooBaseUrl}/api/chat/guest-v04`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${opts.bearer}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              token: opts.shareToken,
+              message: opts.system ? `${opts.system}\n\n${prompt}` : prompt,
+              stream: false,
+              mode: 'agent',
+              ...(opts.conversationId ? { sessionKey: opts.conversationId } : {}),
+            }),
+            signal: AbortSignal.timeout(timeoutMs),
+          })
+        : viaAicoo
         ? await fetch(`${config.aicooBaseUrl}/api/v1/chat`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${opts.bearer}`, 'Content-Type': 'application/json' },
@@ -180,7 +206,8 @@ export async function grok(prompt: string, opts: GrokOptions): Promise<GrokResul
       const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
       lastStatus = timedOut ? 'timeout' : 'retrying';
       lastError = error instanceof Error ? error.message : String(error);
-      if (attempt > maxRetries) break;
+      // Retrying a timeout just stacks another full wait — give up immediately.
+      if (timedOut || attempt > maxRetries) break;
     }
   }
 

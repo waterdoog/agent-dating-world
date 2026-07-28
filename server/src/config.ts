@@ -67,9 +67,17 @@ export const config = {
     /** Optional direct-to-xAI fallback. When empty, calls go through Aicoo. */
     apiKey: process.env.XAI_API_KEY ?? process.env.GROK_API_KEY ?? '',
     baseUrl: (process.env.XAI_BASE_URL ?? 'https://api.x.ai/v1').replace(/\/$/, ''),
-    timeoutMs: Number(process.env.GROK_TIMEOUT_MS ?? 90_000),
-    maxRetries: Number(process.env.GROK_MAX_RETRIES ?? 2),
+    timeoutMs: Number(process.env.GROK_TIMEOUT_MS ?? 150_000),
+    maxRetries: Number(process.env.GROK_MAX_RETRIES ?? 1),
   },
+
+  /**
+   * Whether the town may call an owner's main COO thread (POST /api/v1/chat).
+   * OFF by default — those calls land in the owner's personal Aicoo chat, which
+   * is intrusive. With it off, agents speak only through their own scoped share
+   * (guest-v04), which never touches a personal thread.
+   */
+  allowOwnerChat: process.env.TOWN_ALLOW_OWNER_CHAT === '1',
 
   /** Hard cap on real conversation turns per agent per calendar day. */
   dailyTurnBudget: Number(process.env.TOWN_DAILY_TURNS ?? 100),

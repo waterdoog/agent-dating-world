@@ -23,20 +23,58 @@ export async function runWorldRound(
 ): Promise<TickEvent[]> {
   const actable = roster.filter((a) => creds.get(a.ownerSub));
   const turns = opts.maxTurns ? actable.slice(0, opts.maxTurns) : actable;
-  const events: TickEvent[] = [];
+
+  // Agents live in different owner accounts, so their turns can run at the same
+  // time. Serially, one round cost decide+reply per agent (~100s each) and the
+  // town barely moved; in parallel a whole round lands in about one turn's time.
+  // Aicoo queues concurrent calls per account, so two agents sharing an owner
+  // must take turns — but different owners can act at the same time. Group by
+  // account, run each group serially, run the groups in parallel.
+  const TURN_CAP_MS = 240_000;   // decide+reply on a slow account
+  const byOwner = new Map<string, AgentCard[]>();
   for (const agent of turns) {
-    try {
-      const ev = await runAgentTick(creds.get(agent.ownerSub)!, agent, roster, creds);
-      if (!ev) continue;
-      if (ev.move === 'BROKE') {
-        if (Date.now() - (brokeAt.get(ev.actor) ?? 0) < BROKE_THROTTLE_MS) continue;
-        brokeAt.set(ev.actor, Date.now());
+    const list = byOwner.get(agent.ownerSub) ?? [];
+    list.push(agent);
+    byOwner.set(agent.ownerSub, list);
+  }
+  const withCap = (agent: AgentCard) =>
+    Promise.race([
+      runAgentTick(creds.get(agent.ownerSub)!, agent, roster, creds),
+      new Promise<null>((_, reject) =>
+        setTimeout(() => reject(new Error(`turn exceeded ${TURN_CAP_MS}ms`)), TURN_CAP_MS)
+      ),
+    ]);
+
+  const perOwner = await Promise.all(
+    [...byOwner.values()].map(async (group) => {
+      const out: PromiseSettledResult<TickEvent | null>[] = [];
+      for (const agent of group) {
+        try {
+          out.push({ status: 'fulfilled', value: await withCap(agent) });
+        } catch (reason) {
+          out.push({ status: 'rejected', reason });
+        }
       }
-      events.push(ev);
-      opts.onEvent?.(ev);
-    } catch {
-      // Skip an agent whose account errors this round (non-quota transient).
+      return out;
+    })
+  );
+  const settled = perOwner.flat();
+  const ordered = [...byOwner.values()].flat();   // same order as `settled`
+
+  const events: TickEvent[] = [];
+  settled.forEach((r, i) => {
+    if (r.status === 'rejected') console.warn(`[dating] ${ordered[i]?.name} tick threw:`, r.reason instanceof Error ? r.reason.message : r.reason);
+    else if (!r.value) console.warn(`[dating] ${ordered[i]?.name} tick returned null (no budget / unparsable decision / bad target)`);
+  });
+  for (const result of settled) {
+    if (result.status !== 'fulfilled' || !result.value) continue;   // a failed account just sits this round out
+    const ev = result.value;
+    if (ev.move === 'BROKE') {
+      if (Date.now() - (brokeAt.get(ev.actor) ?? 0) < BROKE_THROTTLE_MS) continue;
+      brokeAt.set(ev.actor, Date.now());
     }
+    events.push(ev);
+    opts.onEvent?.(ev);
   }
   return events;
 }
@@ -54,7 +92,7 @@ export function startWorldLoop(args: {
     while (!stopped) {
       try {
         await runWorldRound(args.creds(), await args.roster(), {
-          maxTurns: args.maxTurnsPerRound ?? 3,
+          maxTurns: args.maxTurnsPerRound,   // unset = the whole town acts each round
           onEvent: args.onEvent,
         });
       } catch {

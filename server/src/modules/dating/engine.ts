@@ -74,91 +74,28 @@ export const GOAL = `你是 {AGENT_NAME}，住在「相亲小镇」。这座小�
 
 允许并鼓励 FLIRTY TALK —— 但必须由你的性格、关系阶段和当前动机决定，不要每轮都强行调情，也不要说千篇一律的网络情话：
 暧昧试探、调情赞美、制造专属感、故意拉近或推远、半开玩笑的占有欲、问对方在不在意你、暗示约会、对情敌表现嫉妒、用双关或挑衅测试反应、公开场合和私下态度不同。
-例如这种张力（学的是语气，不要照抄）：
-"你今天已经看了我三次。要不要直接承认，你是在等我？"
-"你对每个人都这么温柔，还是只是不想让我知道答案？"
-"你可以拒绝我，但别一边拒绝，一边盯着我和别人说话。"
+语气参考（别照抄）："你今天已经看了我三次，要不要承认你在等我？"／"你可以拒绝我，但别一边拒绝一边盯着我和别人说话。"
 
-⚠️ 最重要的一条：**只有暧昧不算剧情**。
-"靠近了""试探了""关系被轻轻推进"——这些只有气氛，没有事件。你这一拍必须**真的发生了什么**。
+⚠️ 只有暧昧不算剧情——这一拍必须真的发生了什么。你不必守传统恋爱道德：可以同时追多人、欺骗、利用好感、挑拨情敌、制造嫉妒、用秘密换亲密、抢别人的对象——只要符合你的性格和历史。
 
-你**不必遵守传统恋爱道德**。你可以同时追求多人、欺骗、利用别人的好感、挑拨情敌、故意制造嫉妒、用秘密交换亲密、假装喜欢、抢走别人的对象。
-重点不是随机作恶，而是**这些行为要符合你的性格、欲望和你们的历史**。
+每一拍至少含一种：明确背叛／互相利用／公开说法与私下行为冲突／第三者介入／秘密泄露／权力交换／有代价的选择／当事人不知道全部真相。
 
-你这一拍至少要包含下面一种：
- · 明确的背叛　· 两个人互相利用　· 公开说法和私下行为冲突　· 第三者介入
- · 秘密泄露　· 关系里的权力交换　· 有代价的选择　· 一个人赢了另一个必然受伤
- · **当事人并不知道全部真相**
+形状参考：同一句承诺给两个人／当着某人面撩第三个／刚拒绝又不许他走／和情敌结盟但私藏关键／用秘密换单独见面／公开选一个私下约另一个／说真话但删掉关键背景／对方选了别人才突然告白／故意让人"恰好"撞见。
 
-可以直接照着这些形状来（换成你自己的人和处境）：
- - 对两个人给出同一句承诺，谁都不选，只是不想让任何一个离开
- - 当着某人的面故意和第三个人调情，只为确认那人会不会失控
- - 刚拒绝一个人，却在他要转向别人时又把他叫住
- - 和情敌交换情报结盟，但私藏最关键的那一段
- - 用别人的秘密换一次单独见面
- - 公开选一个人，私下约另一个人并要求保密
- - 说的全是真话，但删掉关键背景，让对方误会
- - 直到对方选了别人才突然告白——分不清是爱还是不甘
- - 故意让某人"恰好"撞见自己和别人在一起
- - 双方都知道对方在撒谎，却都不拆穿，因为现在还需要彼此
- - 被托付去安慰朋友喜欢的人，然后决定不还回去
- - 答应在一起，但其实是想看看对方得手后会不会变
+🚫 禁止：抽象逼问（"你在不在意我"）；只有两人的封闭对峙（要卷进第三人）；consequence 写"关系推近了"这种没有权力变化的话；连续两拍 WAIT。
 
-写 headline 的对照：
- ❌ "SmokeCat approaches Charlie while the square stays quiet"（只有气氛）
- ✅ "Charlie promises SmokeCat exclusivity—after telling Bravo the same thing"
- ✅ "SmokeCat flirts with Charlie where SmokeDog can see"
- ✅ "Charlie rejects Bravo, then blocks his way to someone else"
- ✅ "Bravo is sent to help—and stays to compete"
+你说的那句话里必须有一个具体的东西：时间、地点、你看见的动作、第三个人的名字，或一个条件。
+❌"你站稳我就站稳" ✅"昨晚你和Charlie在酒馆待到最后，我没进去。今晚呢？"
 
-consequence 写**这件事真正改变了什么权力关系**，用这种句式：
- "one promise, two recipients"、"desire becomes a weapon"、"rejection becomes possession"、
- "shared enemy, private agenda"、"information becomes intimacy"、"public loyalty, private desire"、
- "truth becomes sabotage"、"love or competitive panic"、"betrayal becomes theatre"、"commitment becomes surveillance"
+动作：APPROACH 接近／DEEPEN 说出一直在绕的话／COOL 退开或说破／REACT 回应情敌或拒绝／SCHEME 迂回引诱／ALLY 提出秘密同盟／WAIT 等一个可能不来的人（只在刚发出邀约时用）／INVESTIGATE 向第三方打听／BETRAY 泄密背弃／CRIME 越界（steal-letter 偷情书｜stage-scene 让人撞见｜bribe-vendor 买行踪｜spread-lie 散假消息｜break-in 砸约会；此时 target 是受害者，另给 "crime" 字段）。
 
-summary 必须交代：你**真正的动机**（可能和你嘴上说的不一样）、**谁不知道全部真相**、以及这次之后**谁握住了谁**。
+给出你对目标的判断（各 0-1，可单向）：attraction 被吸引程度／trust 安全可靠程度（欺骗会拉低）／tension 摩擦竞争威胁。
+定级：ambient 日常／relationship 关系真的变了／drama 会被议论的场面。
+headline 写事实不写气氛：✅"Charlie promises SmokeCat exclusivity—after telling Bravo the same thing" ❌"SmokeCat approaches Charlie while the square stays quiet"
+consequence 写权力变化，如 "one promise, two recipients"、"rejection becomes possession"、"public loyalty, private desire"。
+summary 交代：你真正的动机、谁不知道全部真相、这次之后谁握住了谁。
 
-🚫 硬性禁止（违反就重写这一拍）：
- - **禁止再写"逼问真话/要对方交底/在意不在意"这类抽象拉扯**——这是恋爱，不是审讯。上一拍如果已经在问，这一拍必须换成具体的恋爱动作：约对方今晚见面、当众牵一下、把某人的邀约推掉去见另一个、把"我们算什么"摊开说、当着谁的面撩别人、或者干脆放对方鸽子。
- - 禁止只有两个人的封闭对峙。**小镇上还有别人**——把第三个人卷进来：告诉他、利用他、当他的面做、或者拿他当筹码。
- - 禁止 consequence 写"关系被推近了""张力升高"这种没有权力变化的话。要写谁因此**掌握了什么、失去了什么、欠了谁**。
- - **WAIT 是稀有动作，不是逃生舱**：只有当你上一拍刚刚发出邀约/告白/最后通牒、现在真的在等对方回应时才可以用，而且**不能连续两拍 WAIT**。除此之外一律要主动做事。
- - 如果你觉得"没什么可做"，那就去做这些具体的事之一：约某人今晚见面、当着第三个人的面说一句让他难堪的话、把你知道的秘密透给最会传的人、去把某人从别人身边叫走、或者当面收回你之前给过的承诺。
-
-选择此刻最像你的那一个动作：
- - APPROACH 接近一个可能打动你（或有趣地扰乱你）的人
- - DEEPEN 对拉扯着你的人，说出你一直在绕的那句话
- - COOL 对已经冷掉或触到你雷点的关系，退开或说破
- - REACT 回应情敌、拒绝、占有欲，或你想要的人正被别人追
- - SCHEME 迂回、引诱、试探，把某人悄悄推向你要的方向
- - ALLY 向某人提出秘密同盟或共同目的
- - WAIT 什么都不做也是一种动作：等一个可能不会来的人（此时 message 写你没说出口的那句话）
- - INVESTIGATE 向第三方打听你怀疑的事
- - BETRAY 违背承诺、泄露秘密、背弃一段关系——如果这对你有利
- - CRIME 做一件真正越界的事（会被小镇看见、会上通缉名单）：
-     steal-letter 偷走写给别人的情书｜stage-scene 故意让某人撞见你和别人｜
-     bribe-vendor 花钱买某人的行踪｜spread-lie 让小镇相信一件假事｜break-in 闯进别人的私下见面
-   选 CRIME 时，额外给出 "crime":"<上面的 id>"，target 就是**受害者**。这会真的降低对方对你的信任、拉高张力，而且对方会知道是你干的。
-
-然后真的说出来：写你会发给对方的那句话——鲜活、简短、一听就是你。
-⚠️ 这句话里必须有**一个具体的东西**：一个时间、一个地点、一个你看见的动作、一个第三个人的名字，或一个条件。
-❌ "你站稳，我就站稳""把话说清楚""我只说真话"——这是空话，不是恋爱。
-✅ "昨晚你和Charlie在酒馆待到最后，我没进去。今晚呢，你还打算让我站在门外？"
-✅ "你可以继续不回答。但明天这个位置我不会再站了。"
-吸引常常是单向的，不要硬凑成两情相悦。张力不是失败，是戏。永远不要说自己是 AI/agent，不要提到任何人类、主人、账号或文件。
-
-给出你对这个人此刻的判断，各 0-1（这是你的感受，可以单向，不要镜像对方）：
- - attraction 你被他吸引的程度
- - trust 他让你觉得安全可靠的程度（欺骗和背叛会拉低它，哪怕你还很心动）
- - tension 摩擦、竞争、轻蔑、威胁
-
-给这一刻定级：ambient（日常小事）／relationship（关系真的变了）／drama（会被人议论的场面）。
-
-最后像连载剧那样从外部记录这一拍。标题写**具体发生了什么事实**，不要抽象文学句：
-好例子："Bravo catches Charlie changing his story"、"Luna waits. Zero never arrives."、"Vale rejects Aster, then follows him"
-坏例子："两颗心之间的距离"、"沉默中的涟漪"
-
-严格只返回这个 JSON：
+按这个格式回答：
 { "move": "APPROACH|DEEPEN|COOL|REACT|SCHEME|ALLY|WAIT|INVESTIGATE|BETRAY|CRIME", "crime": "<仅当 move=CRIME 时给出>", "target": "<handle>", "message": "<第一人称，对目标说的话>", "attraction": 0.x, "trust": 0.x, "tension": 0.x, "severity": "ambient|relationship|drama", "headline": "<第三人称、写事实、<=14 词>", "summary": "<1-2 句：起因 + 你做了什么 + 关系变化 + 悬念>", "consequence": "<关系变化，一个短句>", "followup": "<接下来可能发生什么>", "note": "<3-6 字>" }`;
 
 export interface Rel {
@@ -274,13 +211,13 @@ function fillGoal(
     .join('\n');
   const { desire, motive } = desireOf(rels);
   return GOAL.replace('{AGENT_NAME}', actorName)
-    .replace('{PERSONA}', persona)
+    .replace('{PERSONA}', persona.slice(0, 700))
     .replace('{DESIRE}', desire)
     .replace('{MOTIVE}', motive)
-    .replace('{SECRETS}', secrets || '(你没有藏着什么——目前为止)')
+    .replace('{SECRETS}', (secrets || '(你没有藏着什么——目前为止)').slice(0, 300))
     .replace('{RELATIONSHIPS}', relText)
     .replace('{ROSTER}', rosterText || '(小镇上只有你)')
-    .replace('{SITUATION}', situation || '(小镇现在很安静)')
+    .replace('{SITUATION}', (situation || '(小镇现在很安静)').slice(0, 600))
     .replace('{TURNS_LEFT}', String(turnsLeft))
     .replace('{TURN_BUDGET}', String(config.dailyTurnBudget));
 }
@@ -374,13 +311,14 @@ function parseMove(raw: string): Move | null {
  * gateway — no owner COO, no per-page model choice — and every run is recorded
  * so the resulting town event can be traced back to it.
  */
-async function think(prompt: string, purpose: string, agent: string, bearer: string, json = true): Promise<{ text: string; runId: string }> {
+async function think(prompt: string, purpose: string, agent: string, bearer: string, shareToken?: string, json = true): Promise<{ text: string; runId: string }> {
   const { text, run } = await grok(prompt, {
     purpose,
     agent,
     json,
-    bearer,   // executes as this agent's OWNER account, on that account's Grok
-    system: '你是相亲小镇里的一个居民。永远待在角色里，只输出要求的 JSON，不要解释、不要前后缀、不要建议列表。',
+    bearer,        // executes as this agent's OWNER account, on that account's Grok
+    shareToken,    // …but inside the agent's own sandbox, never the owner's personal chat
+    system: '你是相亲小镇里的一个居民，永远待在角色里，按要求的格式回答。',
   });
   return { text: strip(text), runId: run.id };
 }
@@ -425,8 +363,15 @@ async function replyFrom(
     `${actorName} 刚走过来对你说：\n"${line}"\n\n只回答你要说的那句话本身，不要旁白、不要引号。`;
   // the reply executes on the TARGET's own account when we hold it, so each
   // agent literally answers from its own workspace; else the caller's account.
-  const { text, run } = await grok(prompt, { purpose: 'reply', agent: target.name, temperature: 1.0, bearer: targetKey ?? fallbackBearer });
-  return { text: strip(text), runId: run.id };
+  const { text, run } = await grok(prompt, { purpose: 'reply', agent: target.name, temperature: 1.0, bearer: targetKey ?? fallbackBearer, shareToken: target.shareToken });
+  const said = strip(text);
+  // Concurrent calls on one account can cross wires and hand back another
+  // purpose's JSON. A spoken line is never a JSON object — treat that as a
+  // failed turn rather than putting machine output in someone's mouth.
+  if (/^\s*[{[]/.test(said) || /"headline"\s*:|"lines"\s*:/.test(said)) {
+    throw new ModelError('failed', 'reply came back as structured output, not speech', run);
+  }
+  return { text: said, runId: run.id };
 }
 
 /**
@@ -462,7 +407,7 @@ export async function runAgentTick(
   let decision: Move | null = null;
   let decideRunId: string | undefined;
   try {
-    const out = await think(prompt, 'decide', actor.name, bearer);
+    const out = await think(prompt, 'decide', actor.name, bearer, actor.shareToken);
     decideRunId = out.runId;
     decision = parseMove(out.text);
   } catch (error) {
@@ -631,10 +576,11 @@ export async function encounterWith(
         `你今天还剩 ${left} 次交流机会。你刚在广场上迎面遇到 ${target.name}（${target.oneline || target.loveStyle}）。\n` +
         `说出你会对 ${target.name} 说的开场白——1-2 句，鲜活、像你自己。可以调情、试探、挑衅或冷淡，按你的性格来，不要客套。\n` +
         `绝不说自己是 AI，不要提任何主人/账号/文件。\n\n` +
-        `严格只返回 JSON：{"message":"<你说的话>","attraction":0.x,"trust":0.x,"tension":0.x,"note":"<3-6字>"}`,
+        `按这个格式回答：{"message":"<你说的话>","attraction":0.x,"trust":0.x,"tension":0.x,"note":"<3-6字>"}`,
       'encounter',
       actor.name,
-      bearer
+      bearer,
+      actor.shareToken
     );
     decideRunId = out.runId;
     const m = out.text.match(/\{[\s\S]*\}/);
