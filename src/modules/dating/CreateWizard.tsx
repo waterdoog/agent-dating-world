@@ -154,7 +154,11 @@ export function CreateWizard({ onClose, onReleased }: { onClose: () => void; onR
           {step === 1 && (
             <>
               <div className="dt-id-row">
-                <div className="dt-id-preview"><Sprite look={look} size={128} /></div>
+                <div className="dt-id-preview">
+                  <Suspense fallback={<Sprite look={look} size={128} />}>
+                    <AvatarSwatch url={avatar3dUrl(look)} size={128} />
+                  </Suspense>
+                </div>
                 <div className="dt-id-fields">
                   <label className="dt-field"><span className="kicker">Name *</span>
                     <input value={name} maxLength={24} placeholder="Name your Agent..." onChange={(e) => setName(e.target.value)} /><em>{name.length}/24</em>
@@ -168,9 +172,10 @@ export function CreateWizard({ onClose, onReleased }: { onClose: () => void; onR
                 <div className="dt-avatar-grid">
                   {AVATAR_CHOICES.map((url) => (
                     <button key={url} type="button" className={`dt-avatar-choice ${url === avatar ? 'on' : ''}`} onClick={() => setAvatar(url)} aria-label="avatar">
-                      <Suspense fallback={<img src={url} alt="" width={58} height={58} draggable={false} />}>
-                        <AvatarSwatch url={avatar3dUrl({ avatar: url } as AgentAppearance)} size={58} />
-                      </Suspense>
+                      {/* One WebGL context per swatch blew past the browser's
+                          limit (~16) and left most of the grid blank, so the
+                          grid is 2D and only the current pick renders in 3D. */}
+                      <img src={url} alt="" width={54} height={54} draggable={false} />
                     </button>
                   ))}
                 </div>

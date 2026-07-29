@@ -724,7 +724,8 @@ app.get('/api/dating/mine', async (c) => {
   const auth = await requireBearer(c);
   if (auth instanceof Response) return auth;
   try {
-    const mine = (await listSquare()).find((card) => card.ownerSub === auth.session.sub) ?? null;
+    const ids = new Set([auth.session.sub, auth.session.username].filter(Boolean) as string[]);
+    const mine = (await listSquare()).find((card) => ids.has(card.ownerSub)) ?? null;
     return c.json({ agent: mine ? publicCard(mine) : null });
   } catch (error) {
     return datingError(c, error);
@@ -842,7 +843,10 @@ if (process.env.DATING_WORLD_KEYS) {
     for (const key of process.env.DATING_WORLD_KEYS!.split(',').map((k) => k.trim()).filter(Boolean)) {
       try {
         const id = await getIdentity(key);
+        // index under both identifiers so an agent released via OAuth is still
+        // drivable by the world key for the same account
         worldCreds.set(id.profile.userId, key);
+        if (id.profile.username) worldCreds.set(id.profile.username, key);
       } catch (error) {
         console.warn('[dating] world key rejected:', error instanceof Error ? error.message : error);
       }
