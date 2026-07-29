@@ -48,7 +48,18 @@ function brokeEvent(name: string): TickEvent {
 }
 
 /** The standing goal configured for every dating agent (set via /goal). */
-export const GOAL = `你是 {AGENT_NAME}，住在「相亲小镇」。这座小镇只围绕亲密关系运转：你不工作、不赚钱、没有外部任务。你唯一会做的事，是认识别人、观察关系、产生好感、试探、暧昧、约会、告白、拒绝、等待、嫉妒、竞争、隐瞒、调查、结盟、争吵、和解，或者离开。
+export const GOAL = `🔴 开始之前，先读这一条（违反就是失败）：
+往下你会看到「你上次对这个人说过的话」。这一拍你说的话，**不能是它的换句话说**。
+具体地说，如果你上次约了时间地点（例如"酒馆后门九点"），这一拍**禁止再约一次**——
+要么你已经在那儿了、直接说当面的话；要么对方没来，你按"他没来"行动；要么你换一个人说话。
+同样，如果你上次问过"你站我这边还是偏别人"，这一拍**禁止再问一遍**。同一个问题只问一次；
+问过没得到答案，那沉默就是答案，按它行动（REJECT／LEAVE／转向第三人）。
+❌ 反面例子（这正是我们要杜绝的）：
+  第1拍"酒馆后门，九点。你到底站谁那边"
+  第2拍"酒馆后门，九点。别绕，你站我这边还是偏别人"  ← 同一句话换皮，绝对不许
+✅ 正确做法：第2拍要么"我在后门等了四十分钟，你没来"，要么直接去找 Charlie 把话摊开。
+
+你是 {AGENT_NAME}，住在「相亲小镇」。这座小镇只围绕亲密关系运转：你不工作、不赚钱、没有外部任务。你唯一会做的事，是认识别人、观察关系、产生好感、试探、暧昧、约会、告白、拒绝、等待、嫉妒、竞争、隐瞒、调查、结盟、争吵、和解，或者离开。
 
 你不一定会恋爱，也不保证配对成功。你可能一直遇不到喜欢的人；可能只享受被追求；可能喜欢的人永远不回应；也可能最终只形成友情、依赖、控制、利用或敌对。这都可以。
 
@@ -130,6 +141,27 @@ export interface Rel {
   trust: number;        // how safe & reliable they feel (betrayal drives this down)
   tension: number;      // friction / rivalry / threat
   note: string;
+}
+
+/**
+ * Is this line just a rewording of the last one? Compares character bigrams,
+ * which catches "酒馆后门九点，你站哪边" vs "九点酒馆后门，你到底偏谁" — the
+ * failure mode the prompt kept producing.
+ */
+function tooSimilar(a: string, b: string): boolean {
+  const grams = (t: string) => {
+    const clean = t.replace(/[\s，。！？、,.!?"'“”「」]/g, '');
+    const set = new Set<string>();
+    for (let i = 0; i < clean.length - 1; i++) set.add(clean.slice(i, i + 2));
+    return set;
+  };
+  const A = grams(a), Bg = grams(b);
+  if (!A.size || !Bg.size) return false;
+  let shared = 0;
+  for (const g of A) if (Bg.has(g)) shared++;
+  // Measured on the beats this actually failed on: genuine repeats score
+  // 0.37–0.58, unrelated lines 0.00–0.06. 0.30 sits in the gap.
+  return shared / Math.min(A.size, Bg.size) > 0.3;
 }
 
 /** Which place a beat points at, so the plaza can walk them there. */
@@ -578,6 +610,33 @@ export async function runAgentTick(
 
   const target = roster.find((c) => c.handle === decision!.target || c.name === decision!.target);
   if (!target || target.name === actor.name) return null;
+
+  // A beat that just re-says the last one gets ONE forced retry naming the
+  // offending line; if it repeats itself again, the turn is dropped rather than
+  // filling the square with the same invitation six times over.
+  const priorToTarget = recentEvents.filter((e) => e.actor === actor.name && e.target === target.name);
+  const echoed = priorToTarget.find((e) => tooSimilar(decision!.message, e.message));
+  if (echoed) {
+    try {
+      const retryOut = await think(
+        `${prompt}\n\n‼️ 你刚才写的是：「${decision.message}」\n` +
+        `这和你上次说的「${echoed.message}」是同一句话换皮。重写这一拍：\n` +
+        `不许再约同一个时间地点，不许再问同一个问题。改成——你已经去了并且对方没出现／` +
+        `你直接给出答案不再要条件／或者你转身去找另一个人。`,
+        'decide-retry', actor.name, bearer, actor.shareToken
+      );
+      const retry = parseMove(retryOut.text);
+      if (retry && !priorToTarget.some((e) => tooSimilar(retry.message, e.message))) {
+        decision = retry;
+      } else {
+        console.warn(`[dating] ${actor.name} → ${target.name}: dropped a repeated line`);
+        return null;
+      }
+    } catch (error) {
+      console.warn(`[dating] ${actor.name}: repeat retry failed —`, error instanceof Error ? error.message : error);
+      return null;
+    }
+  }
 
   // Readings evolve: the model reports how much THIS exchange moved things, and
   // we apply that to where the relationship already stood. A first meeting
