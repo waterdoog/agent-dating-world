@@ -94,9 +94,26 @@ export function duplicatePromises(): Array<{ speaker: string; heard: string[]; a
   return out.slice(0, 5);
 }
 
+/**
+ * How much two lines say the same thing.
+ *
+ * This used to split on non-letter/non-digit runs. Chinese writes without
+ * spaces, so a whole clause came back as ONE token and the intersection only
+ * scored when two lines matched character-for-character. `duplicatePromises` —
+ * "the same promise was made to two different people", the best drama trigger in
+ * the system — therefore almost never fired on Chinese text.
+ *
+ * Character bigrams work for both scripts, and match what `tooSimilar` in
+ * engine.ts already does, so the two detectors now agree.
+ */
 function overlap(a: string, b: string): number {
-  const wa = new Set(a.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2));
-  const wb = new Set(b.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2));
+  const grams = (t: string) => {
+    const clean = t.toLowerCase().replace(/[\s，。！？、,.!?"'“”「」()（）]/g, '');
+    const set = new Set<string>();
+    for (let i = 0; i < clean.length - 1; i++) set.add(clean.slice(i, i + 2));
+    return set;
+  };
+  const wa = grams(a), wb = grams(b);
   if (!wa.size || !wb.size) return 0;
   let hit = 0;
   for (const w of wa) if (wb.has(w)) hit++;
@@ -130,7 +147,18 @@ export function absorb(e: TickEvent): StoryThread | null {
  * Ask Grok to narrate where a thread has got to. Real model call, recorded;
  * on failure the thread simply keeps its previous narration (never faked).
  */
-export async function narrate(thread: StoryThread, bearer: string, shareToken?: string): Promise<StoryThread> {
+export async function narrate(
+  thread: StoryThread,
+  bearer: string,
+  shareToken?: string,
+  /**
+   * Rivals for someone in this thread. A thread is keyed on a PAIR, so without
+   * this the narrator literally cannot see that a third person is pulling at the
+   * same relationship — a triangle became three separate two-person stories,
+   * each blind to the others.
+   */
+  rivalry?: Array<{ a: string; b: string; contested: string }>
+): Promise<StoryThread> {
   const beats = [...thread.beats].reverse()
     .map((b) => `- ${b.actor} → ${b.target} [${b.move}] ${b.headline}\n    「${b.message}」${b.reply ? ` / 回：「${b.reply}」` : '（没有回应）'}  心动${b.attraction.toFixed(2)} 信任${b.trust.toFixed(2)} 张力${b.tension.toFixed(2)}`)
     .join('\n');
@@ -138,9 +166,14 @@ export async function narrate(thread: StoryThread, bearer: string, shareToken?: 
   const dupText = dup.length
     ? `\n注意：${dup[0].speaker} 对 ${dup[0].a} 和 ${dup[0].b} 说过几乎一样的话。`
     : '';
+  const tri = (rivalry ?? []).filter((r) => thread.cast.includes(r.a) || thread.cast.includes(r.b) || thread.cast.includes(r.contested));
+  const triText = tri.length
+    ? `\n注意：${tri[0].a} 和 ${tri[0].b} 都想要 ${tri[0].contested}——但他们各自未必知道对方也在。` +
+      `这条线不是两个人的事，写的时候要把第三个人算进去。`
+    : '';
 
   const prompt =
-    `你是相亲小镇的记录者。下面是 ${thread.cast.join(' 和 ')} 之间真实发生过的对话，按时间从早到晚：\n\n${beats}${dupText}\n\n` +
+    `你是相亲小镇的记录者。下面是 ${thread.cast.join(' 和 ')} 之间真实发生过的对话，按时间从早到晚：\n\n${beats}${dupText}${triText}\n\n` +
     `把它写成一条连续故事线的当前状态。只依据上面真实发生的事，不要编造没发生的情节，也不要预设结局。\n` +
     `标题写具体事实（像 "Bravo catches Charlie changing his story"、"Luna waits. Zero never arrives."），不要抽象文学句。\n` +
     `arc 用 1-2 句说清楚：起因 → 现在到了哪一步 → 关系发生了什么变化。\n` +

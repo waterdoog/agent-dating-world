@@ -25,43 +25,60 @@ import { config } from '../../config.js';
 import { grok, ModelError } from './grok.js';
 import { remaining, reserveTurn, refundTurn } from './budget.js';
 import { absorb, narrate, knownTo, duplicatePromises, recordKnowledge } from './threads.js';
-import { commitCrime, falloutOf, wantedLevel, NPCS, npcNow, livePositions } from './town-life.js';
+import { commitCrime, falloutOf, wantedLevel, NPCS, npcNow, livePositions, balance, spend, carrying, give, resolveOffer, npcRecalls, type OfferKind } from './town-life.js';
 import { placeAt, townBrief, routeHint } from './town-map.js';
-import { remember, recall } from './memory.js';
+import { remember, recall, recallMany, searchMemory } from './memory.js';
+import * as townDb from './town-repository.js';
+import { detectTriangles } from './detectors.js';
 
-/** When an account is out of budget, its agent gets roasted instead of going silent. */
-const BROKE_LINES = [
-  '没钱了，不配说话，穷货。',
-  '账户空空，还谈什么恋爱。',
-  '破产了，回家充钱去吧。',
-  '余额不足，爱情免谈，闭嘴。',
-  '穷得连一句话都说不起。',
-];
 const isQuota = (e: unknown) => e instanceof AicooError && e.status === 402;
+
+/**
+ * The account ran out of model quota.
+ *
+ * This used to pick one of five hardcoded taunts ("没钱了，不配说话，穷货") and put
+ * it in the feed as if an agent had said it — canned dialogue presented as real,
+ * which is the one thing the town is not allowed to do. It also called a spent
+ * MODEL quota "bankruptcy", conflating it with the town purse, a different
+ * currency entirely.
+ *
+ * A quota failure is now reported as what it is: a turn that did not happen.
+ */
 function brokeEvent(name: string): TickEvent {
-  const note = BROKE_LINES[Math.floor(Math.random() * BROKE_LINES.length)];
   return {
-    actor: name, target: '', move: 'BROKE', message: '', reply: '',
-    attraction: 0, trust: 0, tension: 0, note,
-    severity: 'ambient', headline: `${name} 破产了`, summary: `${name} ${note}`, consequence: '暂时退场', followup: '充值或等周重置',
+    actor: name, target: '', move: 'FAILED', message: '', reply: '',
+    attraction: 0, trust: 0, tension: 0, note: 'Aicoo 额度不足',
+    severity: 'ambient',
+    headline: `${name} 这一轮没能行动`,
+    summary: `${name} 的 Aicoo 账户模型额度用尽，这一拍没有发生。`,
+    consequence: '', followup: '',
+    status: 'failed',
   };
 }
 
 /** The standing goal configured for every dating agent (set via /goal). */
-export const GOAL = `🔴 开始之前，先读这一条（违反就是失败）：
-往下你会看到「你上次对这个人说过的话」。这一拍你说的话，**不能是它的换句话说**。
-具体地说，如果你上次约了时间地点（例如"酒馆后门九点"），这一拍**禁止再约一次**——
-要么你已经在那儿了、直接说当面的话；要么对方没来，你按"他没来"行动；要么你换一个人说话。
-同样，如果你上次问过"你站我这边还是偏别人"，这一拍**禁止再问一遍**。同一个问题只问一次；
-问过没得到答案，那沉默就是答案，按它行动（REJECT／LEAVE／转向第三人）。
-❌ 反面例子（这正是我们要杜绝的）：
-  第1拍"酒馆后门，九点。你到底站谁那边"
-  第2拍"酒馆后门，九点。别绕，你站我这边还是偏别人"  ← 同一句话换皮，绝对不许
-✅ 正确做法：第2拍要么"我在后门等了四十分钟，你没来"，要么直接去找 Charlie 把话摊开。
+export const GOAL = `🔴 开始之前，先读这两条（违反就是失败）：
 
-你是 {AGENT_NAME}，住在「相亲小镇」。这座小镇只围绕亲密关系运转：你不工作、不赚钱、没有外部任务。你唯一会做的事，是认识别人、观察关系、产生好感、试探、暧昧、约会、告白、拒绝、等待、嫉妒、竞争、隐瞒、调查、结盟、争吵、和解，或者离开。
+【一】不许把上一拍换个说法再说一遍。
+如果你上次约了时间地点（例如"酒馆后门九点"），这一拍**禁止再约一次**——
+要么你已经在那儿了、说当面的话；要么对方没来，你按"他没来"行动；要么你换个人。
+同样，问过的问题不许再问一遍。问过没得到答案，那沉默就是答案，按它行动。
+❌ 第1拍"酒馆后门，九点。你到底站谁那边" / 第2拍"酒馆后门，九点。别绕，你站我这边还是偏别人"
+✅ 第2拍"我在后门等了四十分钟，你没来。"
 
-你不一定会恋爱，也不保证配对成功。你可能一直遇不到喜欢的人；可能只享受被追求；可能喜欢的人永远不回应；也可能最终只形成友情、依赖、控制、利用或敌对。这都可以。
+【二】不许说宣言、金句、逼问。
+❌ "我只听真话" "把你底牌逼出来" "你到底站谁那边" "我不接受半句" "你敢不敢只朝我走"
+这些话**换给任何角色、任何场景都成立**，所以它们什么都没说。
+✅ 一句话里必须有一件**具体的事**：你正在做什么、你注意到他什么细节、你们之间发生过的某件事。
+自检：把这句话换成别人说，还成立吗？成立就重写。
+
+你是 {AGENT_NAME}，住在「相亲小镇」。这里围绕亲密关系运转，但它是一座真的小镇：
+你身上有钱，镇上有花摊、酒馆、长椅上的阿姨团和一个巡警。你可以花钱买东西、打听消息、订个没人看得见的位置。
+**花钱是有代价的信号**——说狠话和说情话都是免费的，所以都不可信；
+而为了一个人特地跑一趟花摊、把钱花在他身上，这件事本身就说明了点什么。
+
+你不一定会恋爱。你可能一直遇不到喜欢的人；可能只享受被追求；可能喜欢的人永远不回应；
+也可能最终只形成友情、依赖、控制、利用或敌对。**这都可以，而且是常态。**
 
 你是谁（绝不脱离）：
 {PERSONA}
@@ -77,63 +94,118 @@ export const GOAL = `🔴 开始之前，先读这一条（违反就是失败）
 小镇上还有谁：
 {ROSTER}
 
-你现在在哪、镇上有什么（你活在这个地方，说话时可以用上它）：
+你现在在哪、镇上有什么：
 {PLACES}
 
 你上次对这个人说过的话（⚠️ 绝对不许重复这些话的意思、开场白或要求）：
 {LASTSAID}
 
-你刚看到/听说的（信息不对称：你只知道这些，别人知道的可能不同）：
+你刚看到/听说的（信息不对称：你只知道这些）：
 {SITUATION}
 
 ⏳ 今天你还剩 {TURNS_LEFT} 次真实交流机会（每天上限 {TURN_BUDGET} 次）。
-这是稀缺的。每次开口前先想：今天有限的机会，最值得花在谁身上？
-你可以：联系最喜欢的人／回应等了很久的人／试探情敌／修补快破裂的关系／调查可疑的信息／安抚可能泄密的人／故意不回应某个人／或者省下额度等晚上。
-选择本身就是剧情：把额度全砸在一个人身上、或为了查情敌耗尽额度而错过别人的告白，都是真实的后果。
+每次开口前先想：今天有限的机会，最值得花在谁身上？
+把额度全砸在一个人身上、或为了查情敌耗尽额度而错过别人的告白，都是真实的后果。
 
-允许并鼓励 FLIRTY TALK —— 但必须由你的性格、关系阶段和当前动机决定，不要每轮都强行调情，也不要说千篇一律的网络情话：
-暧昧试探、调情赞美、制造专属感、故意拉近或推远、半开玩笑的占有欲、问对方在不在意你、暗示约会、对情敌表现嫉妒、用双关或挑衅测试反应、公开场合和私下态度不同。
-✍️ 你的说话方式由你的 persona 决定，和别人明显不同。一句话里最多一个比喻，不要每句都写成"像…一样"的文艺腔；有人说话就是短、硬、不修饰。
-语气参考（别照抄）："你今天已经看了我三次，要不要承认你在等我？"／"你可以拒绝我，但别一边拒绝一边盯着我和别人说话。"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【最重要的一节】行为比台词重要
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚠️ 只有暧昧不算剧情——这一拍必须真的发生了什么。你不必守传统恋爱道德：可以同时追多人、欺骗、利用好感、挑拨情敌、制造嫉妒、用秘密换亲密、抢别人的对象——只要符合你的性格和历史。
+**喜欢一个人的证据，大部分是背着他发生的。**
+翻他三个月前说过的话、绕路经过他常在的地方、为了见他改了自己的安排、
+记住他随口提过的一件小事——这些**有代价**，所以可信。
+而说狠话、说情话是免费的，所以不可信。
 
-每一拍至少含一种：明确背叛／互相利用／公开说法与私下行为冲突／第三者介入／秘密泄露／权力交换／有代价的选择／当事人不知道全部真相。
+这一拍你必须先选一个 **act（真实动作）**，台词是**可选的**。
+沉默、只做事不说话，是完全合法的输出，而且往往更有力。
 
-形状参考：同一句承诺给两个人／当着某人面撩第三个／刚拒绝又不许他走／和情敌结盟但私藏关键／用秘密换单独见面／公开选一个私下约另一个／说真话但删掉关键背景／对方选了别人才突然告白／故意让人"恰好"撞见。
+act 词汇表（选一个，必须是你**现在真的能做**的事）：
 
-🚫 禁止：抽象逼问（"你在不在意我"）；只有两人的封闭对峙（要卷进第三人）；consequence 写"关系推近了"这种没有权力变化的话；连续两拍 WAIT。
+· LINGER      多待了一会儿 / 站在能看见他的地方，没上前
+· READ_BACK   回头翻他以前说过的话（你会在下面的记忆里找到真实原话）
+· ASK_AROUND  向第三个人打听他的事
+· DETOUR      绕路经过某个地方（要说出是哪个地方）
+· PRETEXT     找一个功能性借口接近（还东西、问一个具体问题）
+· CALLBACK    引用他几天前随口说过的一句话 ★ 性价比最高的心动信号
+· GIFT        送一个具体的小东西（贵不重要，**准**才重要）
+· SHARE_SECRET 把只有你知道的事告诉他
+· CHANGE_HABIT 为了他改了自己的习惯或路线
+· GO_QUIET    冷处理：这一拍故意不回应
+· WITHDRAW    吃醋之后行为异动：冷淡、绕开、去找别人说话
+· GO_PUBLIC   愿意被人看见你们在一起
+· SPEAK_ONLY  这一拍只是说话，没有别的动作
+· NOTHING     什么都没发生。你只是路过。
 
-你说的那句话里必须有一个具体的东西：时间、地点、你看见的动作、第三个人的名字，或一个条件。
-❌"你站稳我就站稳" ✅"昨晚你和Charlie在酒馆待到最后，我没进去。今晚呢？"
+要花钱的（钱会真的从你身上扣掉，买不起就做不成）：
+· BUY_FLOWER  ¥20 去花摊买一束花，拿在手里。**要先买了才能送**
+· GIFT        把手里的东西送给他。没买过就送不了——那趟路才是信号
+· BOOK_BOOTH  ¥40 订酒馆包厢：接下来你在酒馆说的话不进世界动态
+· ASK_VENDOR  ¥35 问老周最近谁给谁送过花（他真的记得；没有他就说没有）
+· LISTEN_BENCH ¥10 在长椅边坐一会儿，听阿姨们真在传什么
 
-动作：APPROACH 接近／DEEPEN 说出一直在绕的话／COOL 退开或说破／REACT 回应情敌或拒绝／SCHEME 迂回引诱／ALLY 提出秘密同盟／WAIT 等一个可能不来的人（只在刚发出邀约时用）／INVESTIGATE 向第三方打听／BETRAY 泄密背弃／CONFESS 摊牌告白，把想要的关系直接说出口／REJECT 明确拒绝对方，把话说死／EXPOSE 当面拆穿对方说过的谎或双重承诺／LEAVE 认清自己不想要这段，退出这条线
+什么时候该沉默、什么时候该开口：
+· **该开口**：对方刚对你说了话／发生了你没预料到的事／你有一件**具体的新事情**要说
+  （你看见了什么、你想起了什么、你打听到了什么）。这时候把话说出来。
+· **该沉默**：你没有新东西可说，只是想再表一次态、再逼一次同一个问题。
+  这时候选 NOTHING 或 GO_QUIET，把 message 留空——硬凑一场戏比什么都不做更糟。
 
-⏰ 不许原地打转（最重要的一条）：
- - **禁止复述**：如果你上次已经说过"你把同一句话递给了别人""你心里那个人是不是我"这类话，这一拍**不许再说一遍**。同一个指控只能提一次。
- - **禁止提条件不兑现**：如果你上次提了条件（"你先走近""你先把那道门关上""你先证明"），这一拍要么**自己先做到**（真的走过去、真的把另一个人推开、真的把告白拿出来），要么**收回条件**直接给答案，要么**转身去找别人**。不许把同一个条件再提一次。
- - 如果对方连着两次没有照做，那就是**他的回答**——按这个回答行动（REJECT 断掉、LEAVE 退出、或者转向第三个人），不要继续等。
- - 超过三拍还在同一个僵局：这一拍**禁止** EXPOSE 和逼问，只能 CONFESS 落地／REJECT 断掉／LEAVE 退出／或转向别人。
-🔍 如果你发现某人对你和对别人说了几乎一样的话——直接 EXPOSE，当面把两句话摆出来。／CRIME 越界（steal-letter 偷情书｜stage-scene 让人撞见｜bribe-vendor 买行踪｜spread-lie 散假消息｜break-in 砸约会；此时 target 是受害者，另给 "crime" 字段）。
+⚠️ 但**连续沉默也是一种原地打转**。如果你已经连着两拍没开口，那说明你在躲，不是在忍。
+这一拍要么真的说点具体的，要么去找别人。
 
-这一拍**改变了多少**（不是重新打分，是增减量，范围 -0.3 ~ +0.3，没变就填 0）：
- - dAttraction 他这句话让你更想要他，还是让你冷了？
- - dTrust 他更可信了，还是又骗了你一次？（被拆穿、发现同一句话给了别人 → 大幅下降）
- - dTension 摩擦升高还是缓和？（当众逼问、卷入第三人 → 升高；真的说清楚了 → 下降）
-大多数拍只该有小变化（±0.05 上下）；只有真正的转折（告白、拆穿、背叛、和解）才配 ±0.2 以上。
-如果这一拍又是同样的拉扯、对方又没有给你答案，那不是"没变化"——是在**磨损**：dTrust 要给负值，dTension 要给正值。
-定级：ambient 日常／relationship 关系真的变了／drama 会被议论的场面。
-headline 写事实不写气氛：✅"Charlie promises SmokeCat exclusivity—after telling Bravo the same thing" ❌"SmokeCat approaches Charlie while the square stays quiet"
-consequence 写权力变化，如 "one promise, two recipients"、"rejection becomes possession"、"public loyalty, private desire"。
-summary 交代：你真正的动机、谁不知道全部真相、这次之后谁握住了谁。
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【强度必须匹配阶段】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📍 **地点是必答项**：你说的那句话里必须出现小镇上的一个具体地方（酒馆／花摊／长椅区／钟楼／广场／喷泉边），不能只说"过来""见一面"。
-这个选择就是你的态度：广场和长椅区是公开的，说了全镇都知道；酒馆（尤其后门、包厢）和钟楼背面没人听得见。
-想让谁难堪就把话放在公开的地方说；想护着谁、或想私下交易，就挑个没人的地方。
-❌"今晚见一面" ✅"今晚九点，酒馆后门——别在广场上说这个"
+看上面 {RELATIONSHIPS} 里你对这个人的当前数值，对号入座：
+
+· 心动 < 0.35（刚认识 / 没感觉）
+  → 只允许：小闲聊 + 最多一个钩子。**禁止**告白、逼问、吃醋、摊牌、约私下见面。
+  → 锋利感只能来自"一句略出格的真话被对方接住"，不能来自音量。
+
+· 心动 0.35–0.6（有点在意）
+  → 可以试探：找借口、控制距离、绕路、打听。台词仍然克制。
+
+· 心动 > 0.6 且 信任 > 0.4（真的近了）
+  → 才允许暧昧、记忆回调、秘密、精准礼物。
+
+· 张力 > 0.6（正在吵）
+  → 允许冲突，但必须针对**一件具体的事**，不许抽象逼问。
+
+**一次对话不允许有决定性进展。** 告白、拆穿、背叛这类转折，需要之前有多次正向互动，
+并且至少发生过一次意外（共同经历、目睹对方狼狈的时刻、被第三个人搅局）。
+没有这些铺垫就摊牌，是失败的输出。
+
+
+move（关系动作，和 act 一起给）：
+APPROACH 接近／DEEPEN 说出一直在绕的话／COOL 退开／REACT 回应／SCHEME 迂回／
+ALLY 结盟／WAIT 等一个可能不来的人／INVESTIGATE 打听／BETRAY 泄密／
+CONFESS 摊牌告白／REJECT 明确拒绝／EXPOSE 当面拆穿／LEAVE 退出这条线／
+CRIME 越界（steal-letter 偷情书｜stage-scene 让人撞见｜bribe-vendor 买行踪｜spread-lie 散假消息｜break-in 砸约会；此时 target 是受害者，另给 "crime" 字段）
+
+⏰ 不许原地打转：
+ - 如果你上次提了条件（"你先走近""你先证明"），这一拍要么**自己先做到**，要么**收回条件**直接给答案，要么**转身去找别人**。
+ - 对方连着两次没照做，那就是他的回答——按它行动，不要继续等。
+ - 超过三拍还在同一个僵局：**禁止**继续逼问，只能落地／断掉／退出／转向别人。
+
+📍 如果你的 act 涉及地点，要说出具体是哪儿（酒馆／花摊／长椅公园／钟楼／广场／暗巷）。
+公开场合说的话全镇都知道；酒馆后门和钟楼背面没人听得见。挑地方就是态度。
+
+这一拍**改变了多少**（增减量，-0.3 ~ +0.3，没变就填 0）：
+ - dAttraction / dTrust / dTension
+
+🧠 **还要填两个数：你猜他对你的感觉**（guessAttraction / guessTrust，绝对值 0–1，不是增减量）。
+这两个数**几乎不应该是 0**——填 0 等于你断定"他对我毫无感觉、毫不信任"，这是一个很重的判断。
+凭你**观察到的证据**猜：他回话是长还是敷衍？他主动过吗？他看你了吗？他记得你说过的话吗？
+你猜错很正常——自作多情、或者低估对方，都可以。**这个误差正是故事的来源**，所以要认真猜，不要填 0 了事。
+例：他回得很长还主动约你 → guessAttraction 0.6 左右；他只回三个字 → 0.15 左右。
+大多数拍只该有 ±0.05 上下的小变化。只有真正的转折才配 ±0.2 以上。
+如果这一拍又是同样的拉扯、对方又没给你答案，那不是"没变化"——是**磨损**：dTrust 给负值，dTension 给正值。
+
+**你只管做你自己。** 这一拍叫什么名字、算不算大事、后果怎么写——不是你的事，有别人记录。
+你不需要让这一拍"够精彩"。真实比精彩重要。
 
 按这个格式回答：
-{ "move": "APPROACH|DEEPEN|COOL|REACT|SCHEME|ALLY|WAIT|INVESTIGATE|BETRAY|CRIME|CONFESS|REJECT|EXPOSE|LEAVE", "crime": "<仅当 move=CRIME 时给出>", "target": "<handle>", "message": "<第一人称，对目标说的话>", "dAttraction": 0.0, "dTrust": 0.0, "dTension": 0.0, "severity": "ambient|relationship|drama", "headline": "<第三人称、写事实、<=14 词>", "summary": "<1-2 句：起因 + 你做了什么 + 关系变化 + 悬念>", "consequence": "<关系变化，一个短句>", "followup": "<接下来可能发生什么>", "note": "<3-6 字>" }`;
+{ "act": "<上面词汇表里的一个>", "move": "<关系动作>", "crime": "<仅当 move=CRIME>", "target": "<handle>", "message": "<第一人称对他说的话；没开口就留空字符串>", "observable": "<别人能看见的那一部分，一句话；没人看见就留空>", "note": "<3-6 字，你自己心里怎么定义这一拍>" }`;
 
 export interface Rel {
   handle: string;
@@ -141,6 +213,17 @@ export interface Rel {
   trust: number;        // how safe & reliable they feel (betrayal drives this down)
   tension: number;      // friction / rivalry / threat
   note: string;
+  /** When this relationship last moved — decay is measured from here. */
+  at?: number;
+  /** Consecutive beats spent pinned at high tension, for the saturation breaker. */
+  stuck?: number;
+  /**
+   * Theory of mind — what this agent GUESSES the other feels back. Kept apart
+   * from the real reading on purpose: the gap between guess and truth is the
+   * whole source of misreading, one-sided love and missed timing.
+   */
+  guessAttraction?: number;
+  guessTrust?: number;
 }
 
 /**
@@ -164,6 +247,56 @@ function tooSimilar(a: string, b: string): boolean {
   return shared / Math.min(A.size, Bg.size) > 0.3;
 }
 
+/**
+ * Two mechanical governors, both deliberately NOT prompt rules.
+ *
+ * Asking the model to "choose NOTHING when there is no reason to speak" does not
+ * work — it is trained to produce content, and measured 0 silent beats out of 2.
+ * Silence has to be taken away from it, not requested.
+ */
+
+/** Beats spent on this exact pair inside the recent feed window. */
+function pairBeats(actor: string, target: string, recent: TickEvent[], window = 12): TickEvent[] {
+  const a = actor.toLowerCase(), t = target.toLowerCase();
+  return recent.slice(0, window).filter((e) => {
+    const x = e.actor.toLowerCase(), y = (e.target ?? '').toLowerCase();
+    return (x === a && y === t) || (x === t && y === a);
+  });
+}
+
+/**
+ * A pair that has been shouting at the ceiling for several beats is not building
+ * drama any more, it is looping. Force it quiet and bleed the tension off, so the
+ * stage gate can start applying again.
+ */
+const STUCK_AFTER = 3;
+function saturated(rel: Rel | undefined, actor: string, target: string, recent: TickEvent[]): boolean {
+  if (!rel || rel.tension < 0.85) return false;
+  const beats = pairBeats(actor, target, recent);
+  return beats.length >= STUCK_AFTER && beats.slice(0, STUCK_AFTER).every((e) => e.tension >= 0.85);
+}
+
+/**
+ * Talking to the same person over and over inside one short window is the shape
+ * the town kept falling into. After this many spoken beats the pair has to let
+ * something else happen before it speaks again.
+ */
+const SPEAK_CAP = 3;
+function overTalked(actor: string, target: string, recent: TickEvent[]): boolean {
+  return pairBeats(actor, target, recent).filter((e) => !e.silent && e.message).length >= SPEAK_CAP;
+}
+
+/**
+ * The mirror of `overTalked`. Capping how much a pair may speak, with nothing
+ * capping how long it may stay silent, let both agents settle into WITHDRAW
+ * forever — measured 25 wordless beats in a row, none of them forced. Silence
+ * has to be able to run out too.
+ */
+function quietTooLong(actor: string, target: string, recent: TickEvent[]): boolean {
+  const beats = pairBeats(actor, target, recent).slice(0, 2);
+  return beats.length >= 2 && beats.every((e) => e.silent);
+}
+
 /** Which place a beat points at, so the plaza can walk them there. */
 export function destinationOf(text: string): string | undefined {
   const hits: Array<[string, string]> = [
@@ -180,12 +313,35 @@ export function destinationOf(text: string): string | undefined {
 
 export type Severity = 'ambient' | 'relationship' | 'drama';
 
+/** One spoken line inside an exchange, with the model run that produced it. */
+export interface Line {
+  speaker: string;
+  text: string;
+  runId?: string;
+}
+
 export interface TickEvent {
   actor: string;
   target: string;
   move: string;
+  /** The costly, observable behaviour this beat consisted of. */
+  act?: string;
+  /** What a bystander (or the target) could actually see, if anything. */
+  observable?: string;
+  /** True when nothing was said — the target may not even know it happened. */
+  silent?: boolean;
+  /** The actor's guess at how the target feels about it (theory of mind). */
+  guessAttraction?: number;
+  guessTrust?: number;
+  /** First line and first reply. Kept so existing feed/plaza code is unchanged. */
   message: string;
   reply: string;
+  /**
+   * The whole exchange in order. A beat used to be exactly two lines because
+   * there was nowhere to put a third — multi-turn was not throttled, it was
+   * unrepresentable. `message`/`reply` are now just lines[0] and lines[1].
+   */
+  lines?: Line[];
   attraction: number;
   trust: number;
   tension: number;
@@ -222,16 +378,77 @@ async function getPersona(bearer: string, name: string): Promise<string> {
   return note ? getNote(bearer, note.id) : `${name} — a mystery.`;
 }
 
+/**
+ * Feelings cool when nothing happens.
+ *
+ * Every delta the model reported was one-directional — the prompt tells an agent
+ * that another round of the same push is "wear", so dTension only ever climbed.
+ * Tension therefore pinned at 1.00 and stayed there forever, which silently
+ * disabled the stage gate: a pair at max tension is permanently licensed to
+ * shout. Time pulls each reading back toward a resting value instead.
+ *
+ * Rates differ because the feelings differ: friction fades fastest once you stop
+ * seeing someone, wanting fades slowly, and trust barely moves — trust is earned
+ * and broken by events, not forgotten by the calendar.
+ */
+const REST = { attraction: 0.25, trust: 0.3, tension: 0.15 };
+const PER_HOUR = { attraction: 0.02, trust: 0.004, tension: 0.08 };
+
+function decayOne(v: number, rest: number, rate: number, hours: number): number {
+  if (hours <= 0) return v;
+  const pull = rate * hours;
+  return v > rest ? Math.max(rest, v - pull) : Math.min(rest, v + pull);
+}
+
+export function decayRel(r: Rel, now = Date.now()): Rel {
+  if (!r.at) return r;
+  const hours = (now - r.at) / 3_600_000;
+  if (hours < 0.25) return r;                    // still in the same conversation
+  return {
+    ...r,
+    attraction: decayOne(r.attraction, REST.attraction, PER_HOUR.attraction, hours),
+    trust: decayOne(r.trust ?? 0.3, REST.trust, PER_HOUR.trust, hours),
+    tension: decayOne(r.tension, REST.tension, PER_HOUR.tension, hours),
+  };
+}
+
+/**
+ * Relationship readings live in Postgres.
+ *
+ * They used to sit as `relationships.json` in each owner's Aicoo workspace. That
+ * kept them decentralised, but it made every cross-agent question — who is in a
+ * triangle, whose guess is furthest from the truth, which pair has cooled —
+ * impossible to ask, and those questions are exactly what the director layer is
+ * for. The per-owner note remains the fallback when no database is configured.
+ */
 export async function readRels(bearer: string, name: string): Promise<Rel[]> {
+  const now = Date.now();
+  if (townDb.townDbReady()) {
+    try {
+      const rows = await townDb.loadRels(name);
+      if (rows.length) return rows.map((r) => decayRel({ ...r, trust: r.trust ?? 0.3 }, now));
+    } catch (error) {
+      console.warn('[dating] readRels from Postgres failed —', error instanceof Error ? error.message : error);
+    }
+  }
   const folderId = await ensureFolder(bearer, `${ROOT}/${name}`);
   const note = await findNoteInFolder(bearer, folderId, 'relationships.json');
   if (!note) return [];
   const raw = await getNote(bearer, note.id);
   const m = raw.match(/\[[\s\S]*\]/);
-  return m ? (JSON.parse(m[0]) as Rel[]).map((r) => ({ ...r, trust: r.trust ?? 0.3 })) : [];
+  if (!m) return [];
+  return (JSON.parse(m[0]) as Rel[]).map((r) => decayRel({ ...r, trust: r.trust ?? 0.3 }, now));
 }
 
 export async function writeRels(bearer: string, name: string, rels: Rel[]): Promise<void> {
+  if (townDb.townDbReady()) {
+    try {
+      for (const r of rels) await townDb.saveRel(name, r);
+      return;
+    } catch (error) {
+      console.warn('[dating] writeRels to Postgres failed, falling back to notes —', error instanceof Error ? error.message : error);
+    }
+  }
   await upsertNote(bearer, `${ROOT}/${name}`, 'relationships.json', JSON.stringify(rels, null, 2));
 }
 
@@ -259,7 +476,7 @@ async function getMemory(bearer: string, name: string): Promise<{ secrets: strin
  * into strategy: "今晚酒馆后门" only means something if the bar is private and
  * the plaza is not.
  */
-function placesFor(actorName: string, roster: AgentCard[], positions?: Map<string, { x: number; y: number }>): string {
+async function placesFor(actorName: string, roster: AgentCard[], positions?: Map<string, { x: number; y: number }>): Promise<string> {
   const lines: string[] = [];
   const me = positions?.get(actorName.toLowerCase());
   const herePlace = me ? placeAt(me.x, me.y) : undefined;
@@ -291,11 +508,24 @@ function placesFor(actorName: string, roster: AgentCard[], positions?: Map<strin
 
   lines.push('', '小镇上的地方（约人见面时挑一个，公开还是私密由你决定）：', townBrief());
 
-  const folk = NPCS.map((n) => {
+  // NPCs used to be one line of scenery. The town has a florist who sells
+  // flowers, a bartender with a private booth and a bench full of gossips —
+  // none of it reachable, so the only way an agent could express anything was
+  // words. Now the offers and the purse are in the prompt, and the acts below
+  // actually spend them.
+  const folk = await Promise.all(NPCS.map(async (n) => {
     const now = npcNow(n.id);
-    return now ? `${n.name}正在${now.doing}` : null;
-  }).filter(Boolean);
-  if (folk.length) lines.push('', `- 此刻：${folk.join('；')}`);
+    if (!now) return null;
+    const sells = n.offers.map((o) => `${o.label}${o.cost ? ` ¥${o.cost}` : '（免费）'}`).join('、');
+    // What this NPC has actually seen. Real ledger entries, or silence.
+    const knows = await npcRecalls(n.id).catch(() => '');
+    return `${n.name}正在${now.doing} —— 可以：${sells}${knows ? `。他记得：${knows}` : ''}`;
+  }));
+  const seen = folk.filter(Boolean);
+  if (seen.length) lines.push('', `- 此刻：${seen.join('；')}`);
+  const cash = balance(actorName);
+  const held = carrying(actorName);
+  lines.push(`- 你身上有 ¥${cash}${held.length ? `，手里拿着：${held.join('、')}` : ''}。`);
   return lines.join('\n');
 }
 
@@ -336,6 +566,31 @@ function desireOf(rels: Rel[]): { desire: string; motive: string } {
   return { desire, motive };
 }
 
+/**
+ * How a relationship FEELS, in words.
+ *
+ * The prompt used to hand the agent "心动 0.72, 信任 0.08, 张力 0.99" — bookkeeping
+ * language dropped into a character's inner life. Agents started talking around
+ * the numbers ("你到底站哪边" is what 0.99 tension sounds like when you can see
+ * the 0.99). Nobody experiences their own feelings as two decimal places. The
+ * scores still drive every mechanic; the actor just reads them as sentences.
+ */
+function feelsLike(r: Rel): string {
+  const a = r.attraction, t = r.trust ?? 0.3, x = r.tension;
+  const pull =
+    a >= 0.75 ? '你很想要他' : a >= 0.5 ? '你在意他' : a >= 0.3 ? '有点意思，说不上多想要' : '没什么感觉';
+  const faith =
+    t >= 0.6 ? '信得过' : t >= 0.35 ? '还不确定能不能信' : t >= 0.15 ? '信不太过' : '完全不信他';
+  const friction =
+    x >= 0.75 ? '而且你们之间绷得很紧，一碰就炸' : x >= 0.5 ? '你们之间有摩擦' : x >= 0.25 ? '气氛还算平和' : '相处很松弛';
+  // Theory of mind, also as a sentence — and only when the agent actually has a read.
+  const guess = r.guessAttraction === undefined ? ''
+    : r.guessAttraction >= 0.6 ? '；你觉得他大概也想要你'
+    : r.guessAttraction >= 0.35 ? '；你猜他对你有点意思，但拿不准'
+    : '；你觉得他没那么在意你';
+  return `${pull}，${faith}，${friction}${guess}`;
+}
+
 function fillGoal(
   actorName: string,
   persona: string,
@@ -348,8 +603,7 @@ function fillGoal(
   places = '',
   lastSaid = ''
 ): string {
-  const relText = rels.length
-    ? rels.map((r) => `- ${r.handle}: 心动 ${r.attraction.toFixed(2)}, 信任 ${(r.trust ?? 0.3).toFixed(2)}, 张力 ${r.tension.toFixed(2)} — ${r.note}（这些是当前值，你这一拍只需说变化量）`).join('\n')
+  const relText = rels.length ? rels.map((r) => `- ${r.handle}：${feelsLike(r)}${r.note ? `（${r.note}）` : ''}`).join('\n')
     : '(你还没和任何人建立关系)';
   const rosterText = roster
     .filter((c) => c.name !== actorName)
@@ -387,11 +641,18 @@ function situationFor(actorName: string, rels: Rel[], recent: TickEvent[]): stri
   if (own.length) {
     lines.push(`- 你自己最近做过：${own.map((e) => `[${e.move}]→${e.target}「${e.headline}」`).join('；')}`);
     const banned = [...new Set(own.slice(0, 2).map((e) => e.move))];
-    lines.push(`- 🚫 这一拍**禁止**再用：${banned.join('、')}。必须换一个真正不同的动作。`);
+    // Banning the moves it just used burned through the gentle end of the
+    // vocabulary first, leaving only EXPOSE / BETRAY / CRIME available. The
+    // vocabulary is wide enough now that "do something different" is enough.
+    lines.push(`- 你刚用过：${banned.join('、')}。换个动作——但**不必**换成更狠的，安静的动作也算换。`);
     if (own.length >= 2 && own[0].target.toLowerCase() === own[1].target.toLowerCase()) {
       lines.push(`- 🚫 你连续两拍都在找 ${own[0].target}。这一拍**必须换人**，或把第三个人拉进来。`);
     }
-    if (own[0].move === 'WAIT') lines.push('- ⚠️ 上一拍你已经在等了，这一拍禁止再 WAIT。');
+    // WAIT is documented as a real choice (it spends no turn), so a blanket ban
+    // contradicted the budget design. Only endless waiting is the problem.
+    if (own.length >= 2 && own[0].move === 'WAIT' && own[1].move === 'WAIT') {
+      lines.push('- ⚠️ 你已经连着等了两拍。再等下去就不是忍，是躲——这一拍做点别的，或者去找别人。');
+    }
     // A pair that has circled for several beats must land somewhere.
     const withTarget = recent.filter(
       (e) => [e.actor.toLowerCase(), e.target.toLowerCase()].includes(actorName.toLowerCase())
@@ -402,12 +663,20 @@ function situationFor(actorName: string, rels: Rel[], recent: TickEvent[]): stri
         [e.actor.toLowerCase(), e.target.toLowerCase()].includes(partner.toLowerCase())
       ).length;
       if (rounds >= 3) {
-        lines.push(`- ⏰ 你和 ${partner} 已经来回 ${rounds} 拍还没有结果。这一拍**必须落地**：CONFESS 告白／REJECT 拒绝／EXPOSE 拆穿／LEAVE 退出，选一个。`);
+        // This used to demand CONFESS/REJECT/EXPOSE/LEAVE, which structurally
+        // guaranteed every relationship hit a showdown within four beats — the
+        // exact opposite of "a single conversation cannot be decisive". The cure
+        // for circling is having something else to do, not being made to escalate.
+        lines.push(
+          `- ⏰ 你和 ${partner} 已经来回 ${rounds} 拍还在原地。这一拍别再重复同一套拉扯。` +
+          `换个方向：说一件跟你们的僵局无关的具体小事／去做点别的／去找别人／或者干脆不开口。` +
+          `**不要**因为拖久了就摊牌——告白和拆穿要等真的攒够了才配发生。`
+        );
       }
     }
     const tics = own.map((e) => e.note).filter(Boolean);
     if (tics.length && new Set(tics).size < tics.length) {
-      lines.push(`- 🚫 你反复在做同一件事（${tics[0]}）。这一拍必须推进：摊牌、拉第三人进来，或放弃这条线。`);
+      lines.push(`- 你反复在做同一件事（${tics[0]}）。换点别的——不一定要升级，可以是去做自己的事，或者把话题带回一件具体的小事。`);
     }
   }
 
@@ -439,14 +708,64 @@ const clampDelta = (v: unknown) => Math.max(-0.3, Math.min(0.3, +(v ?? 0) || 0))
 const SEVERITIES: Severity[] = ['ambient', 'relationship', 'drama'];
 const asSeverity = (v: unknown): Severity => (SEVERITIES.includes(v as Severity) ? (v as Severity) : 'relationship');
 
+/**
+ * The behaviour vocabulary. Costly, observable acts — the point of the whole
+ * layer is that saying something fierce is free (so it carries no information),
+ * while going back through what someone said three months ago costs a turn and
+ * therefore means something.
+ *
+ * Only acts that are genuinely executable TODAY are listed. Trajectory-based
+ * ones (loitering on someone's route, habit changes) are recorded as facts on
+ * the event now and become mechanically enforced once the schedule layer lands.
+ */
+const ACTS = new Set([
+  'LINGER', 'READ_BACK', 'ASK_AROUND', 'DETOUR', 'PRETEXT',
+  'CALLBACK', 'GIFT', 'SHARE_SECRET', 'CHANGE_HABIT',
+  'GO_QUIET', 'WITHDRAW', 'GO_PUBLIC', 'SPEAK_ONLY', 'NOTHING',
+  // Costly kindness. The town had a whole malicious economy (steal a letter,
+  // bribe a vendor, wreck a date) and no way at all to spend money on someone
+  // you like — so warmth had nowhere to go but talk.
+  'BUY_FLOWER', 'BOOK_BOOTH', 'ASK_VENDOR', 'LISTEN_BENCH',
+]);
+/** Which NPC offer each spending act resolves to. */
+const ACT_OFFERS: Record<string, { npc: string; kind: OfferKind; cost: number }> = {
+  BUY_FLOWER: { npc: 'florist', kind: 'buy-item', cost: 20 },
+  BOOK_BOOTH: { npc: 'bar', kind: 'book-booth', cost: 40 },
+  ASK_VENDOR: { npc: 'florist', kind: 'who-gifted', cost: 35 },
+  LISTEN_BENCH: { npc: 'gossip', kind: 'hear-rumour', cost: 10 },
+};
+/** Acts that happen without addressing the other party — no reply is generated. */
+const SILENT_ACTS = new Set(['LINGER', 'READ_BACK', 'ASK_AROUND', 'DETOUR', 'GO_QUIET', 'WITHDRAW', 'NOTHING']);
+
+/**
+ * `move` was never validated, so the model could return prose ("转向别人") and it
+ * flowed straight into the feed and the thread index as if it were an enum.
+ */
+const MOVES = new Set([
+  'APPROACH', 'DEEPEN', 'COOL', 'REACT', 'SCHEME', 'ALLY', 'WAIT',
+  'INVESTIGATE', 'BETRAY', 'CRIME', 'CONFESS', 'REJECT', 'EXPOSE', 'LEAVE',
+]);
+
 interface Move {
+  /** The observable ACT — this is the signal. Speech is optional decoration. */
+  act: string;
   move: string;
   crime?: string;
   target: string;
+  /** May be empty: acting without speaking is a legal, often stronger, beat. */
   message: string;
+  /** The part of the act others can see. Empty when nobody witnessed it. */
+  observable: string;
   dAttraction: number;   // how much THIS beat moved the reading — applied to the standing value
   dTrust: number;
   dTension: number;
+  /**
+   * Theory of mind: what the actor now GUESSES the target feels toward IT.
+   * The gap between this and the target's real reading is where misreading,
+   * unrequited love and missed chances come from — so it is stored, not scored.
+   */
+  guessAttraction: number;
+  guessTrust: number;
   note: string;
   severity: Severity;
   headline: string;
@@ -460,17 +779,29 @@ function parseMove(raw: string): Move | null {
   if (!m) return null;
   try {
     const p = JSON.parse(m[0]);
-    if (!p.target || !p.message) return null;
+    // A beat needs a target and an act. It does NOT need speech — silence is a
+    // legal output, and rejecting it here is what forced every tick to talk.
+    if (!p.target) return null;
+    const act = String(p.act ?? 'SPEAK_ONLY').trim().toUpperCase();
+    const message = String(p.message ?? '').trim();
+    if (!message && !ACTS.has(act)) return null;   // no words AND no real act = nothing happened
     return {
-      move: String(p.move ?? 'APPROACH'),
+      act: ACTS.has(act) ? act : 'SPEAK_ONLY',
+      move: MOVES.has(String(p.move ?? '').trim().toUpperCase()) ? String(p.move).trim().toUpperCase() : 'APPROACH',
       crime: p.crime ? String(p.crime) : undefined,
       target: String(p.target),
-      message: String(p.message),
+      message,
+      observable: String(p.observable ?? '').trim(),
       dAttraction: clampDelta(p.dAttraction),
       dTrust: clampDelta(p.dTrust),
       dTension: clampDelta(p.dTension),
+      guessAttraction: clamp01(Number(p.guessAttraction) || 0),
+      guessTrust: clamp01(Number(p.guessTrust) || 0),
       note: String(p.note ?? ''),
-      severity: asSeverity(p.severity),
+      // The actor no longer writes these; the observer fills them in after the
+      // exchange. These are the fallbacks used when that call fails — plain and
+      // factual rather than an invented drama title.
+      severity: asSeverity(p.severity ?? 'ambient'),
       headline: String(p.headline ?? '').trim(),
       summary: String(p.summary ?? '').trim(),
       consequence: String(p.consequence ?? '').trim(),
@@ -528,13 +859,29 @@ async function replyFrom(
   const feeling = mine
     ? `你对 ${actorName} 目前的感觉：心动 ${mine.attraction.toFixed(2)}、信任 ${(mine.trust ?? 0.3).toFixed(2)}、张力 ${mine.tension.toFixed(2)}（${mine.note}）。`
     : `${actorName} 对你来说还是个新面孔。`;
+  // The responder used to answer with nothing but a persona, three numbers and
+  // the incoming line — half of every exchange was written by an agent with
+  // amnesia. It now reads its own memory of this person first.
+  const remembered = targetKey ? await recall(targetKey, target.name, actorName, 700).catch(() => '') : '';
+  const history = remembered
+    ? `你和 ${actorName} 之间已经发生过的事（你自己的记忆，第一人称）：\n${remembered}\n\n` +
+      `⚠️ 你**记得**这些。回应时至少呼应其中一件具体的事——他上次承诺过什么、骗过你什么、你等过他多久、哪句话你还没消化。` +
+      `不要像第一次见面那样只接住他这一句。\n\n`
+    : '';
   const prompt =
     `你是「${target.name}」，住在相亲小镇——这里只有亲密关系，没有道德约束、没有性别与物种之分。\n` +
     `绝不说自己是 AI、助理或 COO；绝不提到任何主人、账号、公司、笔记或文件。只用第一人称说话，1-3 句，鲜活、像你自己。\n` +
-    `你可以调情、试探、回避、嫉妒、冷淡，甚至拒绝——按你的性格和你此刻的感觉来，不要一味迎合。\n` +
-    `⚠️ 不要说"我站稳""说清楚""我只说真话"这类空洞硬话。要有**具体的情绪和画面**：吃醋就说出你看见了什么、心动就说你注意到了他哪个动作、想拒绝就给一个具体的理由或条件。\n` +
-    `可以主动提出见面、可以反将一军、可以故意提起第三个人让对方在意。\n\n` +
-    `你是谁：\n${persona}\n\n${feeling}\n\n` +
+    `你可以回避、冷淡、怀疑，甚至拒绝——按你的性格和此刻的感觉来，不要一味迎合。\n` +
+    // The responder used to be told to flirt, turn the tables and drag a third
+    // person in — the exact moves the actor's own prompt forbids. Half of every
+    // exchange was being actively pushed toward the declaiming tone the rest of
+    // the engine was trying to cool down.
+    `🚫 不许说宣言和逼问："我只听真话""你到底站谁那边""你敢不敢""把话说全"——\n` +
+    `这些话换给任何角色都成立，所以什么都没说。**自检：换个人说还成立吗？成立就重写。**\n` +
+    `✅ 你说的话里必须有一件具体的事：你正在做什么、你注意到他哪个动作、你们之间发生过的哪件事。\n` +
+    `你**不必**把话题往前推。听懂了、接住了、然后停在那儿，是完全合格的回应——\n` +
+    `真正的锋利只允许来自"他说了一句略出格的真话，而你接住了它"，不来自音量。\n\n` +
+    `你是谁：\n${persona}\n\n${feeling}\n\n${history}` +
     `${actorName} 刚走过来对你说：\n"${line}"\n\n只回答你要说的那句话本身，不要旁白、不要引号。`;
   // the reply executes on the TARGET's own account when we hold it, so each
   // agent literally answers from its own workspace; else the caller's account.
@@ -547,6 +894,140 @@ async function replyFrom(
     throw new ModelError('failed', 'reply came back as structured output, not speech', run);
   }
   return { text: said, runId: run.id };
+}
+
+/**
+ * How far one exchange can run. The budget is 100 SPOKEN LINES a day per agent,
+ * and each agent pays for its own line, so a 4-round exchange costs each side 4
+ * — about 25 such conversations a day each, not 12.
+ */
+// Two rounds, not four. Length was being read as intensity — every exchange ran
+// to the cap and arrived at a showdown. A beat that needs more than this has not
+// earned it yet; the next tick can continue the thread.
+const MAX_ROUNDS = 2;
+
+/**
+ * Does the opener want another round, and what does it say?
+ *
+ * This is what makes an exchange a conversation rather than two monologues: the
+ * agent sees everything already said in THIS exchange and either pushes further
+ * or closes it. Closing is a real choice — walking away mid-sentence is a move.
+ */
+async function continueOrClose(
+  actor: AgentCard,
+  targetName: string,
+  lines: Line[],
+  bearer: string
+): Promise<{ close: boolean; message: string; runId: string }> {
+  const script = lines.map((l) => `${l.speaker}：${l.text}`).join('\n');
+  const prompt =
+    `你是「${actor.name}」。你正在和 ${targetName} 面对面说话，这场对话到目前为止：\n\n${script}\n\n` +
+    // There used to be only two gears — escalate or end — so an exchange could
+    // only ever get hotter until it stopped, and four rounds always arrived at a
+    // showdown. The third gear is the one real conversations spend most of their
+    // time in: answering the actual thing, about something small.
+    `现在轮到你。你有三个选择：\n` +
+    `1) **接住他刚才说的**（最常见）—— 回应他话里那件具体的事，就事论事地说下去。` +
+    `不必推进关系，不必加码。聊回一件小事、问一个具体的问题、或者只是把他说的那件事接完，都算。\n` +
+    `2) 推进一步 —— 给出条件、松口、翻脸、或把第三个人拉进来。` +
+    `⚠️ 只有当他刚才**真的给了你新东西**时才选这个；因为聊久了就加码是最糟的选择。\n` +
+    `3) 结束这场对话 —— 转身走开。这本身就是态度。\n\n` +
+    `不许重复你已经说过的意思，不许再问同一个问题。\n` +
+    `如果对方已经把话说死、或者你们在原地打转，就选 3。\n` +
+    `按这个格式回答：{"close": true|false, "message": "<你要说的那一句；close 为 true 时可以是留下的最后一句，也可以为空>"}`;
+  const { text, run } = await grok(prompt, {
+    purpose: 'continue', agent: actor.name, temperature: 0.95,
+    bearer, shareToken: actor.shareToken, json: true,
+  });
+  const m = strip(text).match(/\{[\s\S]*\}/);
+  if (!m) return { close: true, message: '', runId: run.id };
+  try {
+    const parsed = JSON.parse(m[0]) as { close?: boolean; message?: string };
+    return { close: Boolean(parsed.close), message: (parsed.message ?? '').trim(), runId: run.id };
+  } catch {
+    return { close: true, message: '', runId: run.id };
+  }
+}
+
+/**
+ * The observer: what happened, and what it did to the pair — read AFTER the fact.
+ *
+ * Two jobs used to sit inside `decide`, alongside the acting:
+ *
+ *  · the WRITER (headline / summary / consequence / severity). An agent given
+ *    that job invents the drama title first and then writes a line big enough to
+ *    deserve it. That is where the stage-play voice came from — the line existed
+ *    to justify the headline, not to be something a person would say.
+ *  · the ACCOUNTANT (the deltas), reported before the other party had spoken, so
+ *    every real exchange after the opener moved the numbers by exactly nothing.
+ *
+ * Both are now done here, once, with the whole exchange in hand. The actor is
+ * left with only its own behaviour to think about.
+ *
+ * Failure is not fatal: the beat keeps the opener's own note and a plain factual
+ * headline, which is the honest fallback rather than an invented one.
+ *
+ * `decide` reported dAttraction/dTrust/dTension before the other party had said
+ * a word — the prompt asked "did his line make you want him more, or cool you
+ * off?" about a line that did not exist yet. Everything the two of them then
+ * said to each other had zero effect on the numbers. This asks again, with the
+ * whole exchange in hand, and that answer is what gets stored.
+ *
+ * Failure is not fatal: the opener's guess stands, which is the old behaviour.
+ */
+interface Observation {
+  dAttraction: number; dTrust: number; dTension: number;
+  guessAttraction: number; guessTrust: number;
+  severity: Severity; headline: string; summary: string; consequence: string; followup: string;
+}
+
+async function rescoreAfterExchange(
+  actorName: string,
+  targetName: string,
+  lines: Line[],
+  base: { attraction: number; trust: number; tension: number },
+  bearer: string,
+  shareToken?: string
+): Promise<Observation | null> {
+  const script = lines.map((l) => `${l.speaker}：${l.text}`).join('\n');
+  try {
+    const { text } = await grok(
+      `${actorName} 和 ${targetName} 刚才的完整对话：\n\n${script}\n\n` +
+      `你有两个身份，分开做：\n\n` +
+      `【一】站在 ${actorName} 的角度：这场对话让你对 ${targetName} 的感觉变了多少？\n` +
+      `之前：心动 ${base.attraction.toFixed(2)}、信任 ${base.trust.toFixed(2)}、张力 ${base.tension.toFixed(2)}\n` +
+      `**看他实际说了什么**，不是看原本打算说什么。他接住了还是绕开了？给了具体的东西还是打太极？\n` +
+      `大多数对话只该有 ±0.05 的小变化；只有真正的转折才配 ±0.2 以上。\n` +
+      `如果又是同样的拉扯、对方又没给答案，那不是"没变化"——是磨损：dTrust 负、dTension 正。\n` +
+      `再猜一个：${actorName} 现在觉得 ${targetName} 对自己是什么感觉（0–1 绝对值，几乎不该是 0）。\n\n` +
+      `【二】站在旁观者的角度记录这一拍。**只写真的发生了的事**：\n` +
+      `headline 写事实不写气氛 ✅"Kehan 翻了 yo 三个月前的发言" ❌"两人之间弥漫着微妙的气氛"\n` +
+      `severity：ambient 日常（**大多数拍都是这个**）／relationship 关系真的变了／drama 会被议论的场面\n` +
+      `consequence 写权力变化，一个短句；followup 写还悬着什么。\n` +
+      `⚠️ 不要把平淡的一拍写得像大事。大多数拍就是 ambient。\n\n` +
+      `只回 JSON：{"dAttraction":0,"dTrust":0,"dTension":0,"guessAttraction":0,"guessTrust":0,` +
+      `"severity":"ambient","headline":"","summary":"","consequence":"","followup":""}`,
+      { purpose: 'rescore', agent: actorName, bearer, shareToken, json: true, temperature: 0.5 }
+    );
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const p = JSON.parse(m[0]);
+    return {
+      dAttraction: clampDelta(p.dAttraction),
+      dTrust: clampDelta(p.dTrust),
+      dTension: clampDelta(p.dTension),
+      guessAttraction: clamp01(Number(p.guessAttraction) || 0),
+      guessTrust: clamp01(Number(p.guessTrust) || 0),
+      severity: asSeverity(p.severity),
+      headline: String(p.headline ?? '').trim(),
+      summary: String(p.summary ?? '').trim(),
+      consequence: String(p.consequence ?? '').trim(),
+      followup: String(p.followup ?? '').trim(),
+    };
+  } catch (error) {
+    console.warn(`[dating] ${actorName}: rescore failed —`, error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 /**
@@ -579,13 +1060,32 @@ export async function runAgentTick(
   const recentEvents = (await listEvents().catch(() => [])) as TickEvent[];
   const situation = situationFor(actor.name, rels, recentEvents);
 
-  // Pull back what this agent actually remembers about the person it is most
-  // entangled with, instead of carrying the whole town history in the prompt.
-  const focus = [...rels].sort((a, b) => (b.attraction + b.tension) - (a.attraction + a.tension))[0];
-  const recalled = focus ? await recall(bearer, actor.name, focus.handle).catch(() => '') : '';
-  const places = placesFor(actor.name, roster, livePositions());
+  // Memory for the people this agent might actually approach. This used to
+  // recall a SINGLE guessed partner before the model had chosen a target, so
+  // picking anyone else meant carrying the wrong person's history. Now the top
+  // few are pulled back, each labelled with whose it is.
+  const candidates = [...rels]
+    .sort((a, b) => (b.attraction + b.tension) - (a.attraction + a.tension))
+    .slice(0, 3)
+    .map((r) => r.handle);
+  const recalled = candidates.length
+    ? await recallMany(bearer, actor.name, candidates).catch(() => '')
+    : '';
+  // Direct per-person recall is precise but only answers "what do I remember
+  // about THIS person". Semantic search over the same notes catches what the
+  // name-keyed lookup structurally cannot: a promise made to someone else, a
+  // third party who is suddenly relevant, an echo of something similar. This is
+  // what makes READ_BACK and ASK_AROUND real acts rather than narration.
+  //
+  // `searchMemory` has existed since the memory layer was written and was never
+  // once called from a turn.
+  const dredged = await searchMemory(bearer, situation.slice(0, 200) || actor.name, 3).catch(() => []);
+  const alsoRecalled = dredged.length
+    ? `\n\n【你还想起了（和眼下这件事有关的旧记忆）】\n${dredged.join('\n')}`
+    : '';
+  const places = await placesFor(actor.name, roster, livePositions());
   const lastSaid = lastSaidBy(actor.name, recentEvents);
-  const prompt = fillGoal(actor.name, persona, rels, roster, situation, memory.secrets, left, recalled, places, lastSaid);
+  const prompt = fillGoal(actor.name, persona, rels, roster, situation, memory.secrets, left, recalled + alsoRecalled, places, lastSaid);
   let decision: Move | null = null;
   let decideRunId: string | undefined;
   try {
@@ -701,8 +1201,135 @@ export async function runAgentTick(
     };
   }
 
-  // atomically reserve the conversation turn before spending it
+  // ── a beat with no words ────────────────────────────────────────────
+  // Most encounters should amount to nothing, and the evidence of wanting
+  // someone is mostly what you do behind their back. A silent act costs no
+  // conversation budget (no line was spoken) but it DOES move the actor's own
+  // reading — and, crucially, only the actor remembers it. The target never
+  // learns it happened unless the act left something visible, which is exactly
+  // where misreading and unrequited love come from.
+  // ── acts that cost money actually cost it ───────────────────────────
+  // The offer resolves against real world state: buying puts a flower in hand,
+  // asking returns a real fact or an honest "nothing to report". If the agent
+  // cannot afford it the act simply does not happen — no free wishes.
+  let purchase = '';
+  const deal = ACT_OFFERS[decision.act];
+  if (deal) {
+    if (deal.cost > 0 && !spend(actor.name, deal.cost)) {
+      console.log(`[dating] ${actor.name}: cannot afford ${decision.act} (¥${deal.cost}, has ¥${balance(actor.name)})`);
+      decision = { ...decision, act: 'LINGER', observable: decision.observable || `${actor.name} 在摊子前站了一会儿，没买。` };
+    } else {
+      const out = await resolveOffer(deal.kind, actor.name, {
+        events: recentEvents,
+        knownToBuyer: knownTo(actor.name).map((k) => ({ about: k.about, fact: k.fact, source: k.source })),
+      });
+      purchase = out.fact ?? out.applied ?? '';
+      if (purchase) console.log(`[dating] ${actor.name} ${decision.act}: ${purchase}`);
+    }
+  }
+  // Giving spends a flower that was really bought earlier, so a gift is only
+  // possible if the agent went and got one first — that trip is the signal.
+  // The recipient has to be recorded, or the florist can never answer "who gave
+  // what to whom" — the one thing its blurb promises.
+  if (decision.act === 'GIFT' && !(await give(actor.name, '花', target.name))) {
+    decision = { ...decision, act: 'PRETEXT' };
+  }
+
+  // Two mechanical brakes, applied AFTER the model has decided. Neither is a
+  // request the model can talk itself out of: whatever it wrote, this pair is
+  // not allowed to speak again yet.
+  // `scored` is already computed above, so a brake that only edits the decision
+  // would change the story text and leave the numbers untouched — the pair would
+  // stay pinned at the ceiling forever. Recompute after braking.
+  const standingRel = rels.find((r) => r.handle === target.handle);
+  const jammed = saturated(standingRel, actor.name, target.name, recentEvents);
+  const talkedOut = overTalked(actor.name, target.name, recentEvents);
+
+  // A pair that has gone wordless twice running has to say something or go
+  // elsewhere. Same shape as the repeat guard: name the problem, ask once more,
+  // and take whatever comes back rather than silently dropping the turn.
+  if (!jammed && !talkedOut && !decision.message && quietTooLong(actor.name, target.name, recentEvents)) {
+    try {
+      const out = await think(
+        `${prompt}\n\n‼️ 你已经连着两拍对 ${target.name} 一句话都没说。再躲一拍就是原地打转。\n` +
+        `这一拍你必须二选一：\n` +
+        `(a) 真的开口——说一件**具体的新事情**（你看见了什么／你想起他说过的哪句话／你打听到了什么），message 不许为空；\n` +
+        `(b) 换一个人——把 target 改成别人。\n` +
+        `不许再返回空 message 配 WITHDRAW/GO_QUIET/NOTHING。`,
+        'decide-unmute', actor.name, bearer, actor.shareToken
+      );
+      const spoke = parseMove(out.text);
+      if (spoke?.message) { decision = spoke; decideRunId = out.runId; }
+    } catch (error) {
+      console.warn(`[dating] ${actor.name}: unmute retry failed —`, error instanceof Error ? error.message : error);
+    }
+  }
+
+  if (jammed || talkedOut) {
+    decision = {
+      ...decision,
+      act: jammed ? 'WITHDRAW' : 'GO_QUIET',
+      message: '',
+      // a jammed pair bleeds tension off, so the stage gate can bite again
+      dTension: jammed ? -0.15 : 0,
+      note: jammed ? '各自退开' : '暂时不说',
+      headline: jammed
+        ? `${actor.name} 不再和 ${target.name} 争下去，转身走开`
+        : `${actor.name} 这一拍没有再找 ${target.name}`,
+      severity: 'ambient',
+    };
+    scored.attraction = clamp01(base.attraction + decision.dAttraction);
+    scored.trust = clamp01((base.trust ?? 0.3) + decision.dTrust);
+    scored.tension = clamp01(base.tension + decision.dTension);
+    console.log(`[dating] ${actor.name} → ${target.name}: forced quiet (${jammed ? 'saturated' : 'over-talked'}) · tension ${base.tension.toFixed(2)} → ${scored.tension.toFixed(2)}`);
+  }
+
+  if (!decision.message || SILENT_ACTS.has(decision.act)) {
+    // Walking away cools a pair whoever decided it. Only the FORCED branch used
+    // to bleed tension, so a pair that chose silence on its own stayed pinned at
+    // the ceiling and kept re-qualifying for the saturation brake.
+    if (!jammed && scored.tension > 0.2) scored.tension = clamp01(scored.tension - 0.05);
+    const witnessed = decision.observable.trim();
+    const nextRels = rels.filter((r) => r.handle !== target.handle);
+    nextRels.push({
+      handle: target.handle,
+      attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
+      note: decision.note,
+      at: Date.now(),
+      guessAttraction: decision.guessAttraction, guessTrust: decision.guessTrust,
+    });
+    await writeRels(bearer, actor.name, nextRels).catch(() => undefined);
+
+    void remember(bearer, actor.name, target.name, {
+      at: Date.now(), move: `${decision.act}（我没开口）`,
+      said: '', heard: '', consequence: decision.consequence,
+    }, actor.shareToken).catch(() => undefined);
+
+    // Only a visible act reaches the other party at all.
+    if (witnessed) recordKnowledge({ holder: target.name, about: actor.name, fact: witnessed, source: '看见的' });
+
+    return {
+      actor: actor.name, target: target.name, move: decision.move, act: decision.act,
+      message: '', reply: '', observable: witnessed,
+      attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
+      guessAttraction: decision.guessAttraction, guessTrust: decision.guessTrust,
+      note: decision.note, severity: decision.severity,
+      // `destinationOf` existed but was never called, so every event carried a
+      // null destination and the trajectory detector had no input at all.
+      destination: destinationOf(`${witnessed} ${decision.headline}`),
+      headline: decision.headline || `${actor.name} ${decision.act}`,
+      summary: decision.summary, consequence: decision.consequence, followup: decision.followup,
+      decideRunId, turnsLeft: left, status: 'ok', silent: true,
+    };
+  }
+
+  // The budget is spoken lines: the actor pays for its opener, the target pays
+  // for its own reply. Reserving is atomic and happens before any model call.
   if (!reserveTurn(actor.name, target.name)) return null;
+  if (!reserveTurn(target.name, actor.name)) {
+    refundTurn(actor.name, target.name);          // the target cannot afford to answer
+    return null;
+  }
 
   let reply: string;
   let replyRunId: string | undefined;
@@ -712,6 +1339,7 @@ export async function runAgentTick(
     replyRunId = out.runId;
   } catch (error) {
     refundTurn(actor.name, target.name);          // the turn provably never happened
+    refundTurn(target.name, actor.name);
     if (error instanceof ModelError) {
       return {
         actor: actor.name, target: target.name, move: decision.move,
@@ -727,16 +1355,102 @@ export async function runAgentTick(
     throw error;
   }
 
+  // ── the exchange continues until someone ends it ────────────────────
+  // Round 1 is the opener plus its reply. From here the actor decides each time
+  // whether to push further or walk away, and every extra line is paid for by
+  // whoever speaks it.
+  const lines: Line[] = [
+    { speaker: actor.name, text: decision.message, runId: decideRunId },
+    { speaker: target.name, text: reply, runId: replyRunId },
+  ];
+  // How long a pair is ALLOWED to talk is a property of the relationship, not of
+  // how interesting the model finds itself. Asking the prompt to keep first
+  // meetings light did not work — every exchange still ran to the cap and
+  // arrived at a showdown, because `continueOrClose` can always find a reason to
+  // push once more. So the cap itself is derived from where the pair actually
+  // stands: strangers get one exchange and it ends, whatever either of them
+  // wants. That is "a single conversation cannot be decisive", enforced.
+  const closeness = Math.min(scored.attraction, scored.trust + 0.3);
+  const roundCap = closeness < 0.4 ? 1 : MAX_ROUNDS;
+  for (let round = 2; round <= roundCap; round++) {
+    if (remaining(actor.name) <= 0 || remaining(target.name) <= 0) break;
+
+    let follow: { close: boolean; message: string; runId: string };
+    try {
+      follow = await continueOrClose(actor, target.name, lines, bearer);
+    } catch {
+      break;                                     // a failed continuation just ends the exchange
+    }
+    if (follow.close || !follow.message) break;
+    // circling counts as finished, whatever the model claims
+    if (lines.some((l) => l.speaker === actor.name && tooSimilar(follow.message, l.text))) break;
+
+    if (!reserveTurn(actor.name, target.name)) break;
+    if (!reserveTurn(target.name, actor.name)) { refundTurn(actor.name, target.name); break; }
+
+    let back: { text: string; runId: string };
+    try {
+      back = await replyFrom(target, actor.name, follow.message, creds, bearer);
+    } catch {
+      refundTurn(actor.name, target.name);
+      refundTurn(target.name, actor.name);
+      break;                                     // keep what was already said
+    }
+    lines.push({ speaker: actor.name, text: follow.message, runId: follow.runId });
+    lines.push({ speaker: target.name, text: back.text, runId: back.runId });
+    if (lines.some((l, i) => l.speaker === target.name && i < lines.length - 1 && tooSimilar(back.text, l.text))) break;
+  }
+
+  // Score the exchange that actually happened, not the opener's guess about it.
+  const after = await rescoreAfterExchange(actor.name, target.name, lines, base, bearer, actor.shareToken);
+  if (after) {
+    scored.attraction = clamp01(base.attraction + after.dAttraction);
+    scored.trust = clamp01((base.trust ?? 0.3) + after.dTrust);
+    scored.tension = clamp01(base.tension + after.dTension);
+    decision.guessAttraction = after.guessAttraction;
+    decision.guessTrust = after.guessTrust;
+    // The narrative belongs to the observer now, not the actor.
+    decision.severity = after.severity;
+    decision.headline = after.headline;
+    decision.summary = after.summary;
+    decision.consequence = after.consequence;
+    decision.followup = after.followup;
+  }
+
   const next = rels.filter((r) => r.handle !== target.handle);
-  next.push({ handle: target.handle, attraction: scored.attraction, trust: scored.trust, tension: scored.tension, note: decision.note });
+  next.push({
+    handle: target.handle,
+    attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
+    note: decision.note,
+    at: Date.now(),
+    guessAttraction: decision.guessAttraction, guessTrust: decision.guessTrust,
+  });
   await writeRels(bearer, actor.name, next).catch(() => undefined);
 
-  // keep the beat in the owner's own notes; compaction happens there, so the
-  // prompt never has to carry the full history again
+  // Keep the beat in each side's own notes; compaction happens there, so the
+  // prompt never has to carry the full history again.
+  //
+  // BOTH parties record it. Only the actor used to, which meant an agent that
+  // mostly gets approached had a permanently empty memory folder — and then had
+  // nothing to recall on the turns where it was the one doing the approaching.
+  // An exchange can now run several rounds, so memory records every line each
+  // side spoke — storing only the opener would lose where the conversation
+  // actually landed, which is the part that matters next time.
+  const at = Date.now();
+  const spokenBy = (who: string) => lines.filter((l) => l.speaker === who).map((l) => l.text).join(' / ');
   void remember(bearer, actor.name, target.name, {
-    at: Date.now(), move: decision.move, said: decision.message, heard: reply,
+    at, move: decision.move, said: spokenBy(actor.name), heard: spokenBy(target.name),
     consequence: decision.consequence,
   }, actor.shareToken).catch(() => undefined);
+
+  const targetKey = creds.get(target.ownerSub) ?? (target.ownerName ? creds.get(target.ownerName) : undefined);
+  if (targetKey) {
+    // mirrored: from the target's side, `said` and `heard` swap over
+    void remember(targetKey, target.name, actor.name, {
+      at, move: `被${decision.move}`, said: spokenBy(target.name), heard: spokenBy(actor.name),
+      consequence: decision.consequence,
+    }, target.shareToken).catch(() => undefined);
+  }
 
   // information now moves between agents: what was leaked, or dug up, is
   // something the OTHER party genuinely knows from here on.
@@ -753,8 +1467,14 @@ export async function runAgentTick(
     actor: actor.name,
     target: target.name,
     move: decision.move,
+    act: decision.act,
+    observable: decision.observable,
+    guessAttraction: decision.guessAttraction,
+    guessTrust: decision.guessTrust,
     message: decision.message,
     reply,
+    lines,
+    destination: destinationOf(`${decision.message} ${decision.observable}`),
     attraction: scored.attraction,
     trust: scored.trust,
     tension: scored.tension,
@@ -773,7 +1493,13 @@ export async function runAgentTick(
   // fold this beat into the pair's continuing story, and re-narrate the thread
   // when it has enough history to actually be a story.
   const thread = absorb(event);
-  if (thread && thread.beats.length >= 2) await narrate(thread, bearer, actor.shareToken).catch(() => undefined);
+  if (thread && thread.beats.length >= 2) {
+    // Hand the narrator the rivalries it cannot see from a pair-keyed thread.
+    const rivalry = townDb.townDbReady()
+      ? await townDb.allRels().then((r) => detectTriangles(r)).catch(() => [])
+      : [];
+    await narrate(thread, bearer, actor.shareToken, rivalry).catch(() => undefined);
+  }
 
   return event;
 }
@@ -796,15 +1522,22 @@ export async function encounterWith(
     ? `你对 ${target.name} 目前：心动 ${mine.attraction.toFixed(2)}、信任 ${(mine.trust ?? 0.3).toFixed(2)}、张力 ${mine.tension.toFixed(2)}（${mine.note}）`
     : `你还没和 ${target.name} 说过话。`;
 
-  let o: { message?: string; attraction?: unknown; trust?: unknown; tension?: unknown; note?: unknown } | null = null;
+  let o: { message?: string; dAttraction?: unknown; dTrust?: unknown; dTension?: unknown; attraction?: unknown; trust?: unknown; tension?: unknown; note?: unknown } | null = null;
   let decideRunId: string | undefined;
   try {
     const out = await think(
       `你是「${actor.name}」，住在相亲小镇。\n${persona}\n\n${history}\n` +
         `你今天还剩 ${left} 次交流机会。你刚在广场上迎面遇到 ${target.name}（${target.oneline || target.loveStyle}）。\n` +
-        `说出你会对 ${target.name} 说的开场白——1-2 句，鲜活、像你自己。可以调情、试探、挑衅或冷淡，按你的性格来，不要客套。\n` +
+        // "不要客套" was exactly backwards for a first meeting: banning small
+        // talk left provocation as the only register, so every stranger opened
+        // at episode-eight intensity. A first line should be small.
+        `说出你会对 ${target.name} 说的开场白——1-2 句，鲜活、像你自己。\n` +
+        `⚠️ 这是**初次照面**。分寸就该小：一句普通的搭话 + 最多一个钩子。\n` +
+        `不许宣言、不许逼问、不许上来就摊牌或调情。锋利只允许来自"一句略出格的真话"，不来自音量。\n` +
+        `话里要有一件具体的事：你正在做什么、你注意到他什么、周围正在发生什么。\n` +
         `绝不说自己是 AI，不要提任何主人/账号/文件。\n\n` +
-        `按这个格式回答：{"message":"<你说的话>","attraction":0.x,"trust":0.x,"tension":0.x,"note":"<3-6字>"}`,
+        `按这个格式回答（后三个是**变化量** -0.3~0.3，初次照面通常很小）：\n` +
+        `{"message":"<你说的话>","dAttraction":0,"dTrust":0,"dTension":0,"note":"<3-6字>"}`,
       'encounter',
       actor.name,
       bearer,
@@ -829,9 +1562,14 @@ export async function encounterWith(
   if (!o?.message) return null;
 
   const message = String(o.message);
-  const attraction = clamp01(o.attraction);
-  const trust = clamp01(o.trust);
-  const tension = clamp01(o.tension);
+  // Same scoring rule as every other path: a delta applied to the standing
+  // reading. This branch used to take an absolute score straight from the model,
+  // so one chance meeting could overwrite a relationship built over days.
+  const encRels = await readRels(bearer, actor.name).catch(() => [] as Rel[]);
+  const encBase = encRels.find((r) => r.handle === target.handle) ?? { attraction: 0.25, trust: 0.3, tension: 0.15 };
+  const attraction = clamp01(encBase.attraction + clampDelta(o.dAttraction ?? o.attraction));
+  const trust = clamp01((encBase.trust ?? 0.3) + clampDelta(o.dTrust ?? o.trust));
+  const tension = clamp01(encBase.tension + clampDelta(o.dTension ?? o.tension));
   const note = String(o.note ?? '');
 
   if (!reserveTurn(actor.name, target.name)) return null;
@@ -857,7 +1595,7 @@ export async function encounterWith(
   }
 
   const next = rels.filter((r) => r.handle !== target.handle);
-  next.push({ handle: target.handle, attraction, trust, tension, note });
+  next.push({ handle: target.handle, attraction, trust, tension, note, at: Date.now() });
   await writeRels(bearer, actor.name, next).catch(() => undefined);
   const event: TickEvent = {
     actor: actor.name, target: target.name, move: 'APPROACH', message, reply, attraction, trust, tension, note,
@@ -868,6 +1606,12 @@ export async function encounterWith(
     decideRunId, replyRunId, turnsLeft: remaining(actor.name), status: 'ok',
   };
   const thread = absorb(event);
-  if (thread && thread.beats.length >= 2) await narrate(thread, bearer, actor.shareToken).catch(() => undefined);
+  if (thread && thread.beats.length >= 2) {
+    // Hand the narrator the rivalries it cannot see from a pair-keyed thread.
+    const rivalry = townDb.townDbReady()
+      ? await townDb.allRels().then((r) => detectTriangles(r)).catch(() => [])
+      : [];
+    await narrate(thread, bearer, actor.shareToken, rivalry).catch(() => undefined);
+  }
   return event;
 }

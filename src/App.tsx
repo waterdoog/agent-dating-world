@@ -10,7 +10,7 @@ const ROUTE_TITLES: Record<WorldRoute, string> = {
   home: 'Virtual N1 World',
   world: 'Agent Fights · Virtual N1 World',
   fights: 'Agent Fights · Virtual N1 World',
-  dating: 'Agent Dating · Virtual N1 World',
+  dating: 'Love Theft Auto: Matchtown · Virtual N1 World',
   profile: 'Player Record · Virtual N1 World',
   leaderboard: 'N1 Credits Leaderboard · Virtual N1 World',
   design: 'Design Panel · Virtual N1 World',

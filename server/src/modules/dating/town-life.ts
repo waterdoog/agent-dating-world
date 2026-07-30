@@ -10,7 +10,21 @@
  * *social* damage, which feeds straight back into the drama.
  */
 
+import { townState, markTownDirty } from './town-state.js';
+import * as db from './town-repository.js';
+
 export type NpcKind = 'vendor' | 'police' | 'bartender' | 'gossip';
+
+/** How an offer resolves — see `resolveOffer` for what each one really does. */
+export type OfferKind =
+  | 'who-gifted'      // read real gift/approach history
+  | 'who-was-at-bar'  // read who really met at the bar
+  | 'book-booth'      // real mechanic: the next beat there stays out of the feed
+  | 'buy-item'        // a real item held until it is spent on someone
+  | 'hear-rumour'     // read a real fact out of the town knowledge store
+  | 'plant-rumour'    // write a fact other agents will really read
+  | 'report'          // true report raises theirs; false report raises yours
+  | 'pay-fine';
 
 export interface Npc {
   id: string;
@@ -20,8 +34,20 @@ export interface Npc {
   x: number;
   y: number;
   blurb: string;
-  /** what a player (or agent) can do here */
-  offers: Array<{ id: string; label: string; cost: number; effect: string }>;
+  /**
+   * What a player (or agent) can do here.
+   *
+   * `effect` used to be the WHOLE implementation: a sentence describing what
+   * would happen, returned to the browser and displayed as if it had. Buying a
+   * bouquet changed nothing; asking the bartender who was with whom returned the
+   * words "she'll tell you who was with whom". Only `pay-fine` did anything.
+   *
+   * `effect` is now just the label shown before you buy. `resolve` is what
+   * actually happens, and it must either report a REAL fact drawn from world
+   * state or make a REAL change another agent will run into. When there is
+   * nothing to report it says so — it never invents a name.
+   */
+  offers: Array<{ id: string; label: string; cost: number; effect: string; kind: OfferKind }>;
 }
 
 /** Fixed cast of the town — placed around the plaza ring. */
@@ -33,8 +59,8 @@ export const NPCS: Npc[] = [
     x: 34, y: 18,
     blurb: '卖花，也卖消息。谁最近给谁送过花，他记得一清二楚。',
     offers: [
-      { id: 'bouquet', label: '买一束花', cost: 20, effect: '送出后对方心动 +0.08' },
-      { id: 'who-bought', label: '打听谁买过花', cost: 35, effect: '得知最近一次送花是谁给谁' },
+      { id: 'bouquet', label: '买一束花', cost: 20, effect: '拿在手里，下次见到人可以送出去', kind: 'buy-item' },
+      { id: 'who-bought', label: '打听谁买过花', cost: 35, effect: '最近一次送花是谁给谁', kind: 'who-gifted' },
     ],
   },
   {
@@ -44,8 +70,8 @@ export const NPCS: Npc[] = [
     x: 76, y: 44,
     blurb: '深夜还开着。她见过每一场分手，也见过每一次偷偷的碰面。',
     offers: [
-      { id: 'private-booth', label: '订一个包厢', cost: 40, effect: '今晚的私下见面不会被广场看见' },
-      { id: 'loose-lips', label: '请她喝一杯', cost: 30, effect: '她会说出昨晚谁和谁在一起' },
+      { id: 'private-booth', label: '订一个包厢', cost: 40, effect: '你在酒馆的下一拍不会进世界动态', kind: 'book-booth' },
+      { id: 'loose-lips', label: '请她喝一杯', cost: 30, effect: '昨晚谁和谁在酒馆', kind: 'who-was-at-bar' },
     ],
   },
   {
@@ -55,8 +81,8 @@ export const NPCS: Npc[] = [
     x: 30, y: 40,
     blurb: '管治安，也管闹得太难看的场面。通缉度高了，他会来找你。',
     offers: [
-      { id: 'report', label: '举报某人', cost: 0, effect: '目标通缉度 +1（如果你说的是真的）' },
-      { id: 'pay-fine', label: '交罚款', cost: 60, effect: '自己的通缉度清零' },
+      { id: 'report', label: '举报某人', cost: 0, effect: '属实则对方通缉 +1；不属实你自己 +1', kind: 'report' },
+      { id: 'pay-fine', label: '交罚款', cost: 60, effect: '自己的通缉度清零', kind: 'pay-fine' },
     ],
   },
   {
@@ -66,8 +92,8 @@ export const NPCS: Npc[] = [
     x: 26, y: 72,
     blurb: '整天坐在长椅上。她们不参与任何关系，但她们知道所有关系。',
     offers: [
-      { id: 'listen', label: '坐下来听一会儿', cost: 10, effect: '听到一条小镇传闻' },
-      { id: 'plant', label: '放一条消息出去', cost: 45, effect: '你说的话会传遍小镇（真假不论）' },
+      { id: 'listen', label: '坐下来听一会儿', cost: 10, effect: '听一条镇上真在传的事', kind: 'hear-rumour' },
+      { id: 'plant', label: '放一条消息出去', cost: 45, effect: '别的 agent 下一拍真的会读到（真假不论）', kind: 'plant-rumour' },
     ],
   },
 ];
@@ -81,12 +107,10 @@ export const CRIMES: Record<string, { label: string; heat: number; blurb: string
   'break-in': { label: '闯进别人的私下见面', heat: 3, blurb: '把一场约会砸掉' },
 };
 
-interface Wanted { level: number; reasons: string[]; at: number }
-const wanted = new Map<string, Wanted>();
 const DECAY_MS = 10 * 60_000;   // heat cools over time if nothing new happens
 
 export function wantedLevel(agent: string): number {
-  const w = wanted.get(agent.toLowerCase());
+  const w = townState().wanted[agent.toLowerCase()];
   if (!w) return 0;
   const decayed = Math.max(0, w.level - Math.floor((Date.now() - w.at) / DECAY_MS));
   return Math.min(5, decayed);
@@ -96,18 +120,23 @@ export function commitCrime(agent: string, crimeId: string, detail = ''): { leve
   const crime = CRIMES[crimeId];
   if (!crime) return null;
   const key = agent.toLowerCase();
-  const cur = wanted.get(key);
+  const cur = townState().wanted[key];
   const base = cur ? wantedLevel(agent) : 0;
-  wanted.set(key, {
+  townState().wanted[key] = {
     level: Math.min(5, base + crime.heat),
     reasons: [`${crime.label}${detail ? `：${detail}` : ''}`, ...(cur?.reasons ?? [])].slice(0, 6),
     at: Date.now(),
-  });
+  };
+  markTownDirty();
+  const w = townState().wanted[key];
+  if (db.townDbReady()) void db.setWanted(agent, w.level, w.reasons).catch((e) => console.warn('[town] setWanted:', e?.message));
   return { level: wantedLevel(agent), label: crime.label };
 }
 
 export function clearWanted(agent: string): void {
-  wanted.delete(agent.toLowerCase());
+  delete townState().wanted[agent.toLowerCase()];
+  markTownDirty();
+  if (db.townDbReady()) void db.clearWantedRow(agent).catch((e) => console.warn('[town] clearWanted:', e?.message));
 }
 
 /**
@@ -182,8 +211,8 @@ export function falloutOf(crimeId: string, actor: string, victim: string): Crime
 }
 
 export function wantedBoard(): Array<{ agent: string; level: number; reasons: string[] }> {
-  return [...wanted.keys()]
-    .map((k) => ({ agent: k, level: wantedLevel(k), reasons: wanted.get(k)?.reasons ?? [] }))
+  return Object.keys(townState().wanted)
+    .map((k) => ({ agent: k, level: wantedLevel(k), reasons: townState().wanted[k]?.reasons ?? [] }))
     .filter((w) => w.level > 0)
     .sort((a, b) => b.level - a.level);
 }
@@ -194,13 +223,13 @@ export function wantedBoard(): Array<{ agent: string; level: number; reasons: st
  * When the wallet database isn't configured (local dev), the town keeps a
  * pocket ledger instead so vendors still work.
  */
-const purse = new Map<string, number>();
 const START_CASH = 200;
 
 function localBalance(agent: string): number {
   const k = agent.toLowerCase();
-  if (!purse.has(k)) purse.set(k, START_CASH);
-  return purse.get(k)!;
+  const p = townState().purse;
+  if (p[k] === undefined) { p[k] = START_CASH; markTownDirty(); }
+  return p[k];
 }
 
 /**
@@ -229,8 +258,18 @@ export function spend(agent: string, amount: number): boolean {
   const k = agent.toLowerCase();
   const have = localBalance(agent);
   if (have < amount) return false;
-  purse.set(k, have - amount);
+  townState().purse[k] = have - amount;
+  markTownDirty();
+  if (db.townDbReady()) void db.debit(agent, amount).catch((e) => console.warn('[town] debit:', e?.message));
   return true;
+}
+
+/** Money moves rather than evaporating — the other half of a real transaction. */
+export function credit(agent: string, amount: number): void {
+  const k = agent.toLowerCase();
+  townState().purse[k] = localBalance(agent) + amount;
+  markTownDirty();
+  if (db.townDbReady()) void db.credit(agent, amount).catch((e) => console.warn('[town] credit:', e?.message));
 }
 
 /**
@@ -248,4 +287,154 @@ export function livePositions(): Map<string, { x: number; y: number }> {
   const cutoff = Date.now() - 120_000;   // ignore stale reports
   for (const [k, v] of positions) if (v.at > cutoff) fresh.set(k, { x: v.x, y: v.y });
   return fresh;
+}
+
+/**
+ * What each NPC has actually noticed.
+ *
+ * The florist's blurb promises "谁最近给谁送过花，他记得一清二楚" — a promise the
+ * town could never keep, because nothing recorded purchases and `npcNow` fed the
+ * prompt one line of scenery. Now that `town_items` holds a real ledger, the
+ * NPCs can remember out loud.
+ *
+ * Rule-driven on purpose: no model call, no budget. An NPC is a social echo, not
+ * a character — it repeats what the world already recorded, or says nothing.
+ */
+export async function npcRecalls(id: string): Promise<string> {
+  if (!db.townDbReady()) return '';
+  try {
+    if (id === 'florist') {
+      const gifts = await db.giftHistory(2);
+      if (!gifts.length) return '';
+      return gifts.map((g) => `${g.from} 买了${g.item}送给 ${g.to}`).join('；');
+    }
+    if (id === 'cop') {
+      const wanted = (await db.wantedRows()).slice(0, 2);
+      if (!wanted.length) return '';
+      return wanted.map((w) => `${w.agent} 通缉度 ${w.wantedLevel}（${w.wantedReasons[0] ?? ''}）`).join('；');
+    }
+    return '';
+  } catch {
+    return '';   // an NPC that cannot remember simply says nothing
+  }
+}
+
+// ── offers that actually do something ────────────────────────────────
+
+/**
+ * Items an agent is holding. A bouquet bought today is spent on someone later —
+ * price is not the signal, aim is, so what matters is who it eventually goes to.
+ */
+const carried = new Map<string, string[]>();
+export function carrying(agent: string): string[] { return carried.get(agent.toLowerCase()) ?? []; }
+/**
+ * Hand an item to someone. Awaited, because the ledger row IS the gift.
+ *
+ * This used to check the in-memory list, return true, and fire the database
+ * write off into the background — so a purchase that had not finished committing
+ * yet produced a "successful" gift with no ledger entry, and the florist could
+ * never recall it. The write is now the thing that decides.
+ */
+export async function give(agent: string, item: string, to: string): Promise<boolean> {
+  const k = agent.toLowerCase();
+  if (db.townDbReady()) {
+    const done = await db.spendItem(agent, item, to).catch((e) => {
+      console.warn('[town] spendItem:', e?.message);
+      return false;
+    });
+    if (!done) return false;
+  } else {
+    const held = carried.get(k) ?? [];
+    const i = held.indexOf(item);
+    if (i < 0) return false;
+  }
+  const held = carried.get(k) ?? [];
+  const i = held.indexOf(item);
+  if (i >= 0) { held.splice(i, 1); carried.set(k, held); }
+  return true;
+}
+
+/** Rehydrate an agent's purse and carried items from Postgres. */
+export async function hydrateAgent(agent: string): Promise<void> {
+  if (!db.townDbReady()) return;
+  try {
+    const row = await db.loadAgent(agent, START_CASH);
+    townState().purse[agent.toLowerCase()] = row.purse;
+    carried.set(agent.toLowerCase(), await db.heldItems(agent));
+  } catch (error) {
+    console.warn('[town] hydrate failed:', error instanceof Error ? error.message : error);
+  }
+}
+
+/** Beats booked out of public view — the bar booth, keyed by agent. */
+const booths = new Map<string, number>();
+const BOOTH_MS = 30 * 60_000;
+export function inPrivateBooth(agent: string): boolean {
+  const until = booths.get(agent.toLowerCase()) ?? 0;
+  return until > Date.now();
+}
+
+export interface OfferResult {
+  ok: boolean;
+  /** A real fact read out of world state, or an explicit "nothing to report". */
+  fact?: string;
+  /** A real change that was applied. */
+  applied?: string;
+}
+
+/**
+ * Resolve an offer against the world. Every branch either reports something that
+ * genuinely happened or states plainly that there is nothing — it never invents a
+ * name, a pairing or a rumour to fill the silence.
+ */
+export async function resolveOffer(
+  kind: OfferKind,
+  buyer: string,
+  ctx: { events: Array<{ actor: string; target: string; move?: string; act?: string; destination?: string; headline?: string; at?: number }>; knownToBuyer: Array<{ about: string; fact: string; source: string }>; subject?: string }
+): Promise<OfferResult> {
+  switch (kind) {
+    case 'buy-item': {
+      const k = buyer.toLowerCase();
+      carried.set(k, [...(carried.get(k) ?? []), '花']);
+      if (db.townDbReady()) await db.addItem(buyer, '花').catch((e) => console.warn('[town] addItem:', e?.message));
+      return { ok: true, applied: `你拿着一束花。下次见到人时可以送出去。` };
+    }
+    case 'book-booth': {
+      booths.set(buyer.toLowerCase(), Date.now() + BOOTH_MS);
+      return { ok: true, applied: `包厢订下了。接下来半小时你在酒馆说的话不会进世界动态。` };
+    }
+    case 'who-gifted': {
+      const hit = ctx.events.find((e) => e.act === 'GIFT');
+      return hit
+        ? { ok: true, fact: `${hit.actor} 送了东西给 ${hit.target}。` }
+        : { ok: true, fact: '最近没人送过花。老周摇摇头。' };
+    }
+    case 'who-was-at-bar': {
+      const hit = ctx.events.find((e) => e.destination === 'bar');
+      return hit
+        ? { ok: true, fact: `${hit.actor} 和 ${hit.target} 在酒馆碰过面。${hit.headline ? `（${hit.headline}）` : ''}` }
+        : { ok: true, fact: '昨晚酒馆没什么人。她擦着杯子没抬头。' };
+    }
+    case 'hear-rumour': {
+      const k = ctx.knownToBuyer[0];
+      return k
+        ? { ok: true, fact: `关于 ${k.about}：${k.fact}（${k.source}）` }
+        : { ok: true, fact: '今天没什么可说的。阿姨们在聊天气。' };
+    }
+    case 'plant-rumour':
+      return { ok: true, applied: '消息放出去了。别的 agent 下一拍会读到它——不管它是不是真的。' };
+    case 'report': {
+      if (!ctx.subject) return { ok: false };
+      const real = wantedLevel(ctx.subject) > 0;
+      if (real) {
+        const done = commitCrime(ctx.subject, 'spread-lie', `${buyer} 举报的`);
+        return { ok: true, applied: `老陈记下了。${ctx.subject} 的通缉度现在是 ${done?.level ?? wantedLevel(ctx.subject)}。` };
+      }
+      const back = commitCrime(buyer, 'spread-lie', `诬告 ${ctx.subject}`);
+      return { ok: true, applied: `老陈查过了，${ctx.subject} 名下没有案底。诬告要算你的——你的通缉度是 ${back?.level ?? wantedLevel(buyer)}。` };
+    }
+    case 'pay-fine':
+      clearWanted(buyer);
+      return { ok: true, applied: '罚款交了，你的通缉度清零。' };
+  }
 }

@@ -941,3 +941,10 @@ a.module-door .module-door-action {
   .registry-wrap td { padding: var(--space-md); }
   .rules-list li { grid-template-columns: 36px 1fr; padding: var(--space-lg); }
 }
+
+
+/* site-wide language switch, in the shared header */
+.lang-toggle { display: inline-flex; border: 2px solid var(--ink); background: var(--paper-light); box-shadow: 2px 2px 0 var(--ink); overflow: hidden; }
+.lang-toggle button { padding: 4px 9px; border: 0; background: transparent; font-size: 0.68rem; font-weight: 800; color: var(--ink-soft); cursor: pointer; }
+.lang-toggle button + button { border-left: 1.5px solid var(--ink); }
+.lang-toggle button.on { background: var(--yellow); color: var(--ink); }

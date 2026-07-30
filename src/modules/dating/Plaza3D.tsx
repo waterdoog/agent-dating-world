@@ -3,6 +3,7 @@ import { useGLTF, Clone, Html, OrbitControls, ContactShadows, Merged } from '@re
 import { Suspense, useRef, type RefObject } from 'react';
 import * as THREE from 'three';
 import type { DatingLook } from '../../api';
+import { useI18n } from '../../i18n';
 import { avatar3dUrl, type AgentAppearance } from './agent-avatar';
 
 // Kenney city tiles are 1×1 units and buildings are ~1–2 units tall, so agents
@@ -112,23 +113,24 @@ const R = Math.PI / 2;   // one quarter turn
  */
 const LANDMARKS: Array<{ id: string; name: string; pos: [number, number]; url: string; scale: number; rot?: number; scaleY?: number }> = [
   // world-space positions chosen to sit ON their district, fronting a street
-  { id: 'clock', name: '钟楼', pos: [-5.6, 0.6], url: `/city/building-small-d.glb`, scale: 1.5, scaleY: 2.6, rot: R },
-  { id: 'tavern', name: '酒馆', pos: [6.9, 1.1], url: `/city/building-small-b.glb`, scale: 1.7, rot: -R },
-  { id: 'florist', name: '花摊', pos: [-3.4, -6.9], url: `/city/building-small-c.glb`, scale: 1.25, rot: Math.PI },
-  { id: 'park', name: '长椅公园', pos: [-7.2, 6.4], url: '/city/grass-trees-tall.glb', scale: 1.3 },
-  { id: 'alley', name: '暗巷', pos: [0.9, -6.1], url: '/city/building-garage.glb', scale: 0.75, rot: R },
-  { id: 'backalley', name: '酒馆后巷', pos: [10.2, 3.4], url: '/city/building-garage.glb', scale: 0.8, rot: -R },
+  { id: 'clock', name: 'place.clock', pos: [-5.6, 0.6], url: `/city/building-small-d.glb`, scale: 1.5, scaleY: 2.6, rot: R },
+  { id: 'tavern', name: 'place.tavern', pos: [6.9, 1.1], url: `/city/building-small-b.glb`, scale: 1.7, rot: -R },
+  { id: 'florist', name: 'place.florist', pos: [-3.4, -6.9], url: `/city/building-small-c.glb`, scale: 1.25, rot: Math.PI },
+  { id: 'park', name: 'place.park', pos: [-7.2, 6.4], url: '/city/grass-trees-tall.glb', scale: 1.3 },
+  { id: 'alley', name: 'place.alley', pos: [0.9, -6.1], url: '/city/building-garage.glb', scale: 0.75, rot: R },
+  { id: 'backalley', name: 'place.backalley', pos: [10.2, 3.4], url: '/city/building-garage.glb', scale: 0.8, rot: -R },
 ];
 
 /** A landmark building plus a standing sign, so the place reads from a distance. */
 function Landmark({ mark }: { mark: (typeof LANDMARKS)[number] }) {
+  const { t } = useI18n();
   const { scene } = useGLTF(mark.url);
   const s = mark.scale;
   return (
     <group position={[mark.pos[0], 0, mark.pos[1]]} rotation={[0, mark.rot ?? 0, 0]}>
       <Clone object={scene} scale={[s, s * (mark.scaleY ?? 1), s]} castShadow receiveShadow />
       <Html position={[0, 1.4 * s * (mark.scaleY ?? 1), 0]} center distanceFactor={22} zIndexRange={[6, 0]}>
-        <div className="dt3d-landmark">{mark.name}</div>
+        <div className="dt3d-landmark">{t(mark.name)}</div>
       </Html>
     </group>
   );

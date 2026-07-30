@@ -591,6 +591,16 @@ export interface PublicAgent {
   oneline: string;
 }
 
+/** Behaviour the dialogue never shows — measured, never invented. */
+export interface TownSignal {
+  kind: 'detour' | 'gone-quiet' | 'one-sided' | 'misread' | 'gift' | 'spend-shift';
+  subject: string;
+  other?: string;
+  fact: string;
+  weight: number;
+  at: number;
+}
+
 export interface DatingTickEvent {
   actor: string;
   target: string;
@@ -610,7 +620,19 @@ export interface DatingTickEvent {
   replyRunId?: string;
   turnsLeft?: number;
   status?: string;
+  destination?: string;
   at?: number;
+  /** Every line of the exchange in order; message/reply are the first two. */
+  lines?: Array<{ speaker: string; text: string; runId?: string }>;
+  /** The costly, observable behaviour this beat consisted of (READ_BACK, DETOUR…). */
+  act?: string;
+  /** What a bystander could actually see. The raw material for trajectory reads. */
+  observable?: string;
+  /** Nothing was said — the target may not even know it happened. */
+  silent?: boolean;
+  /** What the actor GUESSES the target feels back. The gap is the story. */
+  guessAttraction?: number;
+  guessTrust?: number;
 }
 
 export interface StoryThreadInfo {
@@ -841,15 +863,18 @@ export const api = {
     square: () => request<{ agents: PublicAgent[] }>('GET', '/api/dating/square'),
     mine: () => request<{ agent: PublicAgent | null }>('GET', '/api/dating/mine'),
     release: (input: ReleaseInput) => request<{ agent: PublicAgent }>('POST', '/api/dating/release', input),
+    mineSpec: () => request<{ name: string; spec: ReleaseInput | null; partial: boolean; card: PublicAgent }>('GET', '/api/dating/mine/spec'),
+    updateMine: (input: Omit<ReleaseInput, 'name'>) => request<{ agent: PublicAgent }>('POST', '/api/dating/mine/update', input),
     tick: () => request<{ event: DatingTickEvent | null; note?: string }>('POST', '/api/dating/tick'),
     encounter: (target: string) => request<{ event: DatingTickEvent | null }>('POST', '/api/dating/encounter', { target }),
     feed: () => request<{ events: DatingTickEvent[] }>('GET', '/api/dating/feed'),
+    signals: () => request<{ signals: TownSignal[] }>('GET', '/api/dating/signals'),
     run: (id: string) => request<{ run: ModelRunInfo }>('GET', `/api/dating/runs?id=${encodeURIComponent(id)}`),
     threads: () => request<{ threads: StoryThreadInfo[]; digest: WorldDigestInfo | null }>('GET', '/api/dating/threads'),
     yearbooks: () => request<{ yearbooks: YearbookInfo[] }>('GET', '/api/dating/yearbooks'),
     town: () => request<TownInfo>('GET', '/api/dating/town'),
-    deal: (npc: string, offer: string) => request<{ npc: string; offer: string; effect: string; cash: number; wanted: number }>('POST', '/api/dating/town/deal', { npc, offer }),
-    crime: (crime: string, detail?: string) => request<{ level: number; label: string }>('POST', '/api/dating/town/crime', { crime, detail }),
+    deal: (npc: string, offer: string, opts: { subject?: string; claim?: string } = {}) => request<{ npc: string; offer: string; effect: string; cash: number; wanted: number }>('POST', '/api/dating/town/deal', { npc, offer, ...opts }),
+    crime: (crime: string, victim: string, detail?: string) => request<{ level: number; label: string }>('POST', '/api/dating/town/crime', { crime, victim, detail }),
     positions: (agents: Array<{ name: string; x: number; y: number }>) =>
       request<{ ok: boolean }>('POST', '/api/dating/positions', { agents }),
     budget: () => request<{ dailyTurnBudget: number; agents: Array<{ agent: string; used: number; left: number; top?: string }> }>('GET', '/api/dating/budget'),

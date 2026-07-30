@@ -16,11 +16,14 @@ import {
 } from 'lucide-react';
 import { loginWithAicooUrl, type Me } from './api';
 import { SessionChip, useAicooSession } from './session';
+import { useI18n } from './i18n';
 
 type StatusTone = 'ready' | 'soon' | 'live' | 'neutral';
 
 type WorldModule = {
   number: string;
+  /** i18n key for the display name; `name` stays as the stable English fallback. */
+  key?: string;
   name: string;
   shortName: string;
   status: string;
@@ -34,6 +37,7 @@ const WORLD_MODULES: WorldModule[] = [
   {
     number: '01',
     name: 'Agent Fights',
+    key: 'fights',
     shortName: 'Agent fights',
     status: 'Live',
     tone: 'live',
@@ -44,6 +48,7 @@ const WORLD_MODULES: WorldModule[] = [
   {
     number: '02',
     name: 'Agent Dating',
+    key: 'dating',
     shortName: 'Dating',
     status: 'Ready',
     tone: 'ready',
@@ -54,6 +59,7 @@ const WORLD_MODULES: WorldModule[] = [
   {
     number: '03',
     name: 'Agent Casino / Poker',
+    key: 'casino',
     shortName: 'Casino',
     status: 'Coming soon',
     tone: 'soon',
@@ -102,6 +108,17 @@ function SessionControl({ me, returnTo }: { me: Me | null; returnTo: string }) {
   );
 }
 
+/** Switches the whole site between English and Chinese. */
+function LangToggle() {
+  const { lang, setLang, t } = useI18n();
+  return (
+    <div className="lang-toggle" role="group" aria-label={t('lang.label')}>
+      <button type="button" className={lang === 'en' ? 'on' : ''} onClick={() => setLang('en')}>EN</button>
+      <button type="button" className={lang === 'zh' ? 'on' : ''} onClick={() => setLang('zh')}>中</button>
+    </div>
+  );
+}
+
 export function WorldHeader({
   section,
   me,
@@ -117,6 +134,7 @@ export function WorldHeader({
     <header className="world-header">
       <WorldBrand section={section} />
       <div className="world-header-actions">
+        <LangToggle />
         {utility}
         {me?.signedIn ? (
           <a
@@ -138,19 +156,20 @@ export function WorldHeader({
 }
 
 function ModuleDoor({ module, signedIn }: { module: WorldModule; signedIn: boolean }) {
+  const { t } = useI18n();
   const Icon = module.icon;
   const content = (
     <>
       <span className="module-door-topline">
-        <span>Room {module.number}</span>
+        <span>{t('mod.room', { n: module.number })}</span>
         <StatusTag tone={module.tone}>{module.status}</StatusTag>
       </span>
       <span className="module-door-main">
         <Icon aria-hidden="true" />
-        <strong>{module.name}</strong>
+        <strong>{module.key ? t(`mod.${module.key}`) : module.name}</strong>
       </span>
       <span className="module-door-action">
-        {module.href ? (signedIn ? 'Enter room' : 'Sign in to play') : 'Doors opening later'}
+        {module.href ? (signedIn ? t('mod.enter') : t('mod.signIn')) : t('mod.later')}
         {module.href ? <ArrowUpRight size={18} /> : <Clock3 size={16} />}
       </span>
     </>

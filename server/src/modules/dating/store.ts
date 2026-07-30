@@ -98,7 +98,14 @@ const STYLE_MOOD: Record<LoveStyle, string> = {
 export interface AgentCard {
   handle: string;
   name: string;
+  /**
+   * OAuth `sub` is PAIRWISE — it is not the account's userId, so a world API key
+   * can never match it and an OAuth-released agent would sit out every
+   * autonomous round. `ownerName` is the account name, which a world key CAN
+   * resolve, so the loop can drive an agent its owner released through the UI.
+   */
   ownerSub: string;
+  ownerName?: string;
   shareToken: string;
   look: Appearance;
   loveStyle: LoveStyle;
@@ -112,6 +119,8 @@ export interface WorldEvent {
   move: string;
   message: string;
   reply: string;
+  /** Every line of the exchange in order; message/reply are the first two. */
+  lines?: Array<{ speaker: string; text: string; runId?: string }>;
   attraction: number;
   trust: number;
   tension: number;
@@ -268,18 +277,95 @@ export async function appendEvent(e: Omit<WorldEvent, 'at'>): Promise<void> {
   }
 }
 
+/** Record which account owns an agent, for cards written before that was kept. */
+export async function stampOwnerName(handle: string, ownerName: string): Promise<void> {
+  const roster = await readRoster();
+  const card = roster.find((c) => c.handle === handle);
+  if (!card || card.ownerName === ownerName) return;
+  card.ownerName = ownerName;
+  await writeRoster(roster);
+  console.log(`[dating] ${card.name}: owner recorded as ${ownerName} — the world loop can drive it now`);
+}
+
 // ── release: create the agent in the OWNER's workspace, then list it ─
+
+/**
+ * persona.md and memory.md are prose written FOR the model, so reading a spec
+ * back out of them is lossy. A structured copy is kept beside them purely so the
+ * player can reopen the wizard and edit exactly what they set.
+ */
+const SPEC_NOTE = 'spec.json';
+
+async function writeSpec(bearer: string, spec: ReleaseSpec): Promise<void> {
+  await upsertNote(bearer, `${OWNER_ROOT}/${spec.name}`, SPEC_NOTE, JSON.stringify(spec, null, 2));
+}
+
+/** The structured spec for an agent, or null for one released before specs were kept. */
+export async function readSpec(bearer: string, name: string): Promise<ReleaseSpec | null> {
+  try {
+    const folderId = await ensureFolder(bearer, `${OWNER_ROOT}/${name}`);
+    const note = await findNoteInFolder(bearer, folderId, SPEC_NOTE);
+    if (!note) return null;
+    const raw = await getNote(bearer, note.id);
+    const m = raw.match(/\{[\s\S]*\}/);
+    return m ? (JSON.parse(m[0]) as ReleaseSpec) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Rewrite an existing agent's personality and appearance in place.
+ *
+ * The share token is deliberately reused: it is the agent's identity to every
+ * other agent, and minting a new one would strand its relationships and memory.
+ * The name is fixed for the same reason — memory notes live under it.
+ */
+export async function updateAgent(
+  bearer: string,
+  ownerSub: string,
+  spec: ReleaseSpec
+): Promise<AgentCard> {
+  const roster = await readRoster();
+  const existing = roster.find((c) => c.ownerSub === ownerSub && c.name === spec.name);
+  if (!existing) throw new Error(`No released agent named ${spec.name} for this owner.`);
+
+  const path = `${OWNER_ROOT}/${spec.name}`;
+  await ensureFolder(bearer, path);
+  await upsertNote(bearer, path, 'persona.md', personaDoc(spec));
+  await upsertNote(bearer, path, 'memory.md', memoryDoc(spec));
+  await writeSpec(bearer, spec);
+  // the scoped share keeps its token, but its runtime policy follows the new persona
+  await writeLinkPolicy(bearer, existing.shareToken, personaPolicy(spec)).catch(() => undefined);
+
+  const card: AgentCard = {
+    ...existing,
+    look: { ...spec.look, mood: STYLE_MOOD[spec.relationshipStyle] ?? 'curious' },
+    loveStyle: spec.relationshipStyle,
+    oneline: spec.publicIntroduction.trim().slice(0, 120),
+    persona: [
+      `${spec.name} — ${spec.publicIntroduction.trim()}`,
+      spec.summary.trim(),
+      `恋爱风格 ${spec.relationshipStyle}；特质：${spec.traits.join('、') || '—'}。`,
+      spec.memory.publicBackground.trim() ? `背景：${spec.memory.publicBackground.trim()}` : '',
+    ].filter(Boolean).join(' ').slice(0, 700),
+  };
+  await writeRoster([...roster.filter((c) => c.handle !== card.handle), card]);
+  return card;
+}
 
 export async function releaseAgent(
   bearer: string,
   ownerSub: string,
-  spec: ReleaseSpec
+  spec: ReleaseSpec,
+  ownerName?: string
 ): Promise<AgentCard> {
   const path = `${OWNER_ROOT}/${spec.name}`;
   const folderId = await ensureFolder(bearer, path);
   // Personality and memory both live as notes in the OWNER's own workspace.
   await upsertNote(bearer, path, 'persona.md', personaDoc(spec));
   await upsertNote(bearer, path, 'memory.md', memoryDoc(spec));
+  await writeSpec(bearer, spec);
 
   const share = await createShareLink(bearer, {
     folderId,
@@ -297,6 +383,7 @@ export async function releaseAgent(
     handle: handleFor(spec.name),
     name: spec.name,
     ownerSub,
+    ...(ownerName ? { ownerName } : {}),
     shareToken: share.token,
     look: { ...spec.look, mood: STYLE_MOOD[spec.relationshipStyle] ?? 'curious' },
     loveStyle: spec.relationshipStyle,

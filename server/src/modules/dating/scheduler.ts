@@ -21,7 +21,10 @@ export async function runWorldRound(
   roster: AgentCard[],
   opts: { maxTurns?: number; onEvent?: (e: TickEvent) => void } = {}
 ): Promise<TickEvent[]> {
-  const actable = roster.filter((a) => creds.get(a.ownerSub));
+  // Match on either identifier: agents released through the UI carry a pairwise
+  // OAuth sub that no API key can resolve, but their account name resolves fine.
+  const keyFor = (a: AgentCard) => creds.get(a.ownerSub) ?? (a.ownerName ? creds.get(a.ownerName) : undefined);
+  const actable = roster.filter((a) => keyFor(a));
   const turns = opts.maxTurns ? actable.slice(0, opts.maxTurns) : actable;
 
   // Agents live in different owner accounts, so their turns can run at the same
@@ -39,7 +42,7 @@ export async function runWorldRound(
   }
   const withCap = (agent: AgentCard) =>
     Promise.race([
-      runAgentTick(creds.get(agent.ownerSub)!, agent, roster, creds),
+      runAgentTick(keyFor(agent)!, agent, roster, creds),
       new Promise<null>((_, reject) =>
         setTimeout(() => reject(new Error(`turn exceeded ${TURN_CAP_MS}ms`)), TURN_CAP_MS)
       ),

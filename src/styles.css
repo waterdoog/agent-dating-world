@@ -1,5 +1,22 @@
 @import url('https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Public+Sans:ital,wght@0,400..900;1,400..900&display=swap');
 
+/* Dela Gothic One and Public Sans ship no CJK glyphs, so Chinese headings fell
+   back to a synthesised bold that overlapped. Registering CJK codepoints under
+   the SAME family names hands those ranges to a real system face — one block
+   fixes every `font-family: 'Dela Gothic One'` declaration in the app. */
+@font-face {
+  font-family: 'Dela Gothic One';
+  src: local('PingFang SC Semibold'), local('Hiragino Sans GB W6'), local('Source Han Sans SC Bold'), local('Noto Sans CJK SC Bold'), local('Microsoft YaHei Bold');
+  font-weight: 400;
+  unicode-range: U+2E80-303F, U+3040-30FF, U+3200-9FFF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF;
+}
+@font-face {
+  font-family: 'Public Sans';
+  src: local('PingFang SC'), local('Hiragino Sans GB'), local('Source Han Sans SC'), local('Noto Sans CJK SC'), local('Microsoft YaHei');
+  font-weight: 100 900;
+  unicode-range: U+2E80-303F, U+3040-30FF, U+3200-9FFF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF;
+}
+
 :root {
   font-family: 'Public Sans', sans-serif;
   color: oklch(0.22 0.035 42);

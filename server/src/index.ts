@@ -52,16 +52,21 @@ import {
   type FighterReadyIntent,
   type FighterRuntimeEvent,
 } from './fighter-world.js';
-import { listSquare, releaseAgent, listEvents, appendEvent, type AgentCard, type LoveStyle } from './modules/dating/store.js';
+import { listSquare, releaseAgent, updateAgent, readSpec, stampOwnerName, listEvents, appendEvent, type AgentCard, type LoveStyle } from './modules/dating/store.js';
 import { runAgentTick, encounterWith, readRels, writeRels, type TickEvent } from './modules/dating/engine.js';
 import { startWorldLoop } from './modules/dating/scheduler.js';
+import { loadTownState, flushTownState, townStateHealth } from './modules/dating/town-state.js';
+import { townDbReady, saveEvent } from './modules/dating/town-repository.js';
+import { isDatabaseConfigured } from './database/client.js';
+import { collectSignals } from './modules/dating/detectors.js';
+import { storeCredential, forgetCredential, liveCredentials, credentialHealth } from './modules/dating/credentials.js';
 import { recentRuns, runById } from './modules/dating/grok.js';
 import { budgetSnapshot } from './modules/dating/budget.js';
-import { listThreads, currentDigest, summariseWorld, recordKnowledge } from './modules/dating/threads.js';
+import { listThreads, currentDigest, summariseWorld, recordKnowledge, knownTo } from './modules/dating/threads.js';
 import { writeYearbook, listYearbooks, yearbookFor } from './modules/dating/yearbook.js';
 import { recordEvent } from './modules/dating/records.js';
-import { requestFriend, friends, recall, searchMemory } from './modules/dating/memory.js';
-import { NPCS, CRIMES, wantedLevel, commitCrime, clearWanted, wantedBoard, balance, spend, falloutOf, walletBalance, npcNow, reportPositions } from './modules/dating/town-life.js';
+import { requestFriend, friends, recall, searchMemory, memoryStats } from './modules/dating/memory.js';
+import { NPCS, CRIMES, wantedLevel, commitCrime, clearWanted, wantedBoard, balance, spend, falloutOf, walletBalance, npcNow, reportPositions, resolveOffer} from './modules/dating/town-life.js';
 
 // Stable API keys the world can act with (ownerSub → key), seeded from
 // DATING_WORLD_KEYS at boot. Lets a target's REAL persona answer on its own COO.
@@ -239,6 +244,14 @@ app.get('/auth/callback', async (c) => {
       accessTokenExpiresAt: Date.now() + tokens.expires_in * 1000,
     });
 
+    // Keep the refresh token server-side so this player's agent keeps living
+    // after they close the tab. Without it the world loop can only drive
+    // accounts whose API key was pasted into DATING_WORLD_KEYS, which left most
+    // of the town frozen. Deleted again on logout.
+    if (tokens.refresh_token) {
+      void storeCredential(info.sub, tokens.refresh_token, info.preferred_username, tokens.scope);
+    }
+
     return c.redirect(authResultUrl(config.spaUrl, flow.returnTo, { login: 'ok' }));
   } catch {
     console.error('[auth] callback failed.');
@@ -255,6 +268,8 @@ app.post('/auth/logout', async (c) => {
       (token): token is string => Boolean(token)
     );
     await Promise.allSettled(tokens.map((token) => revokeToken(token)));
+    // Consent withdrawn: the agent stops acting unattended.
+    await forgetCredential(session.sub).catch(() => undefined);
   }
   clearSession(c);
   return c.json({ ok: true });
@@ -601,11 +616,32 @@ app.post('/api/dating/town/deal', async (c) => {
   const roster = await listSquare().catch(() => [] as AgentCard[]);
   const mine = roster.find((r) => r.ownerSub === auth.session.sub);
   if (!mine) return jsonError(c, 404, 'Release an agent first.');
+  const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
+  if (offer.kind === 'report' && !subject) return jsonError(c, 400, '要举报谁？');
   if (offer.cost > 0 && !spend(mine.name, offer.cost)) {
     return jsonError(c, 402, `不够钱：还差 ${offer.cost - balance(mine.name)}。`);
   }
-  if (npc.id === 'cop' && offer.id === 'pay-fine') clearWanted(mine.name);
-  return c.json({ ok: true, npc: npc.name, offer: offer.label, effect: offer.effect, cash: balance(mine.name), wanted: wantedLevel(mine.name) });
+  // The offer now RESOLVES against real world state instead of echoing a
+  // sentence describing what it would have done.
+  const events = (await listEvents().catch(() => [])) as Array<{ actor: string; target: string; act?: string; destination?: string; headline?: string }>;
+  const result = await resolveOffer(offer.kind, mine.name, {
+    events,
+    knownToBuyer: knownTo(mine.name).map((k) => ({ about: k.about, fact: k.fact, source: k.source })),
+    subject,
+  });
+  if (!result.ok) return jsonError(c, 400, '这笔买卖没做成。');
+  if (offer.kind === 'plant-rumour') {
+    const claim = typeof body.claim === 'string' ? body.claim.trim().slice(0, 160) : '';
+    if (!claim) return jsonError(c, 400, '你要放出去的是什么消息？');
+    for (const other of roster.filter((r) => r.name !== mine.name)) {
+      recordKnowledge({ holder: other.name, about: subject || mine.name, fact: claim, source: '镇上传开的' });
+    }
+  }
+  return c.json({
+    ok: true, npc: npc.name, offer: offer.label,
+    effect: result.fact ?? result.applied ?? offer.effect,
+    cash: balance(mine.name), wanted: wantedLevel(mine.name),
+  });
 });
 
 app.post('/api/dating/town/crime', async (c) => {
@@ -616,7 +652,11 @@ app.post('/api/dating/town/crime', async (c) => {
   const mine = roster.find((r) => r.ownerSub === auth.session.sub);
   if (!mine) return jsonError(c, 404, 'Release an agent first.');
   const crimeId = String(body.crime ?? '');
-  const victimName = String(body.victim ?? '');
+  const victimName = String(body.victim ?? '').trim();
+  // Without a victim the fallout block below was dead code: the UI raised the
+  // actor's own wanted level and nothing else ever happened. A crime has to land
+  // on somebody.
+  if (!victimName) return jsonError(c, 400, '要对谁下手？先选一个人。');
   const done = commitCrime(mine.name, crimeId, victimName || String(body.detail ?? ''));
   if (!done) return jsonError(c, 400, 'No such crime.');
 
@@ -677,6 +717,26 @@ app.get('/api/dating/memory', async (c) => {
   return c.json({ agent: mine.name, memories: all.filter((m) => m.memory) });
 });
 
+/**
+ * Is memory actually working? Writes used to be fire-and-forget and reads
+ * swallowed every error, so an empty memory folder looked identical to a
+ * healthy one. This reports the raw counters.
+ */
+app.get('/api/dating/memory-health', (c) => c.json(memoryStats()));
+
+/** Did the town's durable state survive the last restart? */
+app.get('/api/dating/town-health', (c) => c.json(townStateHealth()));
+
+/**
+ * What the town noticed — behaviour the dialogue never shows: someone circling a
+ * place without speaking, a pair going quiet, one person always opening, a gift
+ * that was really bought. All measured from the event stream; nothing invented.
+ */
+app.get('/api/dating/signals', async (c) => c.json({ signals: await collectSignals() }));
+
+/** How many agents can act unattended, and how many credentials went stale. */
+app.get('/api/dating/autonomy-health', async (c) => c.json(await credentialHealth()));
+
 app.get('/api/dating/friends', async (c) => {
   const auth = await requireBearer(c);
   if (auth instanceof Response) return auth;
@@ -726,6 +786,12 @@ app.get('/api/dating/mine', async (c) => {
   try {
     const ids = new Set([auth.session.sub, auth.session.username].filter(Boolean) as string[]);
     const mine = (await listSquare()).find((card) => ids.has(card.ownerSub)) ?? null;
+    // Agents released before cards carried an account name are invisible to the
+    // world loop, which can only resolve API-key identities. The signed-in
+    // session is authoritative about who owns this one, so stamp it now.
+    if (mine && !mine.ownerName && auth.session.username) {
+      void stampOwnerName(mine.handle, auth.session.username).catch(() => undefined);
+    }
     return c.json({ agent: mine ? publicCard(mine) : null });
   } catch (error) {
     return datingError(c, error);
@@ -757,6 +823,11 @@ app.post('/api/dating/release', async (c) => {
       ? mem.hiddenMemories.filter((h: unknown): h is string => typeof h === 'string').slice(0, 12)
       : [],
   };
+  const ids = new Set([auth.session.sub, auth.session.username].filter(Boolean) as string[]);
+  const already = (await listSquare().catch(() => [] as AgentCard[])).find((c) => ids.has(c.ownerSub));
+  if (already) {
+    return jsonError(c, 409, `You already released ${already.name}. Edit it instead of releasing another.`);
+  }
   try {
     const card = await releaseAgent(auth.bearer, auth.session.sub, {
       name,
@@ -773,6 +844,69 @@ app.post('/api/dating/release', async (c) => {
         color: look.color,
         accessory: typeof look.accessory === 'string' ? look.accessory : 'none',
         seed: name,
+        ...(typeof look.avatar === 'string' ? { avatar: look.avatar } : {}),
+      },
+    }, auth.session.username);
+    return c.json({ agent: publicCard(card) });
+  } catch (error) {
+    return datingError(c, error);
+  }
+});
+
+/** The structured spec behind the player's own agent, for prefilling the editor. */
+app.get('/api/dating/mine/spec', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  const ids = new Set([auth.session.sub, auth.session.username].filter(Boolean) as string[]);
+  const mine = (await listSquare().catch(() => [] as AgentCard[])).find((card) => ids.has(card.ownerSub));
+  if (!mine) return jsonError(c, 404, 'Release an agent first.');
+  const spec = await readSpec(auth.bearer, mine.name);
+  // Agents released before specs were kept have no spec.json; the editor falls
+  // back to the card and says so rather than silently blanking fields.
+  return c.json({ name: mine.name, spec, partial: !spec, card: publicCard(mine) });
+});
+
+/** Rewrite personality and appearance in place. Name and share token are fixed. */
+app.post('/api/dating/mine/update', async (c) => {
+  const auth = await requireBearer(c);
+  if (auth instanceof Response) return auth;
+  const ids = new Set([auth.session.sub, auth.session.username].filter(Boolean) as string[]);
+  const roster = await listSquare().catch(() => [] as AgentCard[]);
+  const mine = roster.find((card) => ids.has(card.ownerSub));
+  if (!mine) return jsonError(c, 404, 'Release an agent first.');
+
+  const body = await c.req.json().catch(() => ({}));
+  const look = body.look;
+  if (!look || typeof look.form !== 'string' || typeof look.color !== 'string') {
+    return jsonError(c, 400, 'Your agent needs an appearance.');
+  }
+  const relationshipStyle = (LOVE_STYLES.includes(body.relationshipStyle) ? body.relationshipStyle : 'open') as LoveStyle;
+  const traits: string[] = Array.isArray(body.traits)
+    ? body.traits.filter((t: unknown): t is string => typeof t === 'string').slice(0, 5)
+    : [];
+  const clamp = (v: unknown) => Math.max(0, Math.min(100, Math.round(Number(v)) || 0));
+  const dim = body.dimensions ?? {};
+  const mem = body.memory ?? {};
+  try {
+    const card = await updateAgent(auth.bearer, mine.ownerSub, {
+      name: mine.name,                       // fixed: memory notes live under it
+      publicIntroduction: typeof body.publicIntroduction === 'string' ? body.publicIntroduction.slice(0, 120) : '',
+      relationshipStyle,
+      traits,
+      dimensions: { honesty: clamp(dim.honesty), attachment: clamp(dim.attachment), aggression: clamp(dim.aggression), disclosure: clamp(dim.disclosure) },
+      summary: typeof body.summary === 'string' ? body.summary.slice(0, 600) : '',
+      memory: {
+        source: typeof mem.source === 'string' ? mem.source : 'empty',
+        publicBackground: typeof mem.publicBackground === 'string' ? mem.publicBackground.slice(0, 2000) : '',
+        hiddenMemories: Array.isArray(mem.hiddenMemories)
+          ? mem.hiddenMemories.filter((h: unknown): h is string => typeof h === 'string').slice(0, 12)
+          : [],
+      },
+      look: {
+        form: look.form,
+        color: look.color,
+        accessory: typeof look.accessory === 'string' ? look.accessory : 'none',
+        seed: mine.name,
         ...(typeof look.avatar === 'string' ? { avatar: look.avatar } : {}),
       },
     });
@@ -827,6 +961,13 @@ if (process.env.NODE_ENV === 'production' && isMainModule) {
   app.get('*', serveStatic({ path: './dist/index.html' }));
 }
 
+// Restore wanted levels and purses before anything can read them. Best-effort:
+// a failure here starts the town clean rather than blocking the boot.
+void loadTownState();
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(sig, () => { void flushTownState().finally(() => process.exit(0)); });
+}
+
 if (isMainModule) {
   serve({ fetch: app.fetch, port: config.port }, (info) => {
     console.log(`[virtual-n1-world] BFF listening on http://localhost:${info.port}`);
@@ -838,9 +979,19 @@ if (isMainModule) {
 // of aicoo API keys (the accounts whose agents should self-run) and the square
 // runs on its own: every interval each agent wakes, decides, and acts. In prod
 // this is fed by aicoo heartbeat (once os.heartbeat lands) or per-user stored keys.
-if (process.env.DATING_WORLD_KEYS) {
+/**
+ * The world runs on the players' own OAuth credentials.
+ *
+ * `DATING_WORLD_KEYS` is now a fallback for accounts that never signed in
+ * through the UI: anyone who has logged in has their refresh token stored
+ * server-side (encrypted), so their agent keeps living after they close the tab.
+ * Before this, only agents belonging to a pasted API key ever moved — four of
+ * six agents in the town were permanently frozen, which biased every
+ * behavioural signal the detectors produce.
+ */
+if (process.env.DATING_WORLD_KEYS || isDatabaseConfigured()) {
   void (async () => {
-    for (const key of process.env.DATING_WORLD_KEYS!.split(',').map((k) => k.trim()).filter(Boolean)) {
+    for (const key of (process.env.DATING_WORLD_KEYS ?? '').split(',').map((k) => k.trim()).filter(Boolean)) {
       try {
         const id = await getIdentity(key);
         // index under both identifiers so an agent released via OAuth is still
@@ -851,16 +1002,45 @@ if (process.env.DATING_WORLD_KEYS) {
         console.warn('[dating] world key rejected:', error instanceof Error ? error.message : error);
       }
     }
-    if (!worldCreds.size) return;
+
+    // Access tokens expire in 15 minutes, so they are minted per round rather
+    // than cached. A player who signed out, or whose refresh was rejected, is
+    // simply absent from the map — their agent goes quiet instead of faking.
+    const withOauth = async (): Promise<Map<string, string>> => {
+      const merged = new Map(worldCreds);
+      for (const cred of await liveCredentials().catch(() => [])) {
+        merged.set(cred.sub, cred.bearer);
+        if (cred.username) merged.set(cred.username, cred.bearer);
+      }
+      return merged;
+    };
+
+    const initial = await withOauth();
+    if (!initial.size) {
+      console.log('[dating] world loop idle — no world keys and nobody has opted in yet');
+      return;
+    }
     const intervalMs = Number(process.env.DATING_WORLD_INTERVAL_MS ?? 300_000);
-    console.log(`[dating] 🌍 world loop live · ${worldCreds.size} account(s) · every ${intervalMs}ms`);
+    console.log(`[dating] 🌍 world loop live · ${initial.size} identifier(s) · every ${intervalMs}ms`);
+    // Refreshed each round so a player who signs in mid-session joins the world
+    // without a restart, and one who signs out drops out of it.
+    let live = initial;
+    void (async () => {
+      for (;;) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        live = await withOauth().catch(() => live);
+      }
+    })();
     startWorldLoop({
-      creds: () => worldCreds,
+      creds: () => live,
       roster: () => listSquare(),
       intervalMs,
       onEvent: (e) => {
         appendEvent(e).catch(() => undefined);
         void recordEvent(e);                          // durable in links/
+        // Postgres is what the feed, the trajectory detectors and the director
+        // will actually query — by pair, by place, by time.
+        if (townDbReady()) void saveEvent(e as unknown as Record<string, unknown>).catch((err) => console.warn('[town] saveEvent:', err?.message));
         // refresh the town digest from real threads (throttled inside)
         maybeSummarise();
         void maybeCloseYear().catch(() => undefined);

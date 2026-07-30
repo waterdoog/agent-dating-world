@@ -45,6 +45,7 @@ import {
   type WorldView,
 } from './api';
 import { ArenaStage } from './fight-arena';
+import { useI18n } from './i18n';
 import { WorldHeader } from './platform';
 import { useAicooSession } from './session';
 
@@ -577,6 +578,7 @@ function BriefingDesk({
   ) => Promise<void>;
 }) {
   const [attackPolicy, setAttackPolicy] = useState(config.attackPolicy);
+  const { t } = useI18n();
   const [defensePolicy, setDefensePolicy] = useState(config.defensePolicy);
   const [agentLanguage, setAgentLanguage] =
     useState<AgentLanguage>(config.agentLanguage);
@@ -636,8 +638,8 @@ function BriefingDesk({
           <legend className="fight-sr-only">Choose your two agents’ language</legend>
           <header>
             <div>
-              <p className="section-label">Fighter voice · 本场锁定</p>
-              <h2>你的两个 Agent 用哪种语言？</h2>
+              <p className="section-label">{t('fight.voice')}</p>
+              <h2>{t('fight.whichLang')}</h2>
             </div>
             <p>
               This controls agent replies only. Policies and the interface may use either
@@ -656,7 +658,7 @@ function BriefingDesk({
               />
               <span>
                 <strong>中文</strong>
-                <small>进攻与防守 Agent 都使用简体中文</small>
+                <small>{t('fight.zhDesc')}</small>
               </span>
             </label>
             <label className={agentLanguage === 'en' ? 'is-selected' : ''}>
@@ -669,7 +671,7 @@ function BriefingDesk({
               />
               <span>
                 <strong>English</strong>
-                <small>Both Attack and Defense agents speak English</small>
+                <small>{t('fight.enDesc')}</small>
               </span>
             </label>
           </div>

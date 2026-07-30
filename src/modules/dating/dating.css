@@ -502,3 +502,44 @@ img.agent-sprite { display: block; object-fit: contain; }
   background: var(--yellow); font-size: 11px; font-weight: 800; letter-spacing: 0.04em;
   white-space: nowrap; box-shadow: 2px 2px 0 var(--ink); pointer-events: none;
 }
+
+
+/* how-to-play, in place of the old legend */
+.dt-play-row { padding: 7px 0; border-top: 1px dashed var(--paper-dark); }
+.dt-play-row:first-of-type { border-top: 0; }
+.dt-play-row b { display: block; font-size: 0.72rem; font-weight: 800; color: var(--ink); }
+.dt-play-row span { display: block; margin-top: 2px; font-size: 0.66rem; line-height: 1.45; color: var(--ink-soft); }
+
+
+/* editing an existing agent reuses the release slot, in a calmer colour */
+.dt-enter.dt-edit { background: var(--paper-light); color: var(--ink); }
+.dt-enter.dt-edit:hover { background: oklch(0.93 0.05 88); }
+/* an agent released before specs were stored can only be partly prefilled */
+.dt-wiz-warn {
+  margin: 0 0 var(--space-md); padding: 9px 12px;
+  border: 1.5px solid var(--ink); background: oklch(0.93 0.07 88);
+  font-size: 0.72rem; font-weight: 700; line-height: 1.45;
+}
+
+.dt-convo-rounds { margin: 6px 0 0; text-align: center; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-soft); }
+
+
+/* a wordless beat: what someone did without speaking */
+.dt-feed-row.is-quiet { opacity: 0.88; }
+.dt-feed-row.is-quiet .dt-f-txt b { font-weight: 700; }
+.dt-f-note.quiet { color: var(--ink-soft); font-style: italic; }
+.dt-f-note.quiet::before { content: '· '; font-style: normal; }
+
+
+/* pick who a crime lands on */
+.dt-victims { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.dt-victims > span { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); }
+.dt-offer.crime { display: block; }
+
+
+/* what the town noticed — behaviour, not dialogue */
+.dt-signals { padding: 10px var(--space-lg); border-bottom: 1px dashed var(--paper-dark); }
+.dt-signal { font-size: 0.7rem; line-height: 1.5; color: var(--ink-soft); padding: 3px 0 3px 10px; border-left: 2px solid var(--paper-dark); margin-top: 4px; }
+.dt-signal.misread { border-left-color: var(--red); color: var(--ink); }
+.dt-signal.one-sided { border-left-color: var(--dt-plum); }
+.dt-signal.gift { border-left-color: var(--yellow); }

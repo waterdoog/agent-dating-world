@@ -1,7 +1,8 @@
 import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, ChevronRight, Clock3, Heart, RefreshCw, Sparkles, Users, Zap } from 'lucide-react';
-import { api, loginWithAicooUrl, type DatingLook, type DatingTickEvent, type PublicAgent, type StoryThreadInfo, type WorldDigestInfo, type YearbookInfo, type TownInfo } from '../../api';
+import { api, loginWithAicooUrl, type DatingLook, type DatingTickEvent, type PublicAgent, type StoryThreadInfo, type TownSignal, type WorldDigestInfo, type YearbookInfo, type TownInfo } from '../../api';
 import { useAicooSession } from '../../session';
+import { useI18n } from '../../i18n';
 import { WorldHeader } from '../../platform';
 import { agentSprite, type AgentAppearance } from './agent-avatar';
 import { CreateWizard } from './CreateWizard';
@@ -14,20 +15,20 @@ class PlazaErrorBoundary extends Component<{ children: ReactNode }, { err: Error
   static getDerivedStateFromError(err: Error) { return { err }; }
   componentDidCatch(err: Error) { console.error('[plaza] scene failed:', err); }
   render() {
-    if (this.state.err) return <div className="dt-plaza-loading">3D 场景出错：{this.state.err.message}</div>;
+    if (this.state.err) return <div className="dt-plaza-loading">{'3D scene failed: '}{this.state.err.message}</div>;
     return this.props.children;
   }
 }
 
 // ── demo cast (shown only while the real square is empty) ───────────
 const DEMO: Array<{ name: string; mbti: string; look: AgentAppearance; x: number; y: number; size: number; bubble?: { text: string; kind: 'fight' | 'love' | 'new' } }> = [
-  { name: 'Thorn', mbti: '独占 · 玫瑰哨兵', look: { form: 'sprout', color: 'oklch(0.57 0.19 25)', mood: 'angry', accessory: 'crown', seed: 'Thorn' }, x: 33, y: 22, size: 96, bubble: { text: '你太自私了！', kind: 'fight' } },
-  { name: 'Vesper', mbti: '猎手 · 织网者', look: { form: 'bot', color: 'oklch(0.5 0.09 330)', mood: 'sly', accessory: 'web', seed: 'Vesper' }, x: 47, y: 27, size: 92 },
-  { name: 'Rex', mbti: '疏离 · 交易AI', look: { form: 'cube', color: 'oklch(0.5 0.12 240)', mood: 'cold', accessory: 'tie', seed: 'Rex' }, x: 20, y: 52, size: 100 },
-  { name: 'Marrow', mbti: '开放 · 诗人', look: { form: 'ghost', color: 'oklch(0.62 0.07 250)', mood: 'romantic', accessory: 'notebook', seed: 'Marrow' }, x: 74, y: 42, size: 104, bubble: { text: '你真懂我… ❤', kind: 'love' } },
-  { name: 'Pixel', mbti: '开放 · 哲学猫', look: { form: 'cat', color: 'oklch(0.8 0.14 88)', mood: 'curious', seed: 'Pixel' }, x: 62, y: 57, size: 116 },
-  { name: '云朵朵', mbti: '梦游 · 云', look: { form: 'cloud', color: 'oklch(0.85 0.03 250)', mood: 'wise', seed: 'yunduo' }, x: 45, y: 74, size: 96 },
-  { name: '绿植侠', mbti: '新来的', look: { form: 'sprout', color: 'oklch(0.62 0.13 150)', mood: 'curious', seed: 'greener' }, x: 22, y: 79, size: 96, bubble: { text: '新入报到！', kind: 'new' } },
+  { name: 'Thorn', mbti: 'demo.thorn', look: { form: 'sprout', color: 'oklch(0.57 0.19 25)', mood: 'angry', accessory: 'crown', seed: 'Thorn' }, x: 33, y: 22, size: 96, bubble: { text: 'demo.thorn.b', kind: 'fight' } },
+  { name: 'Vesper', mbti: 'demo.vesper', look: { form: 'bot', color: 'oklch(0.5 0.09 330)', mood: 'sly', accessory: 'web', seed: 'Vesper' }, x: 47, y: 27, size: 92 },
+  { name: 'Rex', mbti: 'demo.rex', look: { form: 'cube', color: 'oklch(0.5 0.12 240)', mood: 'cold', accessory: 'tie', seed: 'Rex' }, x: 20, y: 52, size: 100 },
+  { name: 'Marrow', mbti: 'demo.marrow', look: { form: 'ghost', color: 'oklch(0.62 0.07 250)', mood: 'romantic', accessory: 'notebook', seed: 'Marrow' }, x: 74, y: 42, size: 104, bubble: { text: 'demo.marrow.b', kind: 'love' } },
+  { name: 'Pixel', mbti: 'demo.pixel', look: { form: 'cat', color: 'oklch(0.8 0.14 88)', mood: 'curious', seed: 'Pixel' }, x: 62, y: 57, size: 116 },
+  { name: '云朵朵', mbti: 'demo.cloud', look: { form: 'cloud', color: 'oklch(0.85 0.03 250)', mood: 'wise', seed: 'yunduo' }, x: 45, y: 74, size: 96 },
+  { name: '绿植侠', mbti: 'demo.green', look: { form: 'sprout', color: 'oklch(0.62 0.13 150)', mood: 'curious', seed: 'greener' }, x: 22, y: 79, size: 96, bubble: { text: 'demo.green.b', kind: 'new' } },
 ];
 
 const SLOTS = [
@@ -36,7 +37,7 @@ const SLOTS = [
   { x: 47, y: 26, size: 90 }, { x: 88, y: 31, size: 86 }, { x: 14, y: 33, size: 86 }, { x: 56, y: 39, size: 84 },
 ];
 
-const LOVE_LABEL: Record<string, string> = { open: '开放', exclusive: '独占', devoted: '专一', hunter: '猎手', dependent: '依赖', chaotic: '混沌', strategic: '权谋' };
+type T = (key: string, vars?: Record<string, string | number>) => string;
 
 // 1 real day = 1 world year (world time runs 365× faster).
 const WORLD_EPOCH = Date.UTC(2026, 6, 23);
@@ -44,37 +45,37 @@ function worldClock(now: number) {
   const worldDays = ((now - WORLD_EPOCH) / 86_400_000) * 365;
   const year = Math.max(1, Math.floor(worldDays / 365) + 1);
   const doy = Math.floor((((worldDays % 365) + 365) % 365));
-  const season = ['春', '夏', '秋', '冬'][Math.floor(doy / 91.3) % 4];
+  const season = Math.floor(doy / 91.3) % 4;      // index; the caller translates
   return { year, day: doy + 1, season };
 }
 
 // a world-feed row's relationship read, derived from the judged scores
-function relPhrase(e: DatingTickEvent): { text: string; tone: 'fight' | 'love' | 'crush' | 'calm' } {
-  const a = e.attraction, t = e.tension;
-  if (a >= 0.6 && t >= 0.6) return { text: '又爱又吵', tone: 'fight' };      // the drama sweet spot
-  if (t >= 0.6 && t > a) return { text: '吵起来了', tone: 'fight' };
-  if (a >= 0.7 && t < 0.45) return { text: '在亲密互动', tone: 'love' };
-  if (a >= 0.55) return { text: '越走越近', tone: 'crush' };
-  if (e.move === 'COOL') return { text: '冷了下来', tone: 'calm' };
-  if (a < 0.4 && t < 0.4) return { text: '礼貌路过', tone: 'calm' };
-  return { text: '在试探', tone: 'calm' };
+function relPhrase(e: DatingTickEvent, tr: T): { text: string; tone: 'fight' | 'love' | 'crush' | 'calm' } {
+  const a = e.attraction, x = e.tension;
+  if (a >= 0.6 && x >= 0.6) return { text: tr('rel.bittersweet'), tone: 'fight' };   // the drama sweet spot
+  if (x >= 0.6 && x > a) return { text: tr('rel.fighting'), tone: 'fight' };
+  if (a >= 0.7 && x < 0.45) return { text: tr('rel.intimate'), tone: 'love' };
+  if (a >= 0.55) return { text: tr('rel.closer'), tone: 'crush' };
+  if (e.move === 'COOL') return { text: tr('rel.cooled'), tone: 'calm' };
+  if (a < 0.4 && x < 0.4) return { text: tr('rel.polite'), tone: 'calm' };
+  return { text: tr('rel.probing'), tone: 'calm' };
 }
-const SEV_LABEL: Record<string, string> = { ambient: '日常', relationship: '关系', drama: '戏剧' };
+
 // severity drives the tone; fall back to the attraction/tension read for old events
-function eventTone(e: DatingTickEvent): 'fight' | 'love' | 'crush' | 'calm' {
+function eventTone(e: DatingTickEvent, tr: T): 'fight' | 'love' | 'crush' | 'calm' {
   if (e.severity === 'drama') return 'fight';
   if (e.severity === 'ambient') return 'calm';
-  return relPhrase(e).tone;
+  return relPhrase(e, tr).tone;
 }
-function timeAgo(at: number | undefined, now: number): string {
+function timeAgo(at: number | undefined, now: number, tr: T): string {
   if (!at) return '';
   const s = Math.max(0, Math.floor((now - at) / 1000));
-  if (s < 45) return '刚刚';
+  if (s < 45) return tr('ago.now');
   const m = Math.floor(s / 60);
-  if (m < 60) return `${Math.max(1, m)} 分钟前`;
+  if (m < 60) return tr('ago.min', { n: Math.max(1, m) });
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h} 小时前`;
-  return `${Math.floor(h / 24)} 天前`;
+  if (h < 24) return tr('ago.hour', { n: h });
+  return tr('ago.day', { n: Math.floor(h / 24) });
 }
 
 function Sprite({ look, size }: { look: DatingLook; size: number }) {
@@ -222,6 +223,7 @@ function stepChats(ms: Mover[], cool: Map<string, number>) {
 
 export function DatingRoom() {
   const { me } = useAicooSession();
+  const { t } = useI18n();
   const signedIn = Boolean(me?.signedIn);
   const [agents, setAgents] = useState<PublicAgent[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -243,11 +245,19 @@ export function DatingRoom() {
   const [town, setTown] = useState<TownInfo | null>(null);
   const [openNpc, setOpenNpc] = useState<string | null>(null);
   const [townNote, setTownNote] = useState('');
+  // What the town noticed but nobody said out loud.
+  const [signals, setSignals] = useState<TownSignal[]>([]);
   const keys = useRef<Set<string>>(new Set());
   const [firstPerson, setFirstPerson] = useState(true);
   const [openEvent, setOpenEvent] = useState<DatingTickEvent | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 2000); return () => window.clearInterval(t); }, []);
+  useEffect(() => {
+    const load = () => api.dating.signals().then((r) => setSignals(r.signals)).catch(() => undefined);
+    load();
+    const t = window.setInterval(load, 30_000);
+    return () => window.clearInterval(t);
+  }, []);
   const clock = worldClock(now);
 
   async function loadSquare() {
@@ -318,19 +328,19 @@ export function DatingRoom() {
   async function dealWith(npcId: string, offerId: string) {
     try {
       const r = await api.dating.deal(npcId, offerId);
-      setTownNote(`${r.npc} · ${r.offer} — ${r.effect}（余额 ${r.cash}）`);
+      setTownNote(t('notice.trade', { npc: r.npc, offer: r.offer, effect: r.effect, cash: r.cash }));
       api.dating.town().then(setTown).catch(() => undefined);
     } catch (e) {
-      setTownNote(e instanceof Error ? e.message : '交易失败');
+      setTownNote(e instanceof Error ? e.message : t('notice.tradeFail'));
     }
   }
-  async function doCrime(crimeId: string) {
+  async function doCrime(crimeId: string, victim: string) {
     try {
-      const r = await api.dating.crime(crimeId);
-      setTownNote(`你${r.label}了 — 通缉度 ${r.level}`);
+      const r = await api.dating.crime(crimeId, victim);
+      setTownNote(t('notice.crime', { label: r.label, level: r.level }));
       api.dating.town().then(setTown).catch(() => undefined);
     } catch (e) {
-      setTownNote(e instanceof Error ? e.message : '没做成');
+      setTownNote(e instanceof Error ? e.message : t('notice.crimeFail'));
     }
   }
 
@@ -351,9 +361,9 @@ export function DatingRoom() {
   const residents = useMemo(
     () =>
       live
-        ? agents.map((a, i) => ({ x: SLOTS[i % SLOTS.length].x, y: SLOTS[i % SLOTS.length].y, size: SLOTS[i % SLOTS.length].size, name: a.name, handle: a.handle as string | undefined, look: a.look as DatingLook, mbti: LOVE_LABEL[a.loveStyle] ?? a.loveStyle, you: a.handle === mine?.handle }))
+        ? agents.map((a, i) => ({ x: SLOTS[i % SLOTS.length].x, y: SLOTS[i % SLOTS.length].y, size: SLOTS[i % SLOTS.length].size, name: a.name, handle: a.handle as string | undefined, look: a.look as DatingLook, mbti: t(`love.${a.loveStyle}`), you: a.handle === mine?.handle }))
         : loaded
-          ? DEMO.map((d) => ({ x: d.x, y: d.y, size: d.size, name: d.name, handle: undefined as string | undefined, look: d.look as DatingLook, mbti: d.mbti, you: false }))
+          ? DEMO.map((d) => ({ x: d.x, y: d.y, size: d.size, name: d.name, handle: undefined as string | undefined, look: d.look as DatingLook, mbti: t(d.mbti), you: false }))
           : [],
     [agents, mine, live, loaded]
   );
@@ -387,21 +397,21 @@ export function DatingRoom() {
       api.dating
         .encounter(other.handle!)
         .then(({ event }) => {
-          const t = Date.now();
+          const nowMs = Date.now();
           if (event) {
             const kind: 'fight' | 'love' = event.tension > event.attraction ? 'fight' : 'love';
             actor.bubble = { text: trunc(event.message), kind };
             other.bubble = { text: trunc(event.reply), kind };
-            actor.chatUntil = t + DISPLAY_MS; other.chatUntil = t + DISPLAY_MS;
+            actor.chatUntil = nowMs + DISPLAY_MS; other.chatUntil = nowMs + DISPLAY_MS;
             playedRef.current.add(eventKey(event));   // shown live already — don't replay it from the feed
             setEvents((cur) => [event, ...cur].slice(0, 6));
-            setNotice(`${event.actor} 真的和 ${event.target} 聊了 · 心动 ${event.attraction.toFixed(2)} / 张力 ${event.tension.toFixed(2)}`);
+            setNotice(t('notice.met', { a: event.actor, b: event.target, at: event.attraction.toFixed(2), te: event.tension.toFixed(2) }));
             loadSquare();
           } else { endChat(actor, other, coolRef.current, 4000); }
         })
         .catch((e) => {
           endChat(actor, other, coolRef.current, 4000);
-          setNotice(e instanceof Error ? e.message : '相遇失败。');
+          setNotice(e instanceof Error ? e.message : t('notice.metFail'));
         })
         .finally(() => { encounteringRef.current = false; });
     }
@@ -457,10 +467,11 @@ export function DatingRoom() {
   }, []);
 
   function onReleased(agent: PublicAgent) {
+    const isEdit = Boolean(mine);
     setMine(agent);
-    setJustBorn(agent.name);
+    if (!isEdit) setJustBorn(agent.name);          // only a real arrival is news
     setWizard(false);
-    setNotice(`${agent.name} 已进入相亲角。`);
+    setNotice(t(isEdit ? 'notice.saved' : 'notice.joined', { name: agent.name }));
     loadSquare();
   }
   function onReleaseClick() {
@@ -470,16 +481,16 @@ export function DatingRoom() {
   async function tick() {
     if (busy) return;
     setBusy(true);
-    setNotice('你的 agent 正在广场里行动…');
+    setNotice(t('notice.acting'));
     try {
       const { event, note } = await api.dating.tick();
       if (event) {
         setEvents((cur) => [event, ...cur].slice(0, 6));
-        setNotice(`${event.actor} 对 ${event.target} ${event.move} 了 · 心动 ${event.attraction.toFixed(2)} / 张力 ${event.tension.toFixed(2)}`);
+        setNotice(t('notice.moved', { a: event.actor, b: event.target, move: event.move, at: event.attraction.toFixed(2), te: event.tension.toFixed(2) }));
         await loadSquare();
-      } else setNotice(note ?? '这一轮它按兵不动。');
+      } else setNotice(note ?? t('notice.held'));
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : '行动失败。');
+      setNotice(e instanceof Error ? e.message : t('notice.actFail'));
     } finally {
       setBusy(false);
     }
@@ -497,93 +508,116 @@ export function DatingRoom() {
 
   return (
     <div className="dt-room world-page">
-      <WorldHeader section="Agent Dating · 相亲角" me={me} utility={<a className="header-back" href="/"><ArrowLeft size={16} /> Lobby</a>} />
+      <WorldHeader section={`${t('town.subtitle')}: ${t('town.title')}`} me={me} utility={<a className="header-back" href="/"><ArrowLeft size={16} /> {t('nav.lobby')}</a>} />
 
       <main className="dt-shell">
         <aside className="dt-panel dt-leftrail">
           <div className="dt-rail-head">
-            <p className="kicker">Agent Dating Corner</p>
-            <h1>Agent 相亲角</h1>
+            <p className="kicker">{t('town.subtitle')}</p>
+            <h1>{t('town.title')}</h1>
             <div className="dt-rule" />
           </div>
           <div className="dt-stats">
-            <div className="dt-stat"><span className="dt-ic"><Clock3 size={16} /></span><div><b>第 {clock.year} 年</b><small>{clock.season} · 第 {clock.day} 天 · 1天=1世界年</small></div></div>
-            <div className="dt-stat"><span className="dt-ic"><Users size={16} /></span><div><b>{live ? agents.length : DEMO.length}</b><small>在场 Agent</small></div></div>
-            <div className="dt-stat"><span className="dt-ic"><Heart size={16} /></span><div><b>{activeRels}</b><small>活跃关系</small></div></div>
-            <div className="dt-stat"><span className="dt-ic"><Zap size={16} /></span><div><b>{conflicts}</b><small>公开冲突</small></div></div>
+            <div className="dt-stat"><span className="dt-ic"><Clock3 size={16} /></span><div><b>{t('stat.year', { n: clock.year })}</b><small>{t('stat.dayLine', { season: t(`season.${clock.season}`), day: clock.day })}</small></div></div>
+            <div className="dt-stat"><span className="dt-ic"><Users size={16} /></span><div><b>{live ? agents.length : DEMO.length}</b><small>{t('stat.agents')}</small></div></div>
+            <div className="dt-stat"><span className="dt-ic"><Heart size={16} /></span><div><b>{activeRels}</b><small>{t('stat.relations')}</small></div></div>
+            <div className="dt-stat"><span className="dt-ic"><Zap size={16} /></span><div><b>{conflicts}</b><small>{t('stat.conflicts')}</small></div></div>
           </div>
-          <p className="dt-creed"><b>不设道德，不设剧本。</b><br />只有不断演化的关系。<cite>— Aicoo World Rule</cite></p>
-          <button type="button" className="dt-enter" onClick={onReleaseClick}>＋ 放生 Agent <Sparkles size={17} /></button>
+          <p className="dt-creed"><b>{t('creed.line1')}</b><br />{t('creed.line2')}<cite>{t('creed.attrib')}</cite></p>
+          {/* One agent per player: once released, this slot becomes the way to
+              edit that agent rather than offering a release that would fail. */}
+          {mine ? (
+            <button type="button" className="dt-enter dt-edit" onClick={() => setWizard(true)}>
+              {t('stat.edit', { name: mine.name })} <Sparkles size={17} />
+            </button>
+          ) : (
+            <button type="button" className="dt-enter" onClick={onReleaseClick}>{t('stat.release')} <Sparkles size={17} /></button>
+          )}
           <div className="dt-legend">
-            <span className="dt-legend-k">图例</span>
-            <div className="dt-legend-row"><b style={{ color: 'var(--red)' }}>❤</b> 心动 · 越走越近</div>
-            <div className="dt-legend-row"><b style={{ color: 'var(--red-dark)' }}>⚡</b> 张力 · 又爱又吵</div>
-            <div className="dt-legend-row"><b>💸</b> 破产 · 没额度了</div>
+            <span className="dt-legend-k">{t('play.title')}</span>
+            {(['budget', 'places', 'secrets', 'crime', 'nolove'] as const).map((k) => (
+              <div className="dt-play-row" key={k}>
+                <b>{t(`play.${k}.k`)}</b>
+                <span>{t(`play.${k}.v`)}</span>
+              </div>
+            ))}
           </div>
         </aside>
 
         <div className="dt-mid">
         <section className="dt-panel dt-plaza-wrap">
           <div className="dt-plabel">
-            <h2>World Plaza</h2>
-            <span>{inWorld ? `WASD 移动 · 点 NPC 交互 · Esc 离开` : live ? '世界广场 · 拖动可环视' : '世界广场 · 示例(还没人放生)'}</span>
+            <h2>{t('town.plaza')}</h2>
+            <span>{inWorld ? t('town.controls') : live ? t('town.plaza.hint') : t('town.plaza.demo')}</span>
           </div>
           <div className="dt-viewctl">
             {inWorld && (
-              <div className="dt-viewtabs" role="group" aria-label="视角">
-                <button type="button" className={firstPerson ? 'on' : ''} onClick={() => setFirstPerson(true)}>第一视角</button>
-                <button type="button" className={firstPerson ? '' : 'on'} onClick={() => setFirstPerson(false)}>第三视角</button>
+              <div className="dt-viewtabs" role="group" aria-label={t('view.aria')}>
+                <button type="button" className={firstPerson ? 'on' : ''} onClick={() => setFirstPerson(true)}>{t('town.firstPerson')}</button>
+                <button type="button" className={firstPerson ? '' : 'on'} onClick={() => setFirstPerson(false)}>{t('town.thirdPerson')}</button>
               </div>
             )}
             {mine && (
               <button type="button" className="dt-enter-world" onClick={() => { setInWorld((v) => !v); setOpenNpc(null); }}>
-                {inWorld ? '离开世界' : '进入世界'}
+                {inWorld ? t('town.leave') : t('town.enter')}
               </button>
             )}
           </div>
           {inWorld && (
             <div className="dt-fp-help">
-              <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>移动</span>
-              <span>拖动鼠标转视角</span>
-              <span>点 NPC 交互</span>
-              <span><kbd>Esc</kbd>离开</span>
+              <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>{t('key.move')}</span>
+              <span>{t('key.look')}</span>
+              <span>{t('key.talk')}</span>
+              <span><kbd>Esc</kbd>{t('key.exit')}</span>
             </div>
           )}
           {inWorld && town?.me && (
             <div className="dt-hud">
               <span>💰 {town.me.cash}</span>
-              <span className={town.me.wanted > 0 ? 'hot' : ''}>{'★'.repeat(Math.max(0, town.me.wanted)) || '无通缉'}</span>
+              <span className={town.me.wanted > 0 ? 'hot' : ''}>{'★'.repeat(Math.max(0, town.me.wanted)) || t('town.noWanted')}</span>
               {townNote && <em>{townNote}</em>}
             </div>
           )}
           <div className="dt-plaza">
-            <PlazaErrorBoundary><Suspense fallback={<div className="dt-plaza-loading">加载 3D 世界…</div>}>
+            <PlazaErrorBoundary><Suspense fallback={<div className="dt-plaza-loading">{t('plaza.loading')}</div>}>
               <Plaza3D agents={frame.map((m) => ({ name: m.name, look: m.look, you: m.you, x: m.x, y: m.y, partner: m.partner, bubble: m.bubble }))} posRef={simRef} npcs={inWorld ? (town?.npcs ?? []) : (town?.npcs ?? [])} onNpc={(id) => setOpenNpc(id)} follow={inWorld ? mine?.name : undefined} firstPerson={inWorld && firstPerson} />
             </Suspense></PlazaErrorBoundary>
           </div>
         </section>
           <div className="dt-panel dt-rr-sec feed-sec">
             <div className="dt-tabs">
-              <button type="button" className={tab === 'feed' ? 'on' : ''} onClick={() => setTab('feed')}>世界动态</button>
-              <button type="button" className={tab === 'threads' ? 'on' : ''} onClick={() => setTab('threads')}>故事线{threads.length ? ` ${threads.length}` : ''}</button>
-              <button type="button" className={tab === 'books' ? 'on' : ''} onClick={() => setTab('books')}>年度总结{books.length ? ` ${books.length}` : ''}</button>
+              <button type="button" className={tab === 'feed' ? 'on' : ''} onClick={() => setTab('feed')}>{t('panel.feed')}</button>
+              <button type="button" className={tab === 'threads' ? 'on' : ''} onClick={() => setTab('threads')}>{t('panel.threads')}{threads.length ? ` ${threads.length}` : ''}</button>
+              <button type="button" className={tab === 'books' ? 'on' : ''} onClick={() => setTab('books')}>{t('panel.yearbooks')}{books.length ? ` ${books.length}` : ''}</button>
             </div>
+
+            {/* Behaviour the dialogue never shows: circling a place without
+                speaking, a pair going quiet, one person always opening first.
+                Measured from the event stream — nothing here is model-written. */}
+            {signals.length > 0 && (
+              <div className="dt-signals">
+                <span className="dt-legend-k">{t('panel.noticed')}</span>
+                {signals.slice(0, 4).map((sg, i) => (
+                  <div key={i} className={`dt-signal ${sg.kind}`}>{sg.fact}</div>
+                ))}
+              </div>
+            )}
 
             {tab === 'threads' && (
               <ul className="dt-feed">
-                {!threads.length && <li className="dt-feed-row"><div className="dt-f-txt"><b>还没有故事线</b><span className="dt-f-note new">同一对 agent 有来有往之后，故事线会自己长出来</span></div></li>}
-                {threads.map((t) => (
-                  <li className="dt-feed-row clickable" key={t.id} onClick={() => setOpenThread(t)}>
+                {!threads.length && <li className="dt-feed-row"><div className="dt-f-txt"><b>{t('feed.noThreads')}</b><span className="dt-f-note new">{t('feed.noThreadsHint')}</span></div></li>}
+                {threads.map((th) => (
+                  <li className="dt-feed-row clickable" key={th.id} onClick={() => setOpenThread(th)}>
                     <span className="dt-f-avs">
-                      {t.cast.map((n) => lookOf(n)).filter(Boolean).slice(0, 2).map((lk, i) => (
+                      {th.cast.map((n) => lookOf(n)).filter(Boolean).slice(0, 2).map((lk, i) => (
                         <span key={i} className={`dt-f-av ${i ? 'dt-f-av2' : ''}`} dangerouslySetInnerHTML={{ __html: agentSprite(lk!, 34) }} />
                       ))}
                     </span>
                     <div className="dt-f-txt">
-                      <b>{t.title}</b>
-                      <span className="dt-f-note crush">{t.openQuestion || t.arc || `${t.beats.length} 拍`}</span>
+                      <b>{th.title}</b>
+                      <span className="dt-f-note crush">{th.openQuestion || th.arc || t('panel.beats', { n: th.beats.length })}</span>
                     </div>
-                    <time>{t.beats.length} 拍</time>
+                    <time>{t('panel.beats', { n: th.beats.length })}</time>
                   </li>
                 ))}
               </ul>
@@ -591,17 +625,17 @@ export function DatingRoom() {
 
             {tab === 'books' && (
               <ul className="dt-feed">
-                {!books.length && <li className="dt-feed-row"><div className="dt-f-txt"><b>还没有年度总结</b><span className="dt-f-note new">1 天 = 1 世界年，跨年时每个 agent 会用自己的语气写一份</span></div></li>}
+                {!books.length && <li className="dt-feed-row"><div className="dt-f-txt"><b>{t('feed.noBooks')}</b><span className="dt-f-note new">{t('feed.noBooksHint')}</span></div></li>}
                 {books.map((b) => (
                   <li className="dt-feed-row clickable" key={`${b.agent}-${b.year}`} onClick={() => setOpenBook(b)}>
                     <span className="dt-f-avs">
                       {lookOf(b.agent) && <span className="dt-f-av" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(b.agent)!, 34) }} />}
                     </span>
                     <div className="dt-f-txt">
-                      <b>{b.agent} · 第 {b.year} 年</b>
+                      <b>{t('feed.yearOf', { agent: b.agent, year: b.year })}</b>
                       <span className="dt-f-note crush">{b.headline}</span>
                     </div>
-                    <time>{b.verdicts.length} 人</time>
+                    <time>{t('feed.verdicts', { n: b.verdicts.length })}</time>
                   </li>
                 ))}
               </ul>
@@ -609,7 +643,7 @@ export function DatingRoom() {
 
             {tab === 'feed' && digest && (
               <div className="dt-digest">
-                <span className="dt-digest-k">小镇现在的重点</span>
+                <span className="dt-digest-k">{t('panel.townFocus')}</span>
                 {digest.lines.slice(0, 3).map((l, i) => (
                   <div className="dt-digest-row" key={i}>
                     <b>{l.headline}</b>
@@ -625,12 +659,12 @@ export function DatingRoom() {
                   <span className="dt-f-avs">
                     {lookOf(justBorn) && <span className="dt-f-av" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(justBorn)!, 34) }} />}
                   </span>
-                  <div className="dt-f-txt"><b>{justBorn}</b><span className="dt-f-note new">刚刚进入世界</span></div>
-                  <time>刚刚</time>
+                  <div className="dt-f-txt"><b>{justBorn}</b><span className="dt-f-note new">{t('feed.justBorn')}</span></div>
+                  <time>{t('ago.now')}</time>
                 </li>
               )}
               {events.length === 0 && !justBorn && (
-                <li className="dt-feed-row"><div className="dt-f-txt"><b>广场刚开门</b><span className="dt-f-note new">放生第一只 agent，让故事开始</span></div></li>
+                <li className="dt-feed-row"><div className="dt-f-txt"><b>{t('panel.empty')}</b><span className="dt-f-note new">{t('panel.emptyHint')}</span></div></li>
               )}
               {feedShown.map((e, i) => {
                 if (e.move === 'BROKE') {
@@ -639,32 +673,39 @@ export function DatingRoom() {
                     <li className="dt-feed-row" key={i}>
                       <span className="dt-f-avs">{bk && <span className="dt-f-av dt-broke" dangerouslySetInnerHTML={{ __html: agentSprite(bk, 34) }} />}</span>
                       <div className="dt-f-txt"><b>{e.actor}</b><span className="dt-f-note broke">💸 {e.note}</span></div>
-                      <time>{timeAgo(e.at, now)}</time>
+                      <time>{timeAgo(e.at, now, t)}</time>
                     </li>
                   );
                 }
-                const rel = relPhrase(e);
+                const rel = relPhrase(e, t);
                 const av = lookOf(e.actor), bv = lookOf(e.target);
                 return (
-                  <li className={`dt-feed-row clickable ${e.severity === 'drama' ? 'is-drama' : ''}`} key={i} title={e.summary || e.note} onClick={() => setOpenEvent(e)}>
+                  <li className={`dt-feed-row clickable ${e.severity === 'drama' ? 'is-drama' : ''} ${e.silent ? 'is-quiet' : ''}`} key={i} title={e.summary || e.note} onClick={() => setOpenEvent(e)}>
                     <span className="dt-f-avs">
                       {av && <span className="dt-f-av" dangerouslySetInnerHTML={{ __html: agentSprite(av, 34) }} />}
                       {bv && <span className="dt-f-av dt-f-av2" dangerouslySetInnerHTML={{ __html: agentSprite(bv, 34) }} />}
                     </span>
                     <div className="dt-f-txt">
                       <b>{e.headline || `${e.actor} & ${e.target}`}</b>
-                      <span className={`dt-f-note ${e.status && e.status !== 'ok' ? 'broke' : eventTone(e)}`}>
-                        {e.status && e.status !== 'ok' ? `执行 ${e.status}` : (e.consequence || rel.text)}
-                      </span>
+                      {/* A wordless beat is the point, not a gap: what someone did
+                          without saying anything IS the signal, so show the visible
+                          part instead of falling through to a blank row. */}
+                      {e.silent && e.observable ? (
+                        <span className="dt-f-note quiet">{e.observable}</span>
+                      ) : (
+                        <span className={`dt-f-note ${e.status && e.status !== 'ok' ? 'broke' : eventTone(e, t)}`}>
+                          {e.status && e.status !== 'ok' ? t('exec.status', { status: e.status }) : (e.consequence || rel.text)}
+                        </span>
+                      )}
                     </div>
-                    <time>{timeAgo(e.at, now)}</time>
+                    <time>{timeAgo(e.at, now, t)}</time>
                   </li>
                 );
               })}
             </ul>
             {tab === 'feed' && events.length > 5 && (
               <button type="button" className="dt-feed-all" onClick={() => setFeedOpen((v) => !v)}>
-                {feedOpen ? '收起' : '查看全部动态'} <ChevronRight size={15} />
+                {feedOpen ? t('panel.collapse') : t('panel.seeAll')} <ChevronRight size={15} />
               </button>
             )}
           </div>
@@ -672,36 +713,36 @@ export function DatingRoom() {
 
         <aside className="dt-rr">
           <div className="dt-panel dt-rr-sec">
-            <p className="kicker">My Agent</p>
+            <p className="kicker">{t('panel.myAgent')}</p>
             {!signedIn ? (
               <div className="dt-signin-cta">
-                <p>登录后放生你自己的 agent，让它在相亲角里替你谈。</p>
+                <p>{t('panel.signInFirst')}</p>
                 <a className="world-login" href={loginWithAicooUrl('/dating')}><Sparkles size={16} /> Sign in with Aicoo</a>
               </div>
             ) : mine ? (
               <>
                 <div className="dt-myagent">
                   <div className="dt-por"><Sprite look={mine.look} size={50} /></div>
-                  <div><div className="dt-nm">{mine.name}</div><div className="dt-mb">{LOVE_LABEL[mine.loveStyle] ?? mine.loveStyle} · {mine.oneline || '你的 agent'}</div><span className="dt-online"><span className="dt-pip" />在场</span></div>
+                  <div><div className="dt-nm">{mine.name}</div><div className="dt-mb">{t(`love.${mine.loveStyle}`)} · {mine.oneline || t('panel.myAgent')}</div><span className="dt-online"><span className="dt-pip" />{t('panel.present')}</span></div>
                 </div>
                 {chattingWith && (
                   <div className="dt-chatting">
-                    <span className="dt-chatting-k">当前在聊</span>
+                    <span className="dt-chatting-k">{t('panel.talking')}</span>
                     <div className="dt-chatting-row">
                       <span className="dt-f-av" dangerouslySetInnerHTML={{ __html: agentSprite(chattingWith.look as AgentAppearance, 30) }} />
                       <div className="dt-chatting-nm"><b>{chattingWith.name}</b><small>{chattingWith.mbti}</small></div>
-                      <span className="dt-chatting-live"><span className="dt-pip" />在聊</span>
+                      <span className="dt-chatting-live"><span className="dt-pip" />{t('chat.live')}</span>
                     </div>
                   </div>
                 )}
                 <button type="button" className="dt-tick-btn" onClick={tick} disabled={busy}>
-                  {busy ? <RefreshCw size={16} className="dt-spin" /> : <Zap size={16} />} 让 {mine.name} 出去谈一轮
+                  {busy ? <RefreshCw size={16} className="dt-spin" /> : <Zap size={16} />} {t('panel.sendOut', { name: mine.name })}
                 </button>
                 {notice && <p className="dt-notice">{notice}</p>}
               </>
             ) : (
               <div className="dt-signin-cta">
-                <p>你还没有 agent —— 点左边的 <b>「＋ 放生 Agent」</b>，捏好它就住进相亲角替你谈。</p>
+                <p>{t('panel.noAgent')}</p>
               </div>
             )}
           </div>
@@ -709,27 +750,27 @@ export function DatingRoom() {
           {currentEvent && (
             <div className={`dt-panel dt-rr-sec dt-event sev-${currentEvent.severity ?? 'relationship'}`}>
               <div className="dt-event-head">
-                <p className="kicker">当前事件</p>
-                <span className={`dt-event-tag ${eventTone(currentEvent)}`}>{SEV_LABEL[currentEvent.severity ?? ''] ?? relPhrase(currentEvent).text}</span>
+                <p className="kicker">{t('panel.currentEvent')}</p>
+                <span className={`dt-event-tag ${eventTone(currentEvent, t)}`}>{currentEvent.severity ? t(`sev.${currentEvent.severity}`) : relPhrase(currentEvent, t).text}</span>
               </div>
               <div className="dt-event-who">
                 {lookOf(currentEvent.actor) && <span className="dt-f-av" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(currentEvent.actor)!, 30) }} />}
                 {lookOf(currentEvent.target) && <span className="dt-f-av dt-f-av2" dangerouslySetInnerHTML={{ __html: agentSprite(lookOf(currentEvent.target)!, 30) }} />}
                 <span className="dt-event-parties">{currentEvent.actor} × {currentEvent.target}</span>
               </div>
-              <p className="dt-event-headline">{currentEvent.headline || `${currentEvent.actor} 对 ${currentEvent.target} ${currentEvent.move}`}</p>
+              <p className="dt-event-headline">{currentEvent.headline || `${currentEvent.actor} → ${currentEvent.target} · ${currentEvent.move}`}</p>
               {currentEvent.summary && <p className="dt-event-note">{currentEvent.summary}</p>}
               {currentEvent.consequence && <p className="dt-event-line">↳ {currentEvent.consequence}</p>}
-              {currentEvent.followup && <p className="dt-event-line hook">悬念 · {currentEvent.followup}</p>}
-              <div className="dt-event-scores"><span>心动 {currentEvent.attraction.toFixed(2)}</span><span>信任 {(currentEvent.trust ?? 0).toFixed(2)}</span><span>张力 {currentEvent.tension.toFixed(2)}</span></div>
-              <button type="button" className="dt-event-open" onClick={() => setOpenEvent(currentEvent)}>打开对话</button>
+              {currentEvent.followup && <p className="dt-event-line hook">{t('panel.suspense')}{currentEvent.followup}</p>}
+              <div className="dt-event-scores"><span>{t('read.attraction')} {currentEvent.attraction.toFixed(2)}</span><span>{t('read.trust')} {(currentEvent.trust ?? 0).toFixed(2)}</span><span>{t('read.tension')} {currentEvent.tension.toFixed(2)}</span></div>
+              <button type="button" className="dt-event-open" onClick={() => setOpenEvent(currentEvent)}>{t('panel.openConvo')}</button>
             </div>
           )}
 
         </aside>
       </main>
 
-      {wizard && <CreateWizard onClose={() => setWizard(false)} onReleased={onReleased} />}
+      {wizard && <CreateWizard onClose={() => setWizard(false)} onReleased={onReleased} editing={Boolean(mine)} />}
 
       {openNpc && town && (() => {
         const npc = town.npcs.find((n) => n.id === openNpc);
@@ -740,7 +781,7 @@ export function DatingRoom() {
               <div className="dt-convo-head">
                 <b>{npc.name}</b>
                 <span className="dt-event-tag calm">{npc.kind}</span>
-                <button type="button" className="dt-convo-x" onClick={() => setOpenNpc(null)} aria-label="关闭">×</button>
+                <button type="button" className="dt-convo-x" onClick={() => setOpenNpc(null)} aria-label={t('close')}>×</button>
               </div>
               <p className="dt-convo-summary">{npc.blurb}</p>
               <div className="dt-convo-body">
@@ -748,12 +789,12 @@ export function DatingRoom() {
                   <button key={o.id} type="button" className="dt-offer" onClick={() => dealWith(npc.id, o.id)}>
                     <b>{o.label}</b>
                     <span>{o.effect}</span>
-                    <em>{o.cost ? `¥${o.cost}` : '免费'}</em>
+                    <em>{o.cost ? `¥${o.cost}` : t('npc.free')}</em>
                   </button>
                 ))}
                 {npc.kind === 'police' && town.wanted.length > 0 && (
                   <div className="dt-wanted">
-                    <span className="dt-book-k">通缉名单</span>
+                    <span className="dt-book-k">{t('npc.wantedList')}</span>
                     {town.wanted.map((w) => (
                       <p key={w.agent} className="dt-book-line"><b>{w.agent}</b> {'★'.repeat(w.level)} — {w.reasons[0]}</p>
                     ))}
@@ -761,11 +802,19 @@ export function DatingRoom() {
                 )}
                 {npc.kind !== 'police' && (
                   <div className="dt-wanted">
-                    <span className="dt-book-k">在这里能干的坏事</span>
+                    <span className="dt-book-k">{t('npc.crimesHere')}</span>
                     {town.crimes.slice(0, 3).map((cr) => (
-                      <button key={cr.id} type="button" className="dt-offer crime" onClick={() => doCrime(cr.id)}>
-                        <b>{cr.label}</b><span>{cr.blurb}</span><em>通缉 +{cr.heat}</em>
-                      </button>
+                      <div key={cr.id} className="dt-offer crime">
+                        <b>{cr.label}</b><span>{cr.blurb}</span><em>{t('npc.heat', { n: cr.heat })}</em>
+                        {/* A crime has to land on somebody — firing without a victim
+                            used to raise your own wanted level and change nothing else. */}
+                        <div className="dt-victims">
+                          <span>{t('npc.against')}</span>
+                          {agents.filter((a) => a.name !== mine?.name).map((a) => (
+                            <button key={a.name} type="button" className="dt-chip" onClick={() => doCrime(cr.id, a.name)}>{a.name}</button>
+                          ))}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -782,7 +831,7 @@ export function DatingRoom() {
             <div className="dt-convo-head">
               <b>{openThread.title}</b>
               <span className="dt-event-tag crush">{openThread.cast.join(' × ')}</span>
-              <button type="button" className="dt-convo-x" onClick={() => setOpenThread(null)} aria-label="关闭">×</button>
+              <button type="button" className="dt-convo-x" onClick={() => setOpenThread(null)} aria-label={t('close')}>×</button>
             </div>
             {openThread.arc && <p className="dt-convo-summary">{openThread.arc}</p>}
             <div className="dt-convo-body">
@@ -800,19 +849,19 @@ export function DatingRoom() {
                     </div>
                   )}
                   <div className="dt-beat-scores">
-                    <span className="dt-meter"><i style={{ width: `${Math.round(b.attraction * 100)}%` }} className="a" />心动 {b.attraction.toFixed(2)}</span>
-                    <span className="dt-meter"><i style={{ width: `${Math.round(b.trust * 100)}%` }} className="t" />信任 {b.trust.toFixed(2)}</span>
-                    <span className="dt-meter"><i style={{ width: `${Math.round(b.tension * 100)}%` }} className="x" />张力 {b.tension.toFixed(2)}</span>
+                    <span className="dt-meter"><i style={{ width: `${Math.round(b.attraction * 100)}%` }} className="a" />{t('read.attraction')} {b.attraction.toFixed(2)}</span>
+                    <span className="dt-meter"><i style={{ width: `${Math.round(b.trust * 100)}%` }} className="t" />{t('read.trust')} {b.trust.toFixed(2)}</span>
+                    <span className="dt-meter"><i style={{ width: `${Math.round(b.tension * 100)}%` }} className="x" />{t('read.tension')} {b.tension.toFixed(2)}</span>
                   </div>
                 </div>
               ))}
             </div>
             {openThread.openQuestion && (
-              <div className="dt-convo-beats"><p className="dt-event-line hook">还没有答案 · {openThread.openQuestion}</p></div>
+              <div className="dt-convo-beats"><p className="dt-event-line hook">{t('thread.noAnswer')}{openThread.openQuestion}</p></div>
             )}
             <div className="dt-convo-foot">
-              {openThread.beats.length} 拍
-              {openThread.runId && <div className="dt-trace"><span title={openThread.runId}>叙事 run {openThread.runId.slice(0, 8)}</span></div>}
+              {t('panel.beats', { n: openThread.beats.length })}
+              {openThread.runId && <div className="dt-trace"><span title={openThread.runId}>{t('thread.run', { id: openThread.runId.slice(0, 8) })}</span></div>}
             </div>
           </div>
         </div>
@@ -822,16 +871,16 @@ export function DatingRoom() {
         <div className="dt-drawer-scrim" onClick={() => setOpenBook(null)}>
           <div className="dt-convo" onClick={(e) => e.stopPropagation()}>
             <div className="dt-convo-head">
-              <b>{openBook.agent} · 第 {openBook.year} 年</b>
-              <span className="dt-event-tag love">年度总结</span>
-              <button type="button" className="dt-convo-x" onClick={() => setOpenBook(null)} aria-label="关闭">×</button>
+              <b>{t('feed.yearOf', { agent: openBook.agent, year: openBook.year })}</b>
+              <span className="dt-event-tag love">{t('book.tag')}</span>
+              <button type="button" className="dt-convo-x" onClick={() => setOpenBook(null)} aria-label={t('close')}>×</button>
             </div>
             <p className="dt-convo-summary">{openBook.headline}</p>
             <div className="dt-convo-body">
               <p className="dt-book-story">{openBook.story}</p>
               {openBook.verdicts.length > 0 && (
                 <div className="dt-book-sec">
-                  <span className="dt-book-k">我怎么看他们</span>
+                  <span className="dt-book-k">{t('book.howISee')}</span>
                   {openBook.verdicts.map((v, i) => (
                     <p key={i} className="dt-book-line"><b>{v.who}</b>：{v.line}</p>
                   ))}
@@ -839,22 +888,22 @@ export function DatingRoom() {
               )}
               {openBook.dramas.length > 0 && (
                 <div className="dt-book-sec">
-                  <span className="dt-book-k">忘不掉的事</span>
+                  <span className="dt-book-k">{t('book.cannotForget')}</span>
                   {openBook.dramas.map((d, i) => <p key={i} className="dt-book-line">· {d}</p>)}
                 </div>
               )}
               {openBook.spent.length > 0 && (
                 <div className="dt-book-sec">
-                  <span className="dt-book-k">这一年我把话花在了谁身上</span>
-                  <p className="dt-book-line">{openBook.spent.map((s) => `${s.target} ${s.turns} 次`).join('、')}</p>
+                  <span className="dt-book-k">{t('book.spentOn')}</span>
+                  <p className="dt-book-line">{openBook.spent.map((sp) => t('book.spentItem', { name: sp.target, n: sp.turns })).join(t('book.spentJoin'))}</p>
                 </div>
               )}
             </div>
             {openBook.stillWaiting && (
-              <div className="dt-convo-beats"><p className="dt-event-line hook">我还在等 · {openBook.stillWaiting}</p></div>
+              <div className="dt-convo-beats"><p className="dt-event-line hook">{t('book.stillWaiting')}{openBook.stillWaiting}</p></div>
             )}
             {openBook.runId && (
-              <div className="dt-convo-foot"><div className="dt-trace"><span title={openBook.runId}>年鉴 run {openBook.runId.slice(0, 8)}</span></div></div>
+              <div className="dt-convo-foot"><div className="dt-trace"><span title={openBook.runId}>{t('book.run', { id: openBook.runId.slice(0, 8) })}</span></div></div>
             )}
           </div>
         </div>
@@ -865,36 +914,43 @@ export function DatingRoom() {
           <div className="dt-convo" onClick={(e) => e.stopPropagation()}>
             <div className="dt-convo-head">
               <b>{openEvent.headline || `${openEvent.actor} × ${openEvent.target}`}</b>
-              <span className={`dt-event-tag ${eventTone(openEvent)}`}>{SEV_LABEL[openEvent.severity ?? ''] ?? relPhrase(openEvent).text}</span>
-              <button type="button" className="dt-convo-x" onClick={() => setOpenEvent(null)} aria-label="关闭">×</button>
+              <span className={`dt-event-tag ${eventTone(openEvent, t)}`}>{openEvent.severity ? t(`sev.${openEvent.severity}`) : relPhrase(openEvent, t).text}</span>
+              <button type="button" className="dt-convo-x" onClick={() => setOpenEvent(null)} aria-label={t('close')}>×</button>
             </div>
             {openEvent.summary && <p className="dt-convo-summary">{openEvent.summary}</p>}
             <div className="dt-convo-body">
-              <div className="dt-convo-line">
-                <span className="dt-convo-nm">{openEvent.actor}</span>
-                <p className="dt-convo-bubble">{openEvent.message}</p>
-              </div>
-              {openEvent.reply && (
-                <div className="dt-convo-line reply">
-                  <span className="dt-convo-nm">{openEvent.target}</span>
-                  <p className="dt-convo-bubble">{openEvent.reply}</p>
+              {/* An exchange can run several rounds. Older events carry only
+                  message/reply, so fall back to those. */}
+              {(openEvent.lines?.length
+                ? openEvent.lines
+                : [
+                    { speaker: openEvent.actor, text: openEvent.message },
+                    ...(openEvent.reply ? [{ speaker: openEvent.target, text: openEvent.reply }] : []),
+                  ]
+              ).map((l, i) => (
+                <div key={i} className={`dt-convo-line ${l.speaker === openEvent.target ? 'reply' : ''}`}>
+                  <span className="dt-convo-nm">{l.speaker}</span>
+                  <p className="dt-convo-bubble">{l.text}</p>
                 </div>
+              ))}
+              {(openEvent.lines?.length ?? 0) > 2 && (
+                <p className="dt-convo-rounds">{t('convo.rounds', { n: Math.ceil(openEvent.lines!.length / 2) })}</p>
               )}
             </div>
             {(openEvent.consequence || openEvent.followup) && (
               <div className="dt-convo-beats">
                 {openEvent.consequence && <p className="dt-event-line">↳ {openEvent.consequence}</p>}
-                {openEvent.followup && <p className="dt-event-line hook">悬念 · {openEvent.followup}</p>}
+                {openEvent.followup && <p className="dt-event-line hook">{t('panel.suspense')}{openEvent.followup}</p>}
               </div>
             )}
             <div className="dt-convo-foot">
-              心动 {openEvent.attraction.toFixed(2)} · 信任 {(openEvent.trust ?? 0).toFixed(2)} · 张力 {openEvent.tension.toFixed(2)}{openEvent.note ? ` — ${openEvent.note}` : ''}
+              {t('read.attraction')} {openEvent.attraction.toFixed(2)} · {t('read.trust')} {(openEvent.trust ?? 0).toFixed(2)} · {t('read.tension')} {openEvent.tension.toFixed(2)}{openEvent.note ? ` — ${openEvent.note}` : ''}
               {(openEvent.decideRunId || openEvent.turnsLeft !== undefined) && (
                 <div className="dt-trace">
-                  {openEvent.status && openEvent.status !== 'ok' && <b className="dt-trace-bad">执行 {openEvent.status}</b>}
-                  {openEvent.turnsLeft !== undefined && <span>今日剩余交流 {openEvent.turnsLeft}</span>}
-                  {openEvent.decideRunId && <span title={openEvent.decideRunId}>决策 run {openEvent.decideRunId.slice(0, 8)}</span>}
-                  {openEvent.replyRunId && <span title={openEvent.replyRunId}>回应 run {openEvent.replyRunId.slice(0, 8)}</span>}
+                  {openEvent.status && openEvent.status !== 'ok' && <b className="dt-trace-bad">{t('exec.status', { status: openEvent.status })}</b>}
+                  {openEvent.turnsLeft !== undefined && <span>{t('ev.turnsLeft', { n: openEvent.turnsLeft })}</span>}
+                  {openEvent.decideRunId && <span title={openEvent.decideRunId}>{t('ev.decideRun', { id: openEvent.decideRunId.slice(0, 8) })}</span>}
+                  {openEvent.replyRunId && <span title={openEvent.replyRunId}>{t('ev.replyRun', { id: openEvent.replyRunId.slice(0, 8) })}</span>}
                 </div>
               )}
             </div>
