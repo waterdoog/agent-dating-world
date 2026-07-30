@@ -174,6 +174,10 @@ export interface RelRow {
   attraction: number;
   trust: number;
   tension: number;
+  /** 好奇 · 依恋 · 占有欲 — the three dimensions beyond the original three. */
+  curiosity?: number;
+  attachment?: number;
+  possessiveness?: number;
   note: string;
   at?: number;
   beats?: number;
@@ -184,12 +188,16 @@ export interface RelRow {
 export async function loadRels(agent: string): Promise<RelRow[]> {
   const sql = database();
   const rows = await sql`
-    SELECT other, attraction, trust, tension, note, at, beats, guess_attraction, guess_trust
+    SELECT other, attraction, trust, tension, curiosity, attachment, possessiveness,
+           note, at, beats, guess_attraction, guess_trust
       FROM virtual_n1.town_relationships WHERE agent = ${key(agent)}
   `;
   return rows.map((r) => ({
     handle: r.other,
     attraction: r.attraction, trust: r.trust, tension: r.tension,
+    curiosity: r.curiosity ?? undefined,
+    attachment: r.attachment ?? undefined,
+    possessiveness: r.possessiveness ?? undefined,
     note: r.note ?? '',
     at: r.at ? new Date(r.at).getTime() : undefined,
     beats: r.beats,
@@ -203,13 +211,18 @@ export async function saveRel(agent: string, rel: RelRow): Promise<void> {
   const sql = database();
   await sql`
     INSERT INTO virtual_n1.town_relationships
-      (agent, other, attraction, trust, tension, note, at, beats, guess_attraction, guess_trust)
+      (agent, other, attraction, trust, tension, curiosity, attachment, possessiveness,
+       note, at, beats, guess_attraction, guess_trust)
     VALUES (
       ${key(agent)}, ${key(rel.handle)}, ${rel.attraction}, ${rel.trust}, ${rel.tension},
+      ${rel.curiosity ?? null}, ${rel.attachment ?? null}, ${rel.possessiveness ?? null},
       ${rel.note ?? ''}, now(), 1, ${rel.guessAttraction ?? null}, ${rel.guessTrust ?? null}
     )
     ON CONFLICT (agent, other) DO UPDATE SET
       attraction = ${rel.attraction}, trust = ${rel.trust}, tension = ${rel.tension},
+      curiosity = ${rel.curiosity ?? null},
+      attachment = ${rel.attachment ?? null},
+      possessiveness = ${rel.possessiveness ?? null},
       note = ${rel.note ?? ''}, at = now(),
       beats = virtual_n1.town_relationships.beats + 1,
       guess_attraction = ${rel.guessAttraction ?? null},
@@ -273,6 +286,36 @@ export async function recentEvents(limit = 40): Promise<Record<string, unknown>[
     decideRunId: r.decide_run_id, replyRunId: r.reply_run_id, status: r.status,
     at: new Date(r.at).getTime(),
   }));
+}
+
+/**
+ * Where this agent habitually goes.
+ *
+ * A "routine" is not something to configure — it is what the agent has actually
+ * been doing, read back out of the event stream. That makes a deviation from it
+ * measurable rather than asserted: "Kehan 改了路线，经过东广场两次" is only a
+ * story if there is a route it normally takes.
+ */
+export async function habitOf(agent: string, since = 7 * 24 * 3600_000): Promise<Array<{ place: string; visits: number }>> {
+  const sql = database();
+  const rows = await sql`
+    SELECT destination AS place, count(*)::int AS visits
+      FROM virtual_n1.town_events
+     WHERE actor = ${agent} AND destination IS NOT NULL
+       AND at > now() - ${`${Math.round(since / 1000)} seconds`}::interval
+     GROUP BY destination ORDER BY visits DESC
+  `;
+  return rows.map((r) => ({ place: r.place as string, visits: r.visits as number }));
+}
+
+/** Who else was recorded at a place recently — the basis for a real run-in. */
+export async function whoWasAt(place: string, withinMs = 20 * 60_000): Promise<string[]> {
+  const sql = database();
+  const rows = await sql`
+    SELECT DISTINCT actor FROM virtual_n1.town_events
+     WHERE destination = ${place} AND at > now() - ${`${Math.round(withinMs / 1000)} seconds`}::interval
+  `;
+  return rows.map((r) => r.actor as string);
 }
 
 /** Beats between one pair, newest first — what the trajectory detectors read. */

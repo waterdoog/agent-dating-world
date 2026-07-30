@@ -98,9 +98,14 @@ interface Mover {
   bubble?: { text: string; kind: 'fight' | 'love' | 'new' };
 }
 // mirrors server/modules/dating/town-map.ts — agents walk to the place a beat names
+// All eight places an agent can name, matching town-map.ts. Three of them
+// (market, alley, backalley) existed on the server but had no coordinate here,
+// so a beat that happened there could never be walked to on screen.
 const PLACE_XY: Record<string, { x: number; y: number }> = {
-  plaza: { x: 50, y: 50 }, fountain: { x: 50, y: 44 }, bar: { x: 74, y: 28 },
-  florist: { x: 24, y: 30 }, bench: { x: 20, y: 66 }, clock: { x: 50, y: 76 },
+  plaza: { x: 52, y: 46 }, fountain: { x: 50, y: 44 },
+  clock: { x: 30, y: 40 }, market: { x: 34, y: 18 }, alley: { x: 47, y: 22 },
+  bar: { x: 76, y: 44 }, backalley: { x: 84, y: 58 },
+  bench: { x: 26, y: 72 }, florist: { x: 34, y: 18 },
 };
 const BOUNDS = { minX: 10, maxX: 89, minY: 17, maxY: 82 };
 const SPEED = 0.62;       // top walking speed

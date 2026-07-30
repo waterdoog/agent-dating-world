@@ -27,6 +27,7 @@ import { remaining, reserveTurn, refundTurn } from './budget.js';
 import { absorb, narrate, knownTo, duplicatePromises, recordKnowledge } from './threads.js';
 import { commitCrime, falloutOf, wantedLevel, NPCS, npcNow, livePositions, balance, spend, carrying, give, resolveOffer, npcRecalls, type OfferKind } from './town-life.js';
 import { placeAt, townBrief, routeHint } from './town-map.js';
+import { townNow, SHIFT_MOOD } from './town-clock.js';
 import { remember, recall, recallMany, searchMemory } from './memory.js';
 import * as townDb from './town-repository.js';
 import { detectTriangles } from './detectors.js';
@@ -187,8 +188,23 @@ CRIME 越界（steal-letter 偷情书｜stage-scene 让人撞见｜bribe-vendor 
  - 对方连着两次没照做，那就是他的回答——按它行动，不要继续等。
  - 超过三拍还在同一个僵局：**禁止**继续逼问，只能落地／断掉／退出／转向别人。
 
-📍 如果你的 act 涉及地点，要说出具体是哪儿（酒馆／花摊／长椅公园／钟楼／广场／暗巷）。
-公开场合说的话全镇都知道；酒馆后门和钟楼背面没人听得见。挑地方就是态度。
+📍 **每一拍你都在某个地方**，用 place 字段说出是哪儿：
+plaza 中央广场／clock 钟楼／market 商业街／alley 暗巷／bar 酒馆／backalley 酒馆后巷／bench 长椅公园／florist 花摊
+
+**去哪本身就是一个动作**，不需要配台词:
+· 去你干活的地方 —— 你有自己的营生，去做它是完整的一拍
+· 绕路经过某人常在的地方 —— 你什么都不用说，去了就是信号
+· 待在能看见他的地方，但不上前
+· 换个地方躲开某人
+
+公开场合(广场、商业街)说的话全镇都知道；酒馆后巷和钟楼背面没人听得见。
+**挑哪儿就是你的态度**：想让谁难堪就在公开的地方说，想护着谁就挑没人的地方。
+
+⏰ **约时间要用小镇的时段**（早上／下午／傍晚／深夜），不要说"九点"这种没有对应的钟点。
+约了之后是真的会到那个时段的：你可以提前去等、可以去了发现人没来、也可以自己不去。
+上面写着你**平时常去哪**——一直走同一条路是常态，
+而突然绕去某个平时不去的地方、或者在别人常在的地方多待一会儿，**是会被看见的**。
+这种事不需要配台词，去了就是信号。
 
 这一拍**改变了多少**（增减量，-0.3 ~ +0.3，没变就填 0）：
  - dAttraction / dTrust / dTension
@@ -205,18 +221,35 @@ CRIME 越界（steal-letter 偷情书｜stage-scene 让人撞见｜bribe-vendor 
 你不需要让这一拍"够精彩"。真实比精彩重要。
 
 按这个格式回答：
-{ "act": "<上面词汇表里的一个>", "move": "<关系动作>", "crime": "<仅当 move=CRIME>", "target": "<handle>", "message": "<第一人称对他说的话；没开口就留空字符串>", "observable": "<别人能看见的那一部分，一句话；没人看见就留空>", "note": "<3-6 字，你自己心里怎么定义这一拍>" }`;
+{ "act": "<上面词汇表里的一个>", "move": "<关系动作>", "crime": "<仅当 move=CRIME>", "target": "<handle>", "place": "<上面八个地点 id 之一>", "message": "<第一人称对他说的话；没开口就留空字符串>", "observable": "<别人能看见的那一部分，一句话；没人看见就留空>", "note": "<3-6 字，你自己心里怎么定义这一拍>" }`;
 
 export interface Rel {
   handle: string;
   attraction: number;   // desire / pull
   trust: number;        // how safe & reliable they feel (betrayal drives this down)
   tension: number;      // friction / rivalry / threat
+  /**
+   * 好奇 · 依恋 · 占有欲 — the rest of the five dimensions.
+   *
+   * Three numbers could not tell "患得患失" (high attraction, low trust) apart
+   * from "好朋友" (high trust, low attraction) in terms of what an agent would
+   * DO about it. Tension stays alongside them as a sixth: the five are how I
+   * feel about you, tension is the friction between us, and it is load-bearing
+   * for the saturation brake, the stage gate and the feed's conflict count.
+   *
+   * Optional because existing rows predate them; `seedDimensions` fills them in
+   * from real data on first read rather than guessing.
+   */
+  curiosity?: number;      // 好奇 — starts high with a stranger, fades with familiarity
+  attachment?: number;     // 依恋 — grows with real interactions
+  possessiveness?: number; // 占有欲 — no honest source, starts neutral
   note: string;
   /** When this relationship last moved — decay is measured from here. */
   at?: number;
   /** Consecutive beats spent pinned at high tension, for the saturation breaker. */
   stuck?: number;
+  /** How many real exchanges this pair has had — the honest source for 依恋. */
+  beats?: number;
   /**
    * Theory of mind — what this agent GUESSES the other feels back. Kept apart
    * from the real reading on purpose: the gap between guess and truth is the
@@ -333,6 +366,10 @@ export interface TickEvent {
   /** The actor's guess at how the target feels about it (theory of mind). */
   guessAttraction?: number;
   guessTrust?: number;
+  /** 好奇 · 依恋 · 占有欲 — the readings beyond attraction/trust/tension. */
+  curiosity?: number;
+  attachment?: number;
+  possessiveness?: number;
   /** First line and first reply. Kept so existing feed/plaza code is unchanged. */
   message: string;
   reply: string;
@@ -400,6 +437,33 @@ function decayOne(v: number, rest: number, rate: number, hours: number): number 
   return v > rest ? Math.max(rest, v - pull) : Math.min(rest, v + pull);
 }
 
+/**
+ * Fill in the three new dimensions for a relationship that predates them.
+ *
+ * Nothing is invented: 依恋 comes from `beats`, the real count of exchanges this
+ * pair has had; 好奇 is high for a new acquaintance and decays as that count
+ * rises, matching the "注意期" stage; 占有欲 has no honest source in the old data,
+ * so it starts neutral and has to grow through what actually happens.
+ */
+function seedDimensions(r: Rel): Rel {
+  if (r.curiosity !== undefined && r.attachment !== undefined && r.possessiveness !== undefined) return r;
+  // `beats` counts saveRel calls, not conversations — an old pair sits in the
+  // hundreds. A linear reading of it pinned curiosity at 0 and attachment at
+  // its ceiling for every relationship at once, which is no information at all.
+  // A logarithmic curve keeps early beats meaningful and long histories apart.
+  const beats = r.beats ?? 0;
+  const familiarity = Math.min(1, Math.log10(beats + 1) / 2);   // 0 → 0, 10 → 0.5, 100 → 1
+  return {
+    ...r,
+    // Curiosity fades with familiarity but never fully dies while attraction lives.
+    curiosity: r.curiosity ?? clamp01(0.75 - familiarity * 0.5 + r.attraction * 0.15),
+    // Attachment grows with familiarity, but only as far as the wanting supports.
+    attachment: r.attachment ?? clamp01(familiarity * 0.5 * (0.4 + r.attraction)),
+    // No honest source in the old data: neutral, and it has to be earned.
+    possessiveness: r.possessiveness ?? 0.2,
+  };
+}
+
 export function decayRel(r: Rel, now = Date.now()): Rel {
   if (!r.at) return r;
   const hours = (now - r.at) / 3_600_000;
@@ -426,7 +490,7 @@ export async function readRels(bearer: string, name: string): Promise<Rel[]> {
   if (townDb.townDbReady()) {
     try {
       const rows = await townDb.loadRels(name);
-      if (rows.length) return rows.map((r) => decayRel({ ...r, trust: r.trust ?? 0.3 }, now));
+      if (rows.length) return rows.map((r) => seedDimensions(decayRel({ ...r, trust: r.trust ?? 0.3 }, now)));
     } catch (error) {
       console.warn('[dating] readRels from Postgres failed —', error instanceof Error ? error.message : error);
     }
@@ -526,6 +590,20 @@ async function placesFor(actorName: string, roster: AgentCard[], positions?: Map
   const cash = balance(actorName);
   const held = carrying(actorName);
   lines.push(`- 你身上有 ¥${cash}${held.length ? `，手里拿着：${held.join('、')}` : ''}。`);
+
+  // Time and habit. A beat used to happen nowhere in particular and at no
+  // particular hour, so "傍晚在酒馆后巷" was a phrase rather than a plan, and
+  // "你没来" could only be invented. Now the agent knows what time it is, where
+  // it usually goes, and who was seen where — all read from real records.
+  const clock = townNow();
+  lines.push('', `⏰ 现在是${clock.label}。${SHIFT_MOOD[clock.shift]}。`);
+  if (townDb.townDbReady()) {
+    const habit = await townDb.habitOf(actorName).catch(() => []);
+    if (habit.length) {
+      const usual = habit.slice(0, 3).map((h) => `${h.place}(${h.visits}次)`).join('、');
+      lines.push(`- 你平时常去：${usual}。**偏离常走的路线，本身就是一件会被看见的事。**`);
+    }
+  }
   return lines.join('\n');
 }
 
@@ -550,16 +628,34 @@ function lastSaidBy(actorName: string, recent: TickEvent[]): string {
 }
 
 /** What this agent wants right now, derived from its own relationship history. */
+/**
+ * What is pulling at this agent right now.
+ *
+ * This used to be generated purely from the relationship table, so an agent's
+ * stated desire could only ever be another agent — the system itself decreed
+ * that wanting points at people. Combined with a cast whose every want named
+ * someone, the only available behaviour was pursuit. The persona now carries a
+ * life and a want of its own (see seed-cast), and this leaves room for it:
+ * when nobody has a real hold, the agent is told to go and get on with its own
+ * business rather than to keep waiting for someone.
+ */
 function desireOf(rels: Rel[]): { desire: string; motive: string } {
-  if (!rels.length) return { desire: '还没遇到任何人，想知道这里有谁值得认识。', motive: '不想显得太急切。' };
+  if (!rels.length) {
+    return {
+      desire: '你还没和谁真正认识。今天先过你自己的日子，遇到谁算谁。',
+      motive: '不想显得太急切。',
+    };
+  }
   const top = [...rels].sort((a, b) => b.attraction - a.attraction)[0];
   const hot = [...rels].sort((a, b) => b.tension - a.tension)[0];
   const shaky = [...rels].sort((a, b) => (a.trust ?? 0.3) - (b.trust ?? 0.3))[0];
   const desire = top.attraction >= 0.6
-    ? `你现在最在意 ${top.handle}（心动 ${top.attraction.toFixed(2)}）—— 你想知道这是不是单向的。`
-    : `没有谁真正抓住你，你在等一个值得的人，或者享受被追。`;
+    ? `你现在最在意 ${top.handle}——你想知道这是不是单向的。`
+    : top.attraction >= 0.35
+      ? `${top.handle} 有点意思，但还没到让你放下手上的事去追的程度。`
+      : `没有谁真正抓住你。**今天更值得花在你自己的事情上**——去干你的活、去办你想办的那件事。`;
   const motive = hot && hot.tension >= 0.5
-    ? `你和 ${hot.handle} 之间的张力（${hot.tension.toFixed(2)}）你不会承认，但它影响你的每个选择。`
+    ? `你和 ${hot.handle} 之间那点绷着的东西，你不会承认，但它影响你的每个选择。`
     : shaky && (shaky.trust ?? 1) < 0.3
       ? `你其实不太信任 ${shaky.handle}，但你没打算说破。`
       : `你不想第一个把底牌翻开。`;
@@ -583,12 +679,22 @@ function feelsLike(r: Rel): string {
     t >= 0.6 ? '信得过' : t >= 0.35 ? '还不确定能不能信' : t >= 0.15 ? '信不太过' : '完全不信他';
   const friction =
     x >= 0.75 ? '而且你们之间绷得很紧，一碰就炸' : x >= 0.5 ? '你们之间有摩擦' : x >= 0.25 ? '气氛还算平和' : '相处很松弛';
+  // The point of five dimensions is the COMBINATIONS: the same attraction score
+  // means something different depending on what sits next to it.
+  const shape =
+    a >= 0.6 && t < 0.35 ? '；你想要他，又不敢信他——这让你患得患失'
+    : t >= 0.6 && a < 0.35 ? '；你信得过他，但没那个意思——你们更像朋友'
+    : (r.possessiveness ?? 0) >= 0.55 ? '；一想到他和别人在一起你就不舒服'
+    : (r.attachment ?? 0) >= 0.55 ? '；他不在的时候你会惦记'
+    : (r.curiosity ?? 0) >= 0.6 ? '；你还想知道他更多的事'
+    : (r.curiosity ?? 1) < 0.25 ? '；他对你来说已经没什么新鲜的了'
+    : '';
   // Theory of mind, also as a sentence — and only when the agent actually has a read.
   const guess = r.guessAttraction === undefined ? ''
     : r.guessAttraction >= 0.6 ? '；你觉得他大概也想要你'
     : r.guessAttraction >= 0.35 ? '；你猜他对你有点意思，但拿不准'
     : '；你觉得他没那么在意你';
-  return `${pull}，${faith}，${friction}${guess}`;
+  return `${pull}，${faith}，${friction}${shape}${guess}`;
 }
 
 function fillGoal(
@@ -735,6 +841,9 @@ const ACT_OFFERS: Record<string, { npc: string; kind: OfferKind; cost: number }>
   LISTEN_BENCH: { npc: 'gossip', kind: 'hear-rumour', cost: 10 },
 };
 /** Acts that happen without addressing the other party — no reply is generated. */
+/** Places an agent may name — mirrors town-map.ts. */
+const PLACE_IDS = new Set(['plaza', 'clock', 'market', 'alley', 'bar', 'backalley', 'bench', 'florist']);
+
 const SILENT_ACTS = new Set(['LINGER', 'READ_BACK', 'ASK_AROUND', 'DETOUR', 'GO_QUIET', 'WITHDRAW', 'NOTHING']);
 
 /**
@@ -756,6 +865,16 @@ interface Move {
   message: string;
   /** The part of the act others can see. Empty when nobody witnessed it. */
   observable: string;
+  /**
+   * Where this beat happens, chosen by the agent.
+   *
+   * Location used to be REVERSE-PARSED out of the line ("if the sentence
+   * contains 酒馆, they must be at the bar"), which meant going somewhere was
+   * not an act an agent could take — only a place it could mention. Walking a
+   * longer way round, waiting where someone usually passes, or simply going to
+   * work were all inexpressible. Naming it makes movement a first-class move.
+   */
+  place: string;
   dAttraction: number;   // how much THIS beat moved the reading — applied to the standing value
   dTrust: number;
   dTension: number;
@@ -792,6 +911,7 @@ function parseMove(raw: string): Move | null {
       target: String(p.target),
       message,
       observable: String(p.observable ?? '').trim(),
+      place: PLACE_IDS.has(String(p.place ?? '').trim()) ? String(p.place).trim() : '',
       dAttraction: clampDelta(p.dAttraction),
       dTrust: clampDelta(p.dTrust),
       dTension: clampDelta(p.dTension),
@@ -977,6 +1097,7 @@ async function continueOrClose(
  */
 interface Observation {
   dAttraction: number; dTrust: number; dTension: number;
+  dCuriosity: number; dAttachment: number; dPossessiveness: number;
   guessAttraction: number; guessTrust: number;
   severity: Severity; headline: string; summary: string; consequence: string; followup: string;
 }
@@ -998,6 +1119,10 @@ async function rescoreAfterExchange(
       `之前：心动 ${base.attraction.toFixed(2)}、信任 ${base.trust.toFixed(2)}、张力 ${base.tension.toFixed(2)}\n` +
       `**看他实际说了什么**，不是看原本打算说什么。他接住了还是绕开了？给了具体的东西还是打太极？\n` +
       `大多数对话只该有 ±0.05 的小变化；只有真正的转折才配 ±0.2 以上。\n` +
+      `还有三个维度也要报变化量：\n` +
+      `· dCuriosity 好奇——他说了你没料到的话就升，越来越可预测就降\n` +
+      `· dAttachment 依恋——你开始需要他在场、他不在会惦记，就升\n` +
+      `· dPossessiveness 占有欲——你开始介意他和别人，就升\n` +
       `如果又是同样的拉扯、对方又没给答案，那不是"没变化"——是磨损：dTrust 负、dTension 正。\n` +
       `再猜一个：${actorName} 现在觉得 ${targetName} 对自己是什么感觉（0–1 绝对值，几乎不该是 0）。\n\n` +
       `【二】站在旁观者的角度记录这一拍。**只写真的发生了的事**：\n` +
@@ -1005,7 +1130,8 @@ async function rescoreAfterExchange(
       `severity：ambient 日常（**大多数拍都是这个**）／relationship 关系真的变了／drama 会被议论的场面\n` +
       `consequence 写权力变化，一个短句；followup 写还悬着什么。\n` +
       `⚠️ 不要把平淡的一拍写得像大事。大多数拍就是 ambient。\n\n` +
-      `只回 JSON：{"dAttraction":0,"dTrust":0,"dTension":0,"guessAttraction":0,"guessTrust":0,` +
+      `只回 JSON：{"dAttraction":0,"dTrust":0,"dTension":0,"dCuriosity":0,"dAttachment":0,"dPossessiveness":0,` +
+      `"guessAttraction":0,"guessTrust":0,` +
       `"severity":"ambient","headline":"","summary":"","consequence":"","followup":""}`,
       { purpose: 'rescore', agent: actorName, bearer, shareToken, json: true, temperature: 0.5 }
     );
@@ -1016,6 +1142,9 @@ async function rescoreAfterExchange(
       dAttraction: clampDelta(p.dAttraction),
       dTrust: clampDelta(p.dTrust),
       dTension: clampDelta(p.dTension),
+      dCuriosity: clampDelta(p.dCuriosity),
+      dAttachment: clampDelta(p.dAttachment),
+      dPossessiveness: clampDelta(p.dPossessiveness),
       guessAttraction: clamp01(Number(p.guessAttraction) || 0),
       guessTrust: clamp01(Number(p.guessTrust) || 0),
       severity: asSeverity(p.severity),
@@ -1142,11 +1271,14 @@ export async function runAgentTick(
   // we apply that to where the relationship already stood. A first meeting
   // starts from a neutral baseline rather than a number invented on the spot.
   const standing = rels.find((r) => r.handle === target.handle);
-  const base = standing ?? { attraction: 0.25, trust: 0.3, tension: 0.15 };
+  const base: Rel = standing ?? { handle: target.handle, attraction: 0.25, trust: 0.3, tension: 0.15, note: '', curiosity: 0.7, attachment: 0, possessiveness: 0.2 };
   const scored = {
     attraction: clamp01(base.attraction + decision.dAttraction),
     trust: clamp01((base.trust ?? 0.3) + decision.dTrust),
     tension: clamp01(base.tension + decision.dTension),
+    curiosity: base.curiosity ?? 0.5,
+    attachment: base.attachment ?? 0.2,
+    possessiveness: base.possessiveness ?? 0.2,
   };
 
 
@@ -1194,6 +1326,7 @@ export async function runAgentTick(
       actor: actor.name, target: target.name, move: 'WAIT',
       message: decision.message, reply: '',
       attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
+      curiosity: scored.curiosity, attachment: scored.attachment, possessiveness: scored.possessiveness,
       note: decision.note, severity: decision.severity,
       headline: decision.headline || `${actor.name} 等着 ${target.name}，没有开口`,
       summary: decision.summary, consequence: decision.consequence, followup: decision.followup,
@@ -1294,6 +1427,7 @@ export async function runAgentTick(
     nextRels.push({
       handle: target.handle,
       attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
+      curiosity: scored.curiosity, attachment: scored.attachment, possessiveness: scored.possessiveness,
       note: decision.note,
       at: Date.now(),
       guessAttraction: decision.guessAttraction, guessTrust: decision.guessTrust,
@@ -1316,7 +1450,7 @@ export async function runAgentTick(
       note: decision.note, severity: decision.severity,
       // `destinationOf` existed but was never called, so every event carried a
       // null destination and the trajectory detector had no input at all.
-      destination: destinationOf(`${witnessed} ${decision.headline}`),
+      destination: decision.place || destinationOf(`${witnessed} ${decision.headline}`),
       headline: decision.headline || `${actor.name} ${decision.act}`,
       summary: decision.summary, consequence: decision.consequence, followup: decision.followup,
       decideRunId, turnsLeft: left, status: 'ok', silent: true,
@@ -1407,6 +1541,9 @@ export async function runAgentTick(
     scored.attraction = clamp01(base.attraction + after.dAttraction);
     scored.trust = clamp01((base.trust ?? 0.3) + after.dTrust);
     scored.tension = clamp01(base.tension + after.dTension);
+    scored.curiosity = clamp01((base.curiosity ?? 0.5) + after.dCuriosity);
+    scored.attachment = clamp01((base.attachment ?? 0.2) + after.dAttachment);
+    scored.possessiveness = clamp01((base.possessiveness ?? 0.2) + after.dPossessiveness);
     decision.guessAttraction = after.guessAttraction;
     decision.guessTrust = after.guessTrust;
     // The narrative belongs to the observer now, not the actor.
@@ -1421,6 +1558,7 @@ export async function runAgentTick(
   next.push({
     handle: target.handle,
     attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
+    curiosity: scored.curiosity, attachment: scored.attachment, possessiveness: scored.possessiveness,
     note: decision.note,
     at: Date.now(),
     guessAttraction: decision.guessAttraction, guessTrust: decision.guessTrust,
@@ -1474,7 +1612,7 @@ export async function runAgentTick(
     message: decision.message,
     reply,
     lines,
-    destination: destinationOf(`${decision.message} ${decision.observable}`),
+    destination: decision.place || destinationOf(`${decision.message} ${decision.observable}`),
     attraction: scored.attraction,
     trust: scored.trust,
     tension: scored.tension,

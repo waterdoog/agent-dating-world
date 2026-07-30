@@ -12,7 +12,7 @@
  * that measurably happened, or nothing at all. A detector that finds nothing
  * says so; it never pads the feed.
  */
-import { pairHistory, recentEvents, giftHistory, allRels, townDbReady } from './town-repository.js';
+import { pairHistory, recentEvents, giftHistory, allRels, habitOf, townDbReady } from './town-repository.js';
 
 export interface Signal {
   kind: 'detour' | 'gone-quiet' | 'one-sided' | 'misread' | 'gift' | 'spend-shift' | 'triangle';
@@ -56,6 +56,37 @@ function detectLoitering(events: Ev[]): Signal[] {
       weight: 0.5 + Math.min(0.3, v.count * 0.05),
       at: v.last,
     }));
+}
+
+/**
+ * 轨迹偏离 — went somewhere they do not normally go.
+ *
+ * `detectLoitering` counts repeat visits, which finds a habit but not a break
+ * from one. This compares recent movement against where the agent actually
+ * spends its time: a place that is 40%+ of this week's beats is a route, and
+ * turning up somewhere that is under 10% of it is a detour worth noticing.
+ * Both halves come from the same event stream — nothing is asserted.
+ */
+export async function detectDeviations(agents: string[]): Promise<Signal[]> {
+  const out: Signal[] = [];
+  for (const agent of agents) {
+    const habit = await habitOf(agent).catch(() => []);
+    const total = habit.reduce((n, h) => n + h.visits, 0);
+    if (total < 8) continue;                       // no established route yet
+    const rare = habit.filter((h) => h.visits / total < 0.1 && h.visits >= 1);
+    const usual = habit[0];
+    if (!usual || usual.visits / total < 0.4) continue;   // no strong route to deviate from
+    for (const spot of rare.slice(0, 1)) {
+      out.push({
+        kind: 'detour',
+        subject: agent,
+        fact: `${agent} 平时几乎只在${usual.place}，这次去了${spot.place}。`,
+        weight: 0.78,
+        at: Date.now(),
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -221,6 +252,7 @@ export async function collectSignals(limit = 8): Promise<Signal[]> {
       ...detectLoitering(events),
       ...detectWentQuiet(events),
       ...detectOneSided(events),
+      ...(await detectDeviations([...new Set(events.map((e) => name(e, 'actor')))]).catch(() => [])),
       ...(await detectGifts()),
       ...(await (async () => {
         const rels = await allRels();
