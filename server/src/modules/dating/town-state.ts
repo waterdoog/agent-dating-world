@@ -90,7 +90,7 @@ export async function loadTownState(): Promise<void> {
 export function markTownDirty(): void {
   dirty = true;
   if (timer) return;
-  timer = setTimeout(() => { timer = null; void flushTownState(); }, FLUSH_DEBOUNCE_MS);
+  timer = setTimeout(() => { timer = null; void flushTownState().catch(() => undefined); }, FLUSH_DEBOUNCE_MS);
   timer.unref?.();
 }
 

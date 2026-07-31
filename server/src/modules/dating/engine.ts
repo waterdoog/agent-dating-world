@@ -114,8 +114,7 @@ export const GOAL = `🔴 开始之前，先读这两条（违反就是失败）
 
 **喜欢一个人的证据，大部分是背着他发生的。**
 翻他三个月前说过的话、绕路经过他常在的地方、为了见他改了自己的安排、
-记住他随口提过的一件小事——这些**有代价**，所以可信。
-而说狠话、说情话是免费的，所以不可信。
+记住他随口提过的一件小事——这些都要付出点什么，所以才可信。
 
 这一拍你必须先选一个 **act（真实动作）**，台词是**可选的**。
 沉默、只做事不说话，是完全合法的输出，而且往往更有力。
@@ -128,7 +127,6 @@ act 词汇表（选一个，必须是你**现在真的能做**的事）：
 · DETOUR      绕路经过某个地方（要说出是哪个地方）
 · PRETEXT     找一个功能性借口接近（还东西、问一个具体问题）
 · CALLBACK    引用他几天前随口说过的一句话 ★ 性价比最高的心动信号
-· GIFT        送一个具体的小东西（贵不重要，**准**才重要）
 · SHARE_SECRET 把只有你知道的事告诉他
 · CHANGE_HABIT 为了他改了自己的习惯或路线
 · GO_QUIET    冷处理：这一拍故意不回应
@@ -183,10 +181,8 @@ ALLY 结盟／WAIT 等一个可能不来的人／INVESTIGATE 打听／BETRAY 泄
 CONFESS 摊牌告白／REJECT 明确拒绝／EXPOSE 当面拆穿／LEAVE 退出这条线／
 CRIME 越界（steal-letter 偷情书｜stage-scene 让人撞见｜bribe-vendor 买行踪｜spread-lie 散假消息｜break-in 砸约会；此时 target 是受害者，另给 "crime" 字段）
 
-⏰ 不许原地打转：
- - 如果你上次提了条件（"你先走近""你先证明"），这一拍要么**自己先做到**，要么**收回条件**直接给答案，要么**转身去找别人**。
- - 对方连着两次没照做，那就是他的回答——按它行动，不要继续等。
- - 超过三拍还在同一个僵局：**禁止**继续逼问，只能落地／断掉／退出／转向别人。
+⏰ 提了条件就要兑现：如果你上次说"你先走近""你先证明"，这一拍要么**自己先做到**，
+要么**收回条件**直接给答案，要么转身去找别人。对方连着两次没照做，那就是他的回答。
 
 📍 **每一拍你都在某个地方**，用 place 字段说出是哪儿：
 plaza 中央广场／clock 钟楼／market 商业街／alley 暗巷／bar 酒馆／backalley 酒馆后巷／bench 长椅公园／florist 花摊
@@ -205,17 +201,6 @@ plaza 中央广场／clock 钟楼／market 商业街／alley 暗巷／bar 酒馆
 上面写着你**平时常去哪**——一直走同一条路是常态，
 而突然绕去某个平时不去的地方、或者在别人常在的地方多待一会儿，**是会被看见的**。
 这种事不需要配台词，去了就是信号。
-
-这一拍**改变了多少**（增减量，-0.3 ~ +0.3，没变就填 0）：
- - dAttraction / dTrust / dTension
-
-🧠 **还要填两个数：你猜他对你的感觉**（guessAttraction / guessTrust，绝对值 0–1，不是增减量）。
-这两个数**几乎不应该是 0**——填 0 等于你断定"他对我毫无感觉、毫不信任"，这是一个很重的判断。
-凭你**观察到的证据**猜：他回话是长还是敷衍？他主动过吗？他看你了吗？他记得你说过的话吗？
-你猜错很正常——自作多情、或者低估对方，都可以。**这个误差正是故事的来源**，所以要认真猜，不要填 0 了事。
-例：他回得很长还主动约你 → guessAttraction 0.6 左右；他只回三个字 → 0.15 左右。
-大多数拍只该有 ±0.05 上下的小变化。只有真正的转折才配 ±0.2 以上。
-如果这一拍又是同样的拉扯、对方又没给你答案，那不是"没变化"——是**磨损**：dTrust 给负值，dTension 给正值。
 
 **你只管做你自己。** 这一拍叫什么名字、算不算大事、后果怎么写——不是你的事，有别人记录。
 你不需要让这一拍"够精彩"。真实比精彩重要。
@@ -1422,6 +1407,12 @@ export async function runAgentTick(
     // to bleed tension, so a pair that chose silence on its own stayed pinned at
     // the ceiling and kept re-qualifying for the saturation brake.
     if (!jammed && scored.tension > 0.2) scored.tension = clamp01(scored.tension - 0.05);
+    // Theory of mind moved to the observer when the writer role was split out —
+    // but a wordless beat returns before the observer ever runs, so every silent
+    // beat was writing a guess of 0.00 over whatever the agent already believed.
+    // Nothing was observed, so nothing should change: carry the standing read.
+    decision.guessAttraction = standingRel?.guessAttraction ?? decision.guessAttraction;
+    decision.guessTrust = standingRel?.guessTrust ?? decision.guessTrust;
     const witnessed = decision.observable.trim();
     const nextRels = rels.filter((r) => r.handle !== target.handle);
     nextRels.push({

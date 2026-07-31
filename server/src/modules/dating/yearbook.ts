@@ -105,7 +105,7 @@ export async function writeYearbook(args: {
       at: Date.now(),
     };
     books.set(key(agent, year), book);
-    void recordYearbook(book);                       // durable in links/
+    void recordYearbook(book).catch(() => undefined);     // durable in links/
     return book;
   } catch (error) {
     if (!(error instanceof ModelError)) throw error;

@@ -19,8 +19,15 @@ import type { Yearbook } from './yearbook.js';
 const FOLDER = 'links';
 const operator = () => config.operatorApiKey;
 
+/**
+ * A bad timestamp should not be fatal. One undefined `at` on one beat threw
+ * RangeError inside narrate() and took the entire BFF down with it — the whole
+ * town went dark because a log line could not be formatted.
+ */
 function stamp(at: number): string {
-  return new Date(at).toISOString().replace('T', ' ').slice(0, 19);
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return '????-??-?? ??:??:??';
+  return d.toISOString().replace('T', ' ').slice(0, 19);
 }
 
 /** Append-style event log: newest first, capped so the note stays readable. */

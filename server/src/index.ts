@@ -62,7 +62,7 @@ import { collectSignals } from './modules/dating/detectors.js';
 import { storeCredential, forgetCredential, liveCredentials, credentialHealth } from './modules/dating/credentials.js';
 import { recentRuns, runById } from './modules/dating/grok.js';
 import { budgetSnapshot } from './modules/dating/budget.js';
-import { listThreads, currentDigest, summariseWorld, recordKnowledge, knownTo } from './modules/dating/threads.js';
+import { listThreads, currentDigest, summariseWorld, recordKnowledge, knownTo, rehydrateThreads } from './modules/dating/threads.js';
 import { writeYearbook, listYearbooks, yearbookFor } from './modules/dating/yearbook.js';
 import { recordEvent } from './modules/dating/records.js';
 import { requestFriend, friends, recall, searchMemory, memoryStats } from './modules/dating/memory.js';
@@ -249,7 +249,7 @@ app.get('/auth/callback', async (c) => {
     // accounts whose API key was pasted into DATING_WORLD_KEYS, which left most
     // of the town frozen. Deleted again on logout.
     if (tokens.refresh_token) {
-      void storeCredential(info.sub, tokens.refresh_token, info.preferred_username, tokens.scope);
+      void storeCredential(info.sub, tokens.refresh_token, info.preferred_username, tokens.scope).catch(() => undefined);
     }
 
     return c.redirect(authResultUrl(config.spaUrl, flow.returnTo, { login: 'ok' }));
@@ -692,7 +692,7 @@ app.post('/api/dating/town/crime', async (c) => {
         status: 'ok' as const,
       };
       await appendEvent(ev).catch(() => undefined);
-      void recordEvent(ev as never);
+      void recordEvent(ev as never).catch(() => undefined);
       fallout = f;
     }
   }
@@ -961,9 +961,28 @@ if (process.env.NODE_ENV === 'production' && isMainModule) {
   app.get('*', serveStatic({ path: './dist/index.html' }));
 }
 
+/**
+ * The town must outlive a bad minute.
+ *
+ * A Postgres read timeout surfaced as an unhandled rejection and killed the
+ * whole BFF — every agent stopped, the feed froze, and the only symptom was a
+ * dead port. Nothing in a long-running world simulation is worth taking the
+ * process down for: a failed call is a beat that did not happen, which the
+ * engine already knows how to report honestly.
+ */
+process.on('unhandledRejection', (reason) => {
+  console.error('[world] unhandled rejection (continuing):', reason instanceof Error ? reason.message : reason);
+});
+process.on('uncaughtException', (error) => {
+  console.error('[world] uncaught exception (continuing):', error.message);
+});
+
 // Restore wanted levels and purses before anything can read them. Best-effort:
 // a failure here starts the town clean rather than blocking the boot.
 void loadTownState();
+// Story threads and who-knows-what were module-level state, so they reset on
+// every restart. Both rebuild from the event stream rather than needing tables.
+void rehydrateThreads();
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.once(sig, () => { void flushTownState().finally(() => process.exit(0)); });
 }

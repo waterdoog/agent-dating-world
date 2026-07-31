@@ -543,3 +543,39 @@ img.agent-sprite { display: block; object-fit: contain; }
 .dt-signal.misread { border-left-color: var(--red); color: var(--ink); }
 .dt-signal.one-sided { border-left-color: var(--dt-plum); }
 .dt-signal.gift { border-left-color: var(--yellow); }
+
+
+/* ── talking, without saying it on the map ──────────────────────────────
+   A pair in conversation used to render the whole exchange in a panel floating
+   over the square: it covered a quarter of the town, buried the place labels,
+   and duplicated text the feed already shows in a place built to read it. The
+   map's job is who-is-with-whom-and-where. Three dots say that. */
+.dt3d-dots {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 5px 8px; border: 2px solid var(--ink); border-radius: 999px;
+  background: var(--paper-light); box-shadow: 2px 2px 0 var(--ink);
+  cursor: pointer; pointer-events: auto;
+}
+.dt3d-dots i {
+  width: 4px; height: 4px; border-radius: 50%; background: var(--ink-soft);
+  animation: dt-dot 1.25s ease-in-out infinite;
+}
+.dt3d-dots i:nth-child(2) { animation-delay: 0.18s; }
+.dt3d-dots i:nth-child(3) { animation-delay: 0.36s; }
+@keyframes dt-dot {
+  0%, 60%, 100% { opacity: 0.28; transform: translateY(0); }
+  30%           { opacity: 1;    transform: translateY(-2px); }
+}
+/* tone still readable at a glance, without any words */
+.dt3d-dots.fight { border-color: var(--red); background: oklch(0.95 0.03 30); }
+.dt3d-dots.fight i { background: var(--red); }
+.dt3d-dots.love  { background: oklch(0.96 0.025 6); }
+.dt3d-dots.love i { background: var(--red-dark); }
+/* one person, no answer — dimmer, and it does not pulse */
+.dt3d-dots.solo { opacity: 0.72; box-shadow: 1px 1px 0 var(--ink); }
+.dt3d-dots.solo i { animation: none; opacity: 0.5; }
+
+/* NPC labels: the name is always useful, what they are doing is not — it was
+   two lines of text per NPC stacked on top of each other and on the agents. */
+.dt3d-npc em { display: none; }
+.dt3d-npc:hover em { display: block; }

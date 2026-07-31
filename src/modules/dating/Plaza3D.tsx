@@ -177,10 +177,14 @@ function SoloBubble({ agent, posRef }: { agent: Mover3D; posRef: RefObject<LiveP
     g.current.position.set(mapX(p.x), 1.72 + tagLift(agent.name), mapZ(p.y));
   });
   if (!agent.bubble) return null;
+  // One person saying something on their own still only gets a marker. The words
+  // are in the feed and the conversation modal, where there is room to read them.
   return (
     <group ref={g}>
       <Html center distanceFactor={11} zIndexRange={[20, 0]}>
-        <div className={`dt3d-bubble ${agent.bubble.kind}`}>{agent.bubble.text}</div>
+        <div className={`dt3d-dots solo ${agent.bubble.kind}`} title={agent.bubble.text}>
+          <i /><i /><i />
+        </div>
       </Html>
     </group>
   );
@@ -196,12 +200,15 @@ function ChatBox({ a, b, posRef }: { a: Mover3D; b: Mover3D; posRef: RefObject<L
     g.current.position.set((mapX(pa.x) + mapX(pb.x)) / 2, 1.5, (mapZ(pa.y) + mapZ(pb.y)) / 2);
   });
   const kind = a.bubble?.kind ?? b.bubble?.kind ?? 'new';
+  // The map answers "who is with whom, and where" — not "what did they say".
+  // A full transcript floating over an isometric town covered a quarter of the
+  // square and buried the place labels underneath it, while the same lines were
+  // already readable in the feed. Two people talking is now three dots.
   return (
     <group ref={g}>
       <Html center distanceFactor={11} zIndexRange={[20, 0]}>
-        <div className={`dt3d-chat ${kind}`}>
-          {a.bubble && <p><b>{a.name}</b>{a.bubble.text}</p>}
-          {b.bubble && <p className="reply"><b>{b.name}</b>{b.bubble.text}</p>}
+        <div className={`dt3d-dots ${kind}`} title={[a.bubble?.text, b.bubble?.text].filter(Boolean).join(' / ')}>
+          <i /><i /><i />
         </div>
       </Html>
     </group>

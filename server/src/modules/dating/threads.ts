@@ -12,6 +12,7 @@
  * agent can surface somewhere else.
  */
 import { grok, ModelError } from './grok.js';
+import { townDbReady, addKnowledge, knowledgeOf, recentEvents } from './town-repository.js';
 import type { TickEvent } from './engine.js';
 import { recordThread, recordDigest } from './records.js';
 
@@ -64,9 +65,76 @@ const MAX_KNOWLEDGE = 200;
 export function knownTo(holder: string): Knowledge[] {
   return knowledge.filter((k) => k.holder.toLowerCase() === holder.toLowerCase()).slice(0, 8);
 }
+
+/** The durable view — what this agent knows, including from before the restart. */
+export async function knownToDurable(holder: string): Promise<Knowledge[]> {
+  if (!townDbReady()) return knownTo(holder);
+  try {
+    const rows = await knowledgeOf(holder, 8);
+    return rows.map((r) => ({ holder, about: r.about, fact: r.fact, source: r.source, at: r.at }));
+  } catch {
+    return knownTo(holder);
+  }
+}
+/**
+ * Remember that someone learned something.
+ *
+ * This was a module-level array, so who-knows-what was wiped on every restart —
+ * and in development `tsx watch` restarts on each edit. Information asymmetry is
+ * the load-bearing idea in this town; resetting it to zero several times an hour
+ * meant it never actually existed. The array is now a cache in front of
+ * `town_knowledge`, which was created for exactly this and had no writer.
+ */
 export function recordKnowledge(k: Omit<Knowledge, 'at'>): void {
   knowledge.unshift({ ...k, at: Date.now() });
   if (knowledge.length > MAX_KNOWLEDGE) knowledge.length = MAX_KNOWLEDGE;
+  if (townDbReady()) void addKnowledge(k).catch((e) => console.warn('[threads] addKnowledge:', e?.message));
+}
+
+/**
+ * Rebuild the in-memory caches from Postgres at boot.
+ *
+ * Utterances come back out of `town_events`, so "the same promise was made to
+ * two different people" survives a restart — it is the best drama trigger in the
+ * system and it was starting from nothing every time the process bounced.
+ */
+export async function rehydrateThreads(): Promise<void> {
+  if (!townDbReady()) return;
+  try {
+    const events = await recentEvents(200);
+    for (const e of events.reverse()) {
+      const msg = String(e.message ?? '');
+      if (msg && e.target) said.unshift({ from: String(e.actor), to: String(e.target), text: msg, at: Number(e.at) });
+    }
+    if (said.length > MAX_SAID) said.length = MAX_SAID;
+
+    // Story threads rebuild from the same stream — a thread IS its beats, so
+    // there is nothing to store separately. The narrated title/arc is lost on a
+    // restart and regenerates on the next beat; the history itself is not.
+    for (const e of events) {
+      if (!e.target || e.status === 'failed' || e.status === 'timeout') continue;
+      const id = threadKey(String(e.actor), String(e.target));
+      const t = threads.get(id) ?? {
+        id, cast: [String(e.actor), String(e.target)], beats: [],
+        title: `${e.actor} 与 ${e.target}`, arc: '', openQuestion: '', updatedAt: Number(e.at),
+      };
+      // `at` is required: recordThread formats it, and a missing one threw
+      // RangeError deep inside a narrate() call and took the whole BFF down.
+      // No `as never` here — the type is the thing that catches this.
+      t.beats.push({
+        at: Number(e.at) || Date.now(),
+        actor: String(e.actor), target: String(e.target), move: String(e.move ?? ''),
+        message: String(e.message ?? ''), reply: String(e.reply ?? ''),
+        headline: String(e.headline ?? ''),
+        attraction: Number(e.attraction ?? 0), trust: Number(e.trust ?? 0), tension: Number(e.tension ?? 0),
+      });
+      t.updatedAt = Math.max(t.updatedAt, Number(e.at));
+      threads.set(id, t);
+    }
+    console.log(`[threads] rehydrated ${said.length} utterance(s), ${threads.size} thread(s) from Postgres`);
+  } catch (error) {
+    console.warn('[threads] rehydrate failed —', error instanceof Error ? error.message : error);
+  }
 }
 
 /**
@@ -190,7 +258,7 @@ export async function narrate(
       thread.openQuestion = String(p.openQuestion ?? thread.openQuestion).trim();
       thread.runId = run.id;
       thread.updatedAt = Date.now();
-      void recordThread(thread);                     // durable in links/
+      void recordThread(thread).catch(() => undefined);   // durable in links/
     }
   } catch (error) {
     if (!(error instanceof ModelError)) throw error;
@@ -252,7 +320,7 @@ export async function summariseWorld(bearer: string, shareToken?: string): Promi
       .map((l) => ({ headline: String(l.headline).trim(), shift: String(l.shift ?? '').trim(), detail: String(l.detail ?? '').trim() }));
     if (lines.length) {
       digest = { lines, runId: run.id, at: Date.now() };
-      void recordDigest(digest);                     // durable in links/
+      void recordDigest(digest).catch(() => undefined);   // durable in links/
     }
   } catch (error) {
     if (!(error instanceof ModelError)) throw error;   // failed run keeps the old digest
