@@ -10,6 +10,7 @@
  */
 import type { AgentCard } from './store.js';
 import { runAgentTick, type TickEvent } from './engine.js';
+import { townDbReady, alreadyReportedFailure } from './town-repository.js';
 
 // A broke agent gets roasted at most once per window, so the feed isn't spammed.
 const brokeAt = new Map<string, number>();
@@ -28,15 +29,33 @@ const BROKE_THROTTLE_MS = 30 * 60_000;
  * while it persists. Nothing is hidden — a turn that did not happen is still a
  * turn that did not happen, and `turn-health` reports the whole count — but the
  * town stops narrating it every five minutes.
+ *
+ * The window is asked of the event table, not of a Map. A Map is per-process
+ * and does not survive a restart — and `tsx watch` restarts on every keystroke,
+ * so the first version of this reset constantly and the same 404 went on
+ * filling the feed regardless. The events themselves are the only record that
+ * every process shares and that outlives all of them.
  */
-const failedAt = new Map<string, { at: number; note: string }>();
+const failedAt = new Map<string, { at: number; summary: string }>();
 const FAILURE_THROTTLE_MS = 60 * 60_000;
 
-function isRepeatFailure(agent: string, note: string): boolean {
-  const last = failedAt.get(agent);
+async function isRepeatFailure(agent: string, summary: string): Promise<boolean> {
   const now = Date.now();
-  if (last && last.note === note && now - last.at < FAILURE_THROTTLE_MS) return true;
-  failedAt.set(agent, { at: now, note });
+  const last = failedAt.get(agent);
+  // Cheap path: this process already knows. Saves a query on the common case of
+  // a link that has been dead for hours.
+  if (last && last.summary === summary && now - last.at < FAILURE_THROTTLE_MS) return true;
+  if (townDbReady()) {
+    try {
+      if (await alreadyReportedFailure(agent, summary, FAILURE_THROTTLE_MS)) {
+        failedAt.set(agent, { at: now, summary });
+        return true;
+      }
+    } catch {
+      /* an unreadable table must not silence a real beat */
+    }
+  }
+  failedAt.set(agent, { at: now, summary });
   return false;
 }
 
@@ -118,7 +137,7 @@ export async function runWorldRound(
     }
     // A turn that failed the same way as this agent's last one is the same
     // piece of news, not a new beat.
-    if (ev.move === 'FAILED' && isRepeatFailure(ev.actor, ev.note ?? '')) continue;
+    if (ev.move === 'FAILED' && (await isRepeatFailure(ev.actor, ev.summary ?? ''))) continue;
     events.push(ev);
     opts.onEvent?.(ev);
   }

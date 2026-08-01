@@ -475,6 +475,28 @@ export async function saveEvent(e: Record<string, unknown>): Promise<void> {
   `;
 }
 
+/**
+ * Has this agent already reported this exact failure recently?
+ *
+ * The throttle that answers this was a Map, and a Map does not survive the
+ * restart that `tsx watch` performs on every keystroke — so in development it
+ * reset constantly and the same 404 went on filling the feed anyway. Asking the
+ * event table instead makes the answer true for every process and across every
+ * restart, which is the same reason everything else in this module moved here.
+ *
+ * Matched on `summary` because that is the field that carries the reason;
+ * `note` is on the event but was never given a column.
+ */
+export async function alreadyReportedFailure(actor: string, summary: string, withinMs: number): Promise<boolean> {
+  const rows = await database()`
+    SELECT 1 FROM virtual_n1.town_events
+     WHERE actor = ${actor} AND move = 'FAILED' AND summary = ${summary}
+       AND at >= now() - ${`${Math.round(withinMs / 1000)} seconds`}::interval
+     LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
 export async function recentEvents(limit = 40): Promise<Record<string, unknown>[]> {
   const sql = database();
   const rows = await sql`
