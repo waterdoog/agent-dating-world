@@ -18,6 +18,7 @@
  *     Agent Fights' wallet already does. A local checkout still runs.
  */
 import { database, isDatabaseConfigured } from '../../database/client.js';
+import { seal, open } from './sealed.js';
 
 export const townDbReady = (): boolean => isDatabaseConfigured();
 
@@ -245,8 +246,210 @@ export async function allRels(): Promise<Array<{ agent: string; other: string; a
   }));
 }
 
+// ── what the town wrote about itself ─────────────────────────────────
+
+/**
+ * Save an authored piece — a thread's narration, the world digest.
+ *
+ * These are model output, not derived facts, so nothing can recreate them. They
+ * lived in a Map and vanished on every restart, which is why the story lines
+ * looked like they kept resetting.
+ */
+export async function saveNarration(key: string, value: unknown, runId?: string): Promise<void> {
+  const sql = database();
+  await sql`
+    INSERT INTO virtual_n1.town_narration (key, value, run_id)
+    VALUES (${key}, ${sql.json(value as never)}, ${runId ?? null})
+    ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value, run_id = EXCLUDED.run_id, updated_at = now()
+  `;
+}
+
+export async function readNarration<T>(key: string): Promise<T | null> {
+  const [row] = await database()`
+    SELECT value FROM virtual_n1.town_narration WHERE key = ${key}
+  `;
+  return (row?.value as T) ?? null;
+}
+
+/** Every stored narration under a prefix, for rebuilding all threads at once. */
+export async function narrationsUnder<T>(prefix: string): Promise<Array<{ key: string; value: T; runId?: string }>> {
+  const rows = await database()`
+    SELECT key, value, run_id FROM virtual_n1.town_narration
+     WHERE key LIKE ${`${prefix}%`}
+  `;
+  return rows.map((r) => ({
+    key: String(r.key),
+    value: r.value as T,
+    ...(r.run_id ? { runId: String(r.run_id) } : {}),
+  }));
+}
+
+// ── the roster ───────────────────────────────────────────────────────
+
+export interface RosterRow {
+  handle: string;
+  name: string;
+  ownerSub: string;
+  ownerName?: string;
+  shareToken: string;
+  look: Record<string, unknown>;
+  loveStyle: string;
+  oneline: string;
+  persona: string;
+}
+
+const rowToCard = (r: Record<string, unknown>): RosterRow => ({
+  handle: String(r.handle),
+  name: String(r.name),
+  ownerSub: String(r.owner_sub),
+  ...(r.owner_name ? { ownerName: String(r.owner_name) } : {}),
+  shareToken: open(String(r.sealed_link)) ?? '',
+  look: (r.look as Record<string, unknown>) ?? {},
+  loveStyle: String(r.love_style),
+  oneline: String(r.oneline ?? ''),
+  persona: String(r.persona ?? ''),
+});
+
+/**
+ * Every column, with nothing undefined.
+ *
+ * The cards being adopted were written by older versions of the release wizard
+ * and do not all carry every field — postgres.js rejects `undefined` outright
+ * rather than treating it as NULL, so one legacy agent missing an `oneline`
+ * aborted the whole seed. A missing share token stays missing rather than being
+ * sealed as an empty string that would look like a working capability.
+ */
+function columnsOf(card: RosterRow) {
+  return {
+    handle: String(card.handle),
+    name: String(card.name),
+    ownerSub: String(card.ownerSub ?? ''),
+    ownerName: card.ownerName ? String(card.ownerName) : null,
+    sealedLink: card.shareToken ? seal(String(card.shareToken)) : seal(''),
+    look: card.look ?? {},
+    loveStyle: String(card.loveStyle ?? 'open'),
+    oneline: String(card.oneline ?? ''),
+    persona: String(card.persona ?? ''),
+  };
+}
+
+export async function rosterRows(): Promise<RosterRow[]> {
+  const rows = await database()`
+    SELECT * FROM virtual_n1.town_roster ORDER BY created_at
+  `;
+  return rows.map(rowToCard);
+}
+
+/**
+ * Write one agent, touching nothing else.
+ *
+ * This is the whole point of the table: the old path rewrote every agent in the
+ * square to change one of them, so two people releasing at once lost one of the
+ * two. `handle` as the conflict target also makes a repeat release an edit
+ * rather than a duplicate.
+ */
+export async function upsertRosterRow(card: RosterRow): Promise<void> {
+  const v = columnsOf(card);
+  await database()`
+    INSERT INTO virtual_n1.town_roster AS r
+      (handle, name, owner_sub, owner_name, sealed_link, look, love_style, oneline, persona)
+    VALUES (
+      ${v.handle}, ${v.name}, ${v.ownerSub}, ${v.ownerName},
+      ${v.sealedLink}, ${database().json(v.look as never)},
+      ${v.loveStyle}, ${v.oneline}, ${v.persona}
+    )
+    ON CONFLICT (handle) DO UPDATE SET
+      name = EXCLUDED.name,
+      owner_sub = EXCLUDED.owner_sub,
+      -- never blank an owner name we already learned
+      owner_name = COALESCE(EXCLUDED.owner_name, r.owner_name),
+      sealed_link = EXCLUDED.sealed_link,
+      look = EXCLUDED.look,
+      love_style = EXCLUDED.love_style,
+      oneline = EXCLUDED.oneline,
+      persona = EXCLUDED.persona,
+      updated_at = now()
+  `;
+}
+
+/**
+ * Swap in a freshly minted capability.
+ *
+ * Kept separate from the full upsert because renewal must not touch anything
+ * else: the agent's persona, its look and its owner are not what expired.
+ */
+export async function replaceShareToken(handle: string, shareToken: string): Promise<void> {
+  await database()`
+    UPDATE virtual_n1.town_roster
+       SET sealed_link = ${seal(shareToken)}, share_issued_at = now(), updated_at = now()
+     WHERE handle = ${handle}
+  `;
+}
+
+/** How old each agent's capability is — the only warning before one lapses. */
+export async function shareAges(): Promise<Array<{ handle: string; name: string; issuedAt: number | null }>> {
+  const rows = await database()`
+    SELECT handle, name, share_issued_at FROM virtual_n1.town_roster ORDER BY share_issued_at NULLS FIRST
+  `;
+  return rows.map((r) => ({
+    handle: String(r.handle),
+    name: String(r.name),
+    issuedAt: r.share_issued_at ? new Date(r.share_issued_at as string).getTime() : null,
+  }));
+}
+
+/** Record the account name, which is all `stampOwnerName` ever wanted to change. */
+export async function setRosterOwnerName(handle: string, ownerName: string): Promise<boolean> {
+  const rows = await database()`
+    UPDATE virtual_n1.town_roster SET owner_name = ${ownerName}, updated_at = now()
+     WHERE handle = ${handle} AND owner_name IS DISTINCT FROM ${ownerName}
+    RETURNING handle
+  `;
+  return rows.length > 0;
+}
+
+/**
+ * Carry the note's agents over, once.
+ *
+ * `DO NOTHING` rather than an upsert: this runs whenever the table happens to be
+ * empty, and a seed must never overwrite an agent that the town has since
+ * edited. Returns how many it actually adopted.
+ */
+export async function seedRoster(cards: RosterRow[]): Promise<number> {
+  let adopted = 0;
+  for (const card of cards) {
+    if (!card?.handle || !card.name) continue;   // a card with no identity is not an agent
+    const v = columnsOf(card);
+    const rows = await database()`
+      INSERT INTO virtual_n1.town_roster
+        (handle, name, owner_sub, owner_name, sealed_link, look, love_style, oneline, persona)
+      VALUES (
+        ${v.handle}, ${v.name}, ${v.ownerSub}, ${v.ownerName},
+        ${v.sealedLink}, ${database().json(v.look as never)},
+        ${v.loveStyle}, ${v.oneline}, ${v.persona}
+      )
+      ON CONFLICT (handle) DO NOTHING
+      RETURNING handle
+    `;
+    adopted += rows.length;
+  }
+  return adopted;
+}
+
 // ── events ───────────────────────────────────────────────────────────
 
+/**
+ * Record a beat.
+ *
+ * `ON CONFLICT DO NOTHING` is what makes a retaken turn safe: a process that
+ * inserted an event and died before marking the turn done leaves a lease that
+ * expires, and the turn is legitimately claimed again. The second attempt
+ * carries the same operation id and is dropped here rather than adding a second
+ * version of something that already happened. Rows without an operation id — a
+ * hand-driven turn — are unconstrained, because each of those really is a new
+ * event.
+ */
 export async function saveEvent(e: Record<string, unknown>): Promise<void> {
   const sql = database();
   await sql`
@@ -254,7 +457,7 @@ export async function saveEvent(e: Record<string, unknown>): Promise<void> {
       actor, target, act, move, silent, message, reply, lines, observable,
       attraction, trust, tension, guess_attraction, guess_trust,
       severity, headline, summary, consequence, followup, destination,
-      decide_run_id, reply_run_id, status
+      decide_run_id, reply_run_id, status, operation_id
     ) VALUES (
       ${String(e.actor ?? '')}, ${(e.target as string) ?? null}, ${(e.act as string) ?? null},
       ${(e.move as string) ?? null}, ${Boolean(e.silent)}, ${(e.message as string) ?? null},
@@ -266,9 +469,32 @@ export async function saveEvent(e: Record<string, unknown>): Promise<void> {
       ${(e.summary as string) ?? null}, ${(e.consequence as string) ?? null},
       ${(e.followup as string) ?? null}, ${(e.destination as string) ?? null},
       ${(e.decideRunId as string) ?? null}, ${(e.replyRunId as string) ?? null},
-      ${(e.status as string) ?? null}
+      ${(e.status as string) ?? null}, ${(e.operationId as string) ?? null}
     )
+    ON CONFLICT (operation_id) WHERE operation_id IS NOT NULL DO NOTHING
   `;
+}
+
+/**
+ * Has this agent already reported this exact failure recently?
+ *
+ * The throttle that answers this was a Map, and a Map does not survive the
+ * restart that `tsx watch` performs on every keystroke — so in development it
+ * reset constantly and the same 404 went on filling the feed anyway. Asking the
+ * event table instead makes the answer true for every process and across every
+ * restart, which is the same reason everything else in this module moved here.
+ *
+ * Matched on `summary` because that is the field that carries the reason;
+ * `note` is on the event but was never given a column.
+ */
+export async function alreadyReportedFailure(actor: string, summary: string, withinMs: number): Promise<boolean> {
+  const rows = await database()`
+    SELECT 1 FROM virtual_n1.town_events
+     WHERE actor = ${actor} AND move = 'FAILED' AND summary = ${summary}
+       AND at >= now() - ${`${Math.round(withinMs / 1000)} seconds`}::interval
+     LIMIT 1
+  `;
+  return rows.length > 0;
 }
 
 export async function recentEvents(limit = 40): Promise<Record<string, unknown>[]> {

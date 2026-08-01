@@ -52,13 +52,13 @@ import {
   type FighterReadyIntent,
   type FighterRuntimeEvent,
 } from './fighter-world.js';
-import { listSquare, releaseAgent, updateAgent, readSpec, stampOwnerName, listEvents, appendEvent, type AgentCard, type LoveStyle } from './modules/dating/store.js';
+import { listSquare, releaseAgent, updateAgent, readSpec, stampOwnerName, listEvents, appendEvent, renewShare, isDeadCapability, type AgentCard, type LoveStyle } from './modules/dating/store.js';
 import { runAgentTick, encounterWith, readRels, writeRels, type TickEvent } from './modules/dating/engine.js';
 import { startWorldLoop } from './modules/dating/scheduler.js';
 import { loadTownState, flushTownState, townStateHealth } from './modules/dating/town-state.js';
-import { townDbReady, saveEvent } from './modules/dating/town-repository.js';
 import { isDatabaseConfigured } from './database/client.js';
 import { collectSignals } from './modules/dating/detectors.js';
+import { turnHealth, releaseClaims, claimTurn, completeTurn } from './modules/dating/turn-lock.js';
 import { storeCredential, forgetCredential, liveCredentials, credentialHealth } from './modules/dating/credentials.js';
 import { recentRuns, runById } from './modules/dating/grok.js';
 import { budgetSnapshot } from './modules/dating/budget.js';
@@ -74,16 +74,59 @@ const worldCreds = new Map<string, string>();
 
 // The town digest is re-written from real threads, at most once every few
 // minutes, using whichever account the world is running on.
-let lastDigestAt = 0;
+/**
+ * An agent whose share link has died gets a new one — not a retry loop.
+ *
+ * A capability that expires looks exactly like a turn that failed, and it stays
+ * that way forever: 8586 identical 404s landed in a single day because nothing
+ * distinguished "this turn did not work" from "this agent can no longer speak".
+ * The signature is unambiguous, so treat it as what it is and re-mint.
+ *
+ * Minting a capability is a real action on the owner's account, so it is
+ * bounded twice over: the hour is claimed, so only one process across the whole
+ * town tries, and the claim is terminal, so a failure is not retried until the
+ * next hour. Combined with the scheduler's failure throttle, a permanently dead
+ * link costs one attempt an hour rather than one every round.
+ */
+async function maybeRenewShare(e: TickEvent): Promise<void> {
+  if (e.move !== 'FAILED' || !isDeadCapability(e.note ?? '')) return;
+  const roster = await listSquare().catch(() => [] as AgentCard[]);
+  const card = roster.find((c) => c.name === e.actor);
+  const bearer = card && worldCreds.get(card.ownerSub);
+  if (!card || !bearer) return;
+  const hour = `share:${card.handle}:${Math.floor(Date.now() / 3_600_000)}`;
+  if (!(await claimTurn(hour, 'share'))) return;
+  try {
+    await renewShare(bearer, card);
+  } finally {
+    await completeTurn(hour);
+  }
+}
+
 const DIGEST_EVERY_MS = 9 * 60_000;   // keep the digest well clear of agent turns
+/**
+ * Write the town digest — once per window, across every process.
+ *
+ * This was a module-level timestamp, so each process ran its own digest on its
+ * own schedule and overwrote the last one with a differently-worded version of
+ * the same town. Claiming the window makes it one call by whoever gets there
+ * first; `completeTurn` makes that terminal, so an expiring lease cannot let a
+ * second process narrate the same window again.
+ */
 function maybeSummarise(): void {
   const bearer = worldCreds.values().next().value;
-  if (!bearer || Date.now() - lastDigestAt < DIGEST_EVERY_MS) return;
-  lastDigestAt = Date.now();
-  // the narrator runs in an agent's sandbox too, so it never touches a personal chat
-  void listSquare()
-    .then((r) => summariseWorld(bearer, r[0]?.shareToken))
-    .catch(() => undefined);
+  if (!bearer) return;
+  const window = `digest:${Math.floor(Date.now() / DIGEST_EVERY_MS)}`;
+  void (async () => {
+    if (!(await claimTurn(window, 'digest'))) return;
+    try {
+      // the narrator runs in an agent's sandbox too, so it never touches a personal chat
+      const roster = await listSquare();
+      await summariseWorld(bearer, roster[0]?.shareToken);
+    } finally {
+      await completeTurn(window);
+    }
+  })().catch(() => undefined);
 }
 
 // One world year = one real day. At each turn of the year every agent writes
@@ -92,25 +135,35 @@ const WORLD_EPOCH = Date.UTC(2026, 6, 23);
 function worldYear(now = Date.now()): number {
   return Math.max(1, Math.floor(((now - WORLD_EPOCH) / 86_400_000) * 365 / 365) + 1);
 }
-let lastYearWritten = 0;
+/**
+ * Close the year once, not once per process.
+ *
+ * `lastYearWritten` was a module-level number, so every process wrote every
+ * agent's yearbook for the same year — each one a separate model call producing
+ * a different account of the same twelve months. The claim is terminal, so the
+ * year stays closed however many processes come and go.
+ */
 async function maybeCloseYear(): Promise<void> {
   const year = worldYear();
-  if (year === lastYearWritten) return;
-  lastYearWritten = year;
-  const roster = await listSquare().catch(() => [] as AgentCard[]);
-  const events = (await listEvents().catch(() => [])) as unknown as TickEvent[];
-  for (const card of roster) {
-    const bearer = worldCreds.get(card.ownerSub);
-    if (!bearer) continue;
-    await writeYearbook({
-      agent: card.name,
-      persona: card.persona || card.oneline || card.name,
-      year: year - 1,
-      rels: await readRels(bearer, card.name).catch(() => []),
-      events,
-      bearer,
-      shareToken: card.shareToken,   // narrate inside the agent's own sandbox
-    }).catch(() => undefined);
+  if (!(await claimTurn(`yearbook:${year}`, 'yearbook'))) return;
+  try {
+    const roster = await listSquare().catch(() => [] as AgentCard[]);
+    const events = (await listEvents().catch(() => [])) as unknown as TickEvent[];
+    for (const card of roster) {
+      const bearer = worldCreds.get(card.ownerSub);
+      if (!bearer) continue;
+      await writeYearbook({
+        agent: card.name,
+        persona: card.persona || card.oneline || card.name,
+        year: year - 1,
+        rels: await readRels(bearer, card.name).catch(() => []),
+        events,
+        bearer,
+        shareToken: card.shareToken,   // narrate inside the agent's own sandbox
+      }).catch(() => undefined);
+    }
+  } finally {
+    await completeTurn(`yearbook:${year}`);
   }
 }
 
@@ -578,8 +631,8 @@ app.get('/api/dating/runs', (c) => {
   });
 });
 
-app.get('/api/dating/budget', (c) =>
-  c.json({ dailyTurnBudget: config.dailyTurnBudget, agents: budgetSnapshot() })
+app.get('/api/dating/budget', async (c) =>
+  c.json({ dailyTurnBudget: config.dailyTurnBudget, agents: await budgetSnapshot() })
 );
 
 // Continuous story lines woven from real beats, plus the town digest.
@@ -736,6 +789,15 @@ app.get('/api/dating/signals', async (c) => c.json({ signals: await collectSigna
 
 /** How many agents can act unattended, and how many credentials went stale. */
 app.get('/api/dating/autonomy-health', async (c) => c.json(await credentialHealth()));
+
+/**
+ * Whether the town is still acting twice.
+ *
+ * `duplicateRounds` is the number the whole claim mechanism exists to hold at
+ * zero: agents that took more than one turn inside a single round in the last
+ * day. It was 51 at its worst.
+ */
+app.get('/api/dating/turn-health', async (c) => c.json(await turnHealth()));
 
 app.get('/api/dating/friends', async (c) => {
   const auth = await requireBearer(c);
@@ -923,6 +985,8 @@ app.post('/api/dating/tick', async (c) => {
     const roster = await listSquare();
     const mine = roster.find((card) => card.ownerSub === auth.session.sub);
     if (!mine) return jsonError(c, 404, 'Release an agent into the square first.');
+    // Deliberately unclaimed: a player asking their own agent to act is a
+    // distinct event each time, not a scheduled round to be deduplicated.
     const event = await runAgentTick(auth.bearer, mine, roster, worldCreds);
     if (event) await appendEvent(event);
     return c.json(event ? { event } : { event: null, note: 'Your agent held back this round.' });
@@ -974,6 +1038,15 @@ process.on('unhandledRejection', (reason) => {
   console.error('[world] unhandled rejection (continuing):', reason instanceof Error ? reason.message : reason);
 });
 process.on('uncaughtException', (error) => {
+  // Except the one failure that means this process should not exist. Swallowing
+  // EADDRINUSE turned a loud "the port is taken" into a silent second world
+  // driver: thirty-one of them accumulated over three days, each one invisible
+  // because none of them was serving HTTP, and together they drove one agent
+  // 51 times inside a single round.
+  if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+    console.error(`[world] port ${config.port} is already served by another process — exiting`);
+    process.exit(1);
+  }
   console.error('[world] uncaught exception (continuing):', error.message);
 });
 
@@ -984,7 +1057,24 @@ void loadTownState();
 // every restart. Both rebuild from the event stream rather than needing tables.
 void rehydrateThreads();
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(sig, () => { void flushTownState().finally(() => process.exit(0)); });
+  process.once(sig, () => {
+    // Whatever happens in here, this process is leaving. A shutdown step that
+    // throws used to be caught by the global handler above and "continued",
+    // which meant the process never exited and had to be force-killed after
+    // five seconds — losing the town state flush it was in the middle of.
+    const leave = () => process.exit(0);
+    try {
+      void releaseClaims()          // hand back in-flight turns, or the agents
+        .catch(() => undefined)     // in them stand still until the lease lapses
+        .then(() => flushTownState())
+        .catch(() => undefined)
+        .finally(leave);
+    } catch {
+      leave();
+    }
+    // A step that hangs must not hold the process open either.
+    setTimeout(leave, 4_000).unref?.();
+  });
 }
 
 if (isMainModule) {
@@ -1007,8 +1097,15 @@ if (isMainModule) {
  * Before this, only agents belonging to a pasted API key ever moved — four of
  * six agents in the town were permanently frozen, which biased every
  * behavioural signal the detectors produce.
+ *
+ * `isMainModule` gates it for the same reason `serve()` above does: importing
+ * the BFF should not start a world. A serverless handler imports this file on
+ * every cold start, and a resident loop inside a function that gets frozen
+ * between invocations is not a heartbeat — it is an extra claimant. Correctness
+ * no longer depends on this (each turn is claimed), but nothing should be doing
+ * work it cannot finish.
  */
-if (process.env.DATING_WORLD_KEYS || isDatabaseConfigured()) {
+if (isMainModule && (process.env.DATING_WORLD_KEYS || isDatabaseConfigured())) {
   void (async () => {
     for (const key of (process.env.DATING_WORLD_KEYS ?? '').split(',').map((k) => k.trim()).filter(Boolean)) {
       try {
@@ -1040,7 +1137,6 @@ if (process.env.DATING_WORLD_KEYS || isDatabaseConfigured()) {
       return;
     }
     const intervalMs = Number(process.env.DATING_WORLD_INTERVAL_MS ?? 300_000);
-    console.log(`[dating] 🌍 world loop live · ${initial.size} identifier(s) · every ${intervalMs}ms`);
     // Refreshed each round so a player who signs in mid-session joins the world
     // without a restart, and one who signs out drops out of it.
     let live = initial;
@@ -1050,18 +1146,22 @@ if (process.env.DATING_WORLD_KEYS || isDatabaseConfigured()) {
         live = await withOauth().catch(() => live);
       }
     })();
+    // Any number of processes may run this. Each round is claimed per agent in
+    // the database before a model is called, so a second loop finds every turn
+    // already taken and goes quiet — rather than doubling the town.
+    console.log(`[dating] 🌍 world loop live · ${initial.size} identifier(s) · every ${intervalMs}ms`);
     startWorldLoop({
       creds: () => live,
       roster: () => listSquare(),
       intervalMs,
       onEvent: (e) => {
-        appendEvent(e).catch(() => undefined);
-        void recordEvent(e);                          // durable in links/
-        // Postgres is what the feed, the trajectory detectors and the director
-        // will actually query — by pair, by place, by time.
-        if (townDbReady()) void saveEvent(e as unknown as Record<string, unknown>).catch((err) => console.warn('[town] saveEvent:', err?.message));
-        // refresh the town digest from real threads (throttled inside)
-        maybeSummarise();
+        // `appendEvent` is the durable write — it is what puts the beat in
+        // Postgres, where the feed, the trajectory detectors and the director
+        // all query it by pair, by place and by time.
+        appendEvent(e).catch((err) => console.warn('[town] appendEvent:', err?.message));
+        void recordEvent(e).catch(() => undefined);      // durable in links/
+        void maybeRenewShare(e);                          // a dead capability, not a bad turn
+        maybeSummarise();                                 // throttled inside
         void maybeCloseYear().catch(() => undefined);
         console.log(`[dating] 🌀 ${e.actor} [${e.move}] → ${e.target} · a${e.attraction.toFixed(2)}/t${e.tension.toFixed(2)} — ${e.note}`);
       },

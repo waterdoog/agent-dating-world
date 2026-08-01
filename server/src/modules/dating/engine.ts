@@ -24,6 +24,7 @@ import { listEvents, type AgentCard } from './store.js';
 import { config } from '../../config.js';
 import { grok, ModelError } from './grok.js';
 import { remaining, reserveTurn, refundTurn } from './budget.js';
+import { claimTurn, completeTurn, failTurn } from './turn-lock.js';
 import { absorb, narrate, knownTo, duplicatePromises, recordKnowledge } from './threads.js';
 import { commitCrime, falloutOf, wantedLevel, NPCS, npcNow, livePositions, balance, spend, carrying, give, resolveOffer, npcRecalls, type OfferKind } from './town-life.js';
 import { placeAt, townBrief, routeHint } from './town-map.js';
@@ -342,6 +343,13 @@ export interface TickEvent {
   actor: string;
   target: string;
   move: string;
+  /**
+   * Which claimed turn produced this beat, when one did. Carried through to the
+   * event row so a turn retaken after its lease expired cannot record a second
+   * version of the same moment. Absent for hand-driven turns, which are new
+   * events every time.
+   */
+  operationId?: string;
   /** The costly, observable behaviour this beat consisted of. */
   act?: string;
   /** What a bystander (or the target) could actually see, if anything. */
@@ -1157,13 +1165,46 @@ async function rescoreAfterExchange(
  * turn does not happen — that silence is the story, never a faked exchange.
  * A failed model call surfaces as failed/timeout; it never invents content.
  */
+/**
+ * One self-directed turn, taken at most once.
+ *
+ * The claim is the first thing that happens — before the seven Aicoo reads and
+ * long before the decision call. The turn used to be reserved only once the
+ * exchange began, so a duplicate process had already paid for a full `decide`
+ * by the time anything noticed it was redundant. Whoever loses the race here
+ * spends one round trip and goes quiet.
+ *
+ * A turn that produced a FAILED event is still `done`: the round happened, and
+ * the next round carries a different id and retries on its own. Only a thrown
+ * error releases the claim, because that is the case where nothing was recorded
+ * and the work is genuinely still outstanding.
+ */
 export async function runAgentTick(
+  bearer: string,
+  actor: AgentCard,
+  roster: AgentCard[],
+  creds: Map<string, string>,
+  operationId?: string
+): Promise<TickEvent | null> {
+  if (operationId && !(await claimTurn(operationId, actor.name))) return null;
+  try {
+    const event = await takeTurn(bearer, actor, roster, creds);
+    if (event && operationId) event.operationId = operationId;
+    if (operationId) await completeTurn(operationId);
+    return event;
+  } catch (error) {
+    if (operationId) await failTurn(operationId, error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+}
+
+async function takeTurn(
   bearer: string,
   actor: AgentCard,
   roster: AgentCard[],
   creds: Map<string, string>
 ): Promise<TickEvent | null> {
-  const left = remaining(actor.name);
+  const left = await remaining(actor.name);
   if (left <= 0) return null;                    // spent today — it simply doesn't speak
 
   const [persona, memory, rels] = await Promise.all([
@@ -1202,9 +1243,11 @@ export async function runAgentTick(
   const prompt = fillGoal(actor.name, persona, rels, roster, situation, memory.secrets, left, recalled + alsoRecalled, places, lastSaid);
   let decision: Move | null = null;
   let decideRunId: string | undefined;
+  let decideText = '';
   try {
     const out = await think(prompt, 'decide', actor.name, bearer, actor.shareToken);
     decideRunId = out.runId;
+    decideText = out.text;
     decision = parseMove(out.text);
   } catch (error) {
     if (error instanceof ModelError) {
@@ -1220,10 +1263,45 @@ export async function runAgentTick(
     }
     throw error;
   }
-  if (!decision) return null;
-
-  const target = roster.find((c) => c.handle === decision!.target || c.name === decision!.target);
-  if (!target || target.name === actor.name) return null;
+  /**
+   * A decision nobody can act on gets one correction, then it is reported.
+   *
+   * Both of these used to be a bare `return null`, so a turn that had already
+   * cost a full decision call vanished without a word — the only trace was the
+   * scheduler guessing between "no budget / unparsable / bad target". It was
+   * none of those: the model answered `{"act":"GO_TO_WORK","move":"SELF",
+   * "target":""}` — a solitary act, in neither vocabulary the goal supplies,
+   * aimed at nobody. The town has no way to represent an agent going to work
+   * alone; every beat is between two people. So say what the vocabulary is and
+   * ask once more, rather than silently dropping the round.
+   */
+  let target = decision && roster.find((c) => c.handle === decision!.target || c.name === decision!.target);
+  if (!decision || !target || target.name === actor.name) {
+    const others = roster.filter((c) => c.name !== actor.name).map((c) => c.handle).join('、');
+    const said = decision ? `act=「${decision.act}」target=「${decision.target || '空'}」` : `「${decideText.slice(0, 80)}」`;
+    try {
+      const retryOut = await think(
+        `${prompt}\n\n‼️ 你刚才给的是 ${said}，这一拍没法发生：\n` +
+        `- target 必须是这些 handle 里的一个，不能留空，也不能是你自己：${others}\n` +
+        `- act 必须来自上面的词汇表；小镇里没有"一个人去上班"这种拍子，每一拍都是冲着某个人的。\n` +
+        `- 你可以什么都不说（message 留空），但不能没有对象——盯着谁、避开谁、绕路经过谁，都算。\n` +
+        `重写这一拍，只输出 JSON。`,
+        'decide-retry', actor.name, bearer, actor.shareToken
+      ).catch(() => null);
+      const retry = retryOut && parseMove(retryOut.text);
+      const retried = retry && roster.find((c) => c.handle === retry.target || c.name === retry.target);
+      if (!retry || !retried || retried.name === actor.name) {
+        console.warn(`[dating] ${actor.name}: decision named nobody (${said}) — round dropped`);
+        return null;
+      }
+      decision = retry;
+      target = retried;
+      if (retryOut) decideRunId = retryOut.runId;
+    } catch (error) {
+      console.warn(`[dating] ${actor.name}: target retry failed —`, error instanceof Error ? error.message : error);
+      return null;
+    }
+  }
 
   // A beat that just re-says the last one gets ONE forced retry naming the
   // offending line; if it repeats itself again, the turn is dropped rather than
@@ -1297,7 +1375,7 @@ export async function runAgentTick(
         summary: decision.summary || `${actor.name} ${done.label}。${target.name} 会知道是谁干的。`,
         consequence: decision.consequence || 'a crime lands on someone who can feel it',
         followup: decision.followup || `${target.name} 会当面质问，还是先按住不说？`,
-        decideRunId, turnsLeft: remaining(actor.name), status: 'ok',
+        decideRunId, turnsLeft: await remaining(actor.name), status: 'ok',
       };
       const th = absorb(ev);
       if (th && th.beats.length >= 2) await narrate(th, bearer, actor.shareToken).catch(() => undefined);
@@ -1450,9 +1528,9 @@ export async function runAgentTick(
 
   // The budget is spoken lines: the actor pays for its opener, the target pays
   // for its own reply. Reserving is atomic and happens before any model call.
-  if (!reserveTurn(actor.name, target.name)) return null;
-  if (!reserveTurn(target.name, actor.name)) {
-    refundTurn(actor.name, target.name);          // the target cannot afford to answer
+  if (!(await reserveTurn(actor.name, target.name))) return null;
+  if (!(await reserveTurn(target.name, actor.name))) {
+    await refundTurn(actor.name, target.name);    // the target cannot afford to answer
     return null;
   }
 
@@ -1463,8 +1541,8 @@ export async function runAgentTick(
     reply = out.text;
     replyRunId = out.runId;
   } catch (error) {
-    refundTurn(actor.name, target.name);          // the turn provably never happened
-    refundTurn(target.name, actor.name);
+    await refundTurn(actor.name, target.name);    // the turn provably never happened
+    await refundTurn(target.name, actor.name);
     if (error instanceof ModelError) {
       return {
         actor: actor.name, target: target.name, move: decision.move,
@@ -1474,7 +1552,7 @@ export async function runAgentTick(
         headline: `${target.name} 没有回应${actor.name}`,
         summary: `对方的回合 ${error.status}：${error.run.error ?? ''}`.trim(),
         consequence: '', followup: '', decideRunId, replyRunId: error.run.id,
-        turnsLeft: remaining(actor.name), status: error.status === 'timeout' ? 'timeout' : 'failed',
+        turnsLeft: await remaining(actor.name), status: error.status === 'timeout' ? 'timeout' : 'failed',
       };
     }
     throw error;
@@ -1498,7 +1576,7 @@ export async function runAgentTick(
   const closeness = Math.min(scored.attraction, scored.trust + 0.3);
   const roundCap = closeness < 0.4 ? 1 : MAX_ROUNDS;
   for (let round = 2; round <= roundCap; round++) {
-    if (remaining(actor.name) <= 0 || remaining(target.name) <= 0) break;
+    if ((await remaining(actor.name)) <= 0 || (await remaining(target.name)) <= 0) break;
 
     let follow: { close: boolean; message: string; runId: string };
     try {
@@ -1510,15 +1588,15 @@ export async function runAgentTick(
     // circling counts as finished, whatever the model claims
     if (lines.some((l) => l.speaker === actor.name && tooSimilar(follow.message, l.text))) break;
 
-    if (!reserveTurn(actor.name, target.name)) break;
-    if (!reserveTurn(target.name, actor.name)) { refundTurn(actor.name, target.name); break; }
+    if (!(await reserveTurn(actor.name, target.name))) break;
+    if (!(await reserveTurn(target.name, actor.name))) { await refundTurn(actor.name, target.name); break; }
 
     let back: { text: string; runId: string };
     try {
       back = await replyFrom(target, actor.name, follow.message, creds, bearer);
     } catch {
-      refundTurn(actor.name, target.name);
-      refundTurn(target.name, actor.name);
+      await refundTurn(actor.name, target.name);
+      await refundTurn(target.name, actor.name);
       break;                                     // keep what was already said
     }
     lines.push({ speaker: actor.name, text: follow.message, runId: follow.runId });
@@ -1615,7 +1693,7 @@ export async function runAgentTick(
     followup: decision.followup || '',
     decideRunId,
     replyRunId,
-    turnsLeft: remaining(actor.name),
+    turnsLeft: await remaining(actor.name),
     status: 'ok',
   };
 
@@ -1642,7 +1720,7 @@ export async function encounterWith(
   target: AgentCard,
   creds: Map<string, string>
 ): Promise<TickEvent | null> {
-  const left = remaining(actor.name);
+  const left = await remaining(actor.name);
   if (left <= 0) return null;                      // no turns left today
 
   const [persona, rels] = await Promise.all([getPersona(bearer, actor.name), readRels(bearer, actor.name)]);
@@ -1701,7 +1779,7 @@ export async function encounterWith(
   const tension = clamp01(encBase.tension + clampDelta(o.dTension ?? o.tension));
   const note = String(o.note ?? '');
 
-  if (!reserveTurn(actor.name, target.name)) return null;
+  if (!(await reserveTurn(actor.name, target.name))) return null;
   let reply: string;
   let replyRunId: string | undefined;
   try {
@@ -1709,7 +1787,7 @@ export async function encounterWith(
     reply = out.text;
     replyRunId = out.runId;
   } catch (error) {
-    refundTurn(actor.name, target.name);
+    await refundTurn(actor.name, target.name);
     if (error instanceof ModelError) {
       return {
         actor: actor.name, target: target.name, move: 'APPROACH', message, reply: '',
@@ -1717,7 +1795,7 @@ export async function encounterWith(
         headline: `${target.name} 没有回应 ${actor.name}`,
         summary: `对方的回合 ${error.status}`, consequence: '', followup: '',
         decideRunId, replyRunId: error.run.id,
-        turnsLeft: remaining(actor.name), status: error.status === 'timeout' ? 'timeout' : 'failed',
+        turnsLeft: await remaining(actor.name), status: error.status === 'timeout' ? 'timeout' : 'failed',
       };
     }
     throw error;
@@ -1732,7 +1810,7 @@ export async function encounterWith(
     headline: `${actor.name} 在广场上叫住了 ${target.name}`,
     summary: note ? `${actor.name} 走近 ${target.name}：${note}` : `${actor.name} 走近了 ${target.name}`,
     consequence: '', followup: '',
-    decideRunId, replyRunId, turnsLeft: remaining(actor.name), status: 'ok',
+    decideRunId, replyRunId, turnsLeft: await remaining(actor.name), status: 'ok',
   };
   const thread = absorb(event);
   if (thread && thread.beats.length >= 2) {

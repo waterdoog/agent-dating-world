@@ -12,7 +12,10 @@
  * agent can surface somewhere else.
  */
 import { grok, ModelError } from './grok.js';
-import { townDbReady, addKnowledge, knowledgeOf, recentEvents } from './town-repository.js';
+import {
+  townDbReady, addKnowledge, knowledgeOf, recentEvents,
+  saveNarration, readNarration, narrationsUnder,
+} from './town-repository.js';
 import type { TickEvent } from './engine.js';
 import { recordThread, recordDigest } from './records.js';
 
@@ -109,14 +112,27 @@ export async function rehydrateThreads(): Promise<void> {
     if (said.length > MAX_SAID) said.length = MAX_SAID;
 
     // Story threads rebuild from the same stream — a thread IS its beats, so
-    // there is nothing to store separately. The narrated title/arc is lost on a
-    // restart and regenerates on the next beat; the history itself is not.
+    // the history needs nothing stored. What DID need storing is the narration
+    // on top of it: a title, an arc and an open question are model output, not
+    // facts, and holding them in a Map meant every restart threw them away and
+    // regenerated a different version. That is what looked like the story lines
+    // resetting themselves.
+    const written = new Map(
+      (await narrationsUnder<{ title?: string; arc?: string; openQuestion?: string; updatedAt?: number }>('thread:'))
+        .map((n) => [n.key.slice('thread:'.length), n])
+    );
+
     for (const e of events) {
       if (!e.target || e.status === 'failed' || e.status === 'timeout') continue;
       const id = threadKey(String(e.actor), String(e.target));
+      const saved = written.get(id);
       const t = threads.get(id) ?? {
         id, cast: [String(e.actor), String(e.target)], beats: [],
-        title: `${e.actor} 与 ${e.target}`, arc: '', openQuestion: '', updatedAt: Number(e.at),
+        title: saved?.value.title || `${e.actor} 与 ${e.target}`,
+        arc: saved?.value.arc ?? '',
+        openQuestion: saved?.value.openQuestion ?? '',
+        ...(saved?.runId ? { runId: saved.runId } : {}),
+        updatedAt: Number(e.at),
       };
       // `at` is required: recordThread formats it, and a missing one threw
       // RangeError deep inside a narrate() call and took the whole BFF down.
@@ -131,7 +147,9 @@ export async function rehydrateThreads(): Promise<void> {
       t.updatedAt = Math.max(t.updatedAt, Number(e.at));
       threads.set(id, t);
     }
-    console.log(`[threads] rehydrated ${said.length} utterance(s), ${threads.size} thread(s) from Postgres`);
+    const narrated = [...threads.keys()].filter((id) => written.has(id)).length;
+    console.log(`[threads] rehydrated ${said.length} utterance(s), ${threads.size} thread(s), ${narrated} narration(s) from Postgres`);
+    digest = await readNarration<WorldDigest>('digest');
   } catch (error) {
     console.warn('[threads] rehydrate failed —', error instanceof Error ? error.message : error);
   }
@@ -259,6 +277,16 @@ export async function narrate(
       thread.runId = run.id;
       thread.updatedAt = Date.now();
       void recordThread(thread).catch(() => undefined);   // durable in links/
+      // The beats rebuild themselves from the event stream; this does not. It
+      // is a model call, and holding it only in memory is what made the story
+      // lines look like they reset on their own.
+      if (townDbReady()) {
+        void saveNarration(
+          `thread:${thread.id}`,
+          { title: thread.title, arc: thread.arc, openQuestion: thread.openQuestion, updatedAt: thread.updatedAt },
+          run.id
+        ).catch((err) => console.warn('[threads] narration save failed —', err?.message));
+      }
     }
   } catch (error) {
     if (!(error instanceof ModelError)) throw error;
@@ -321,6 +349,10 @@ export async function summariseWorld(bearer: string, shareToken?: string): Promi
     if (lines.length) {
       digest = { lines, runId: run.id, at: Date.now() };
       void recordDigest(digest).catch(() => undefined);   // durable in links/
+      if (townDbReady()) {
+        void saveNarration('digest', digest, run.id)
+          .catch((err) => console.warn('[threads] digest save failed —', err?.message));
+      }
     }
   } catch (error) {
     if (!(error instanceof ModelError)) throw error;   // failed run keeps the old digest

@@ -21,32 +21,11 @@
  *     rejected the error is recorded and the agent simply stops acting — never
  *     substituted content, per the town's REAL-ONLY rule.
  */
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { database, isDatabaseConfigured } from '../../database/client.js';
-import { config } from '../../config.js';
 import { refreshTokens } from '../../oauth.js';
-
-const keyOf = () => createHash('sha256').update(config.sessionSecret).digest();
-
-function seal(plain: string): string {
-  const iv = randomBytes(12);
-  const c = createCipheriv('aes-256-gcm', keyOf(), iv);
-  const body = Buffer.concat([c.update(plain, 'utf8'), c.final()]);
-  return [iv.toString('base64'), c.getAuthTag().toString('base64'), body.toString('base64')].join(':');
-}
-
-function open(sealed: string): string | null {
-  try {
-    const [iv, tag, body] = sealed.split(':');
-    const d = createDecipheriv('aes-256-gcm', keyOf(), Buffer.from(iv, 'base64'));
-    d.setAuthTag(Buffer.from(tag, 'base64'));
-    return Buffer.concat([d.update(Buffer.from(body, 'base64')), d.final()]).toString('utf8');
-  } catch {
-    // A rotated SESSION_SECRET makes old rows unreadable. That is not a crash:
-    // the credential is simply unusable and the agent stays still.
-    return null;
-  }
-}
+// The share token in the roster needs the same treatment, so the crypto lives
+// in one place rather than being copied and left to drift.
+import { seal, open } from './sealed.js';
 
 export const credentialsReady = (): boolean => isDatabaseConfigured();
 

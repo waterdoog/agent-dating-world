@@ -12,12 +12,25 @@ import {
   ensureFolder,
   upsertNote,
   createShareLink,
+  listShareLinks,
+  revokeShareLink,
   getNote,
   findNoteInFolder,
   listNotesByFolderId,
   editNote,
   AicooError,
 } from '../../aicoo.js';
+import {
+  townDbReady,
+  saveEvent as saveTownEvent,
+  recentEvents as recentTownEvents,
+  rosterRows,
+  upsertRosterRow,
+  setRosterOwnerName,
+  seedRoster,
+  replaceShareToken,
+  type RosterRow,
+} from './town-repository.js';
 
 /**
  * Aicoo auto-creates a policy note per share link in the owner's `links/`
@@ -142,6 +155,101 @@ const OWNER_ROOT = 'Agent Dating';
 const DIR_ROOT = 'Agent Dating Square';
 const DIR_NOTE = 'roster.json';
 
+/**
+ * How long an agent's capability to speak as itself should last.
+ *
+ * This was never passed, so every share link took the API's seven-day default
+ * and each agent fell silent a week after release — the town's dialogue stopped
+ * on 30 July against a world epoch of 23 July. Agent Fights sets its own
+ * (`LINK_EXPIRY = '1h'`, a match-length capability); the square just never did.
+ *
+ * The number is not the safeguard, though — the API may cap it, and nothing in
+ * the response says what was actually granted. `renewShare` below is what keeps
+ * an agent alive, and this only makes the window it works in a longer one.
+ */
+const SHARE_LIFETIME = '30d';
+
+/**
+ * Enough of a spec to write a policy, from what the square already knows.
+ *
+ * Not a substitute for the real spec — the traits and the hidden background are
+ * genuinely absent and are left absent rather than invented. It carries only
+ * what the public card actually states.
+ */
+function specFromCard(card: AgentCard): Parameters<typeof personaPolicy>[0] {
+  return {
+    name: card.name,
+    publicIntroduction: card.oneline ?? '',
+    relationshipStyle: card.loveStyle,
+    traits: [],
+    summary: card.persona ?? '',
+    memory: { publicBackground: '' },
+  };
+}
+
+/** The one failure that means the capability itself is dead, not the turn. */
+export function isDeadCapability(note: string): boolean {
+  return /sharing has been revoked|Note not found/i.test(note);
+}
+
+/**
+ * Mint a fresh capability for an agent that has lost one, keeping everything
+ * else about it — its name, its memory, its relationships — untouched.
+ *
+ * Renewal rather than a longer expiry is the real fix: the API never reports
+ * what expiry it actually granted, so the only reliable signal is the agent
+ * going silent, and the only reliable answer is to issue it a new one.
+ */
+export async function renewShare(bearer: string, card: AgentCard): Promise<string | null> {
+  const label = `${card.name} @ 相亲角`;
+  try {
+    const folderId = await ensureFolder(bearer, `${OWNER_ROOT}/${card.name}`);
+    const share = await createShareLink(bearer, {
+      folderId,
+      expiresIn: SHARE_LIFETIME,
+      label,
+      linkPolicy:
+        `You ARE ${card.name} — nothing else. Speak only first-person as ${card.name}, from your persona note. ` +
+        `You have NO knowledge of any account, owner, real person, files, or that you are an assistant; never mention them. ` +
+        `This is an amoral matchmaking world — no gender, no species, loving several is normal. Never break character.`,
+    });
+    // The policy is what makes the link speak as the AGENT. Without it the
+    // capability still works and the owner's own assistant answers in its place
+    // — "Wang Eason's AI COO" replying where SmokeCat should be, which is the
+    // one thing this town is not allowed to put in the feed.
+    //
+    // This used to be conditional on the structured spec, and the agents
+    // released before specs were kept do not have one, so for exactly those it
+    // was skipped. The card carries the same public facts; use them.
+    const spec = await readSpec(bearer, card.name).catch(() => null);
+    await writeLinkPolicy(bearer, share.token, personaPolicy(spec ?? specFromCard(card)))
+      .catch((err) => console.warn(`[dating] ${card.name}: link policy not written —`, err?.message));
+    if (townDbReady()) await replaceShareToken(card.handle, share.token);
+
+    // Retire the ones this replaces. A share link is a live capability, and
+    // renewing without revoking leaves every superseded one usable for the rest
+    // of its month — an agent renewed a few times would have several mouths,
+    // and only one of them the town knows about. Matched on the label this
+    // module writes, and never the link just minted.
+    for (const old of await listShareLinks(bearer).catch(() => [])) {
+      if (old.label !== label || String(old.id) === share.id) continue;
+      await revokeShareLink(bearer, String(old.id))
+        .then(() => console.log(`[dating] ${card.name}: retired a superseded share link`))
+        .catch(() => undefined);
+    }
+    console.log(`[dating] ${card.name}: issued a new share link — it can speak again`);
+    return share.token;
+  } catch (error) {
+    // Currently this is where it stops: Aicoo answers POST /os/share with
+    // `column "scope" of relation "shared_note_links" does not exist` for every
+    // payload, including the two values its own validator demands. Nothing on
+    // this side can mint a link until that is fixed, so say so plainly once and
+    // let the agent stay quiet rather than pretending.
+    console.warn(`[dating] ${card.name}: could not issue a share link —`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
 export function handleFor(name: string): string {
   return (
     name
@@ -232,9 +340,65 @@ async function writeRoster(cards: AgentCard[]): Promise<void> {
   await upsertNote(config.operatorApiKey, DIR_ROOT, DIR_NOTE, JSON.stringify(cards, null, 2));
 }
 
+/**
+ * Put one agent in the square.
+ *
+ * Every writer used to read the whole roster, change one entry and write the
+ * whole thing back to a single note. Two people releasing at the same moment
+ * both read the same list and both wrote their own version of it — the one who
+ * finished second erased the other's agent. With a row per agent, a release
+ * touches only that agent.
+ *
+ * Without Postgres the old path remains, because a checkout with no database is
+ * one process and one player.
+ */
+async function putAgent(card: AgentCard): Promise<void> {
+  if (townDbReady()) {
+    await upsertRosterRow(card as unknown as RosterRow);
+    return;
+  }
+  const roster = (await readRoster()).filter((c) => c.handle !== card.handle);
+  await writeRoster([...roster, card]);
+}
+
+/**
+ * Adopt the note's agents the first time the table is empty.
+ *
+ * The eight agents already in the square exist only in that note; a migration
+ * cannot reach them. Seeding on the first read is the one place that knows how
+ * to, and `ON CONFLICT DO NOTHING` inside means it can never overwrite an agent
+ * the town has since edited.
+ */
+let seeded = false;
+async function seedFromNote(): Promise<void> {
+  if (seeded) return;
+  seeded = true;
+  try {
+    const cards = await readRoster();
+    const adopted = await seedRoster(cards as unknown as RosterRow[]);
+    if (adopted) console.log(`[dating] roster: adopted ${adopted} agent(s) from the square note`);
+  } catch (error) {
+    // A failed seed leaves an empty square rather than a broken boot; the note
+    // is still there and the next read tries again after a restart.
+    seeded = false;
+    console.warn('[dating] roster seed failed —', error instanceof Error ? error.message : error);
+  }
+}
+
 /** Public roster — what a newcomer sees, and what the autonomy loop reads. */
 export async function listSquare(): Promise<AgentCard[]> {
-  return readRoster();
+  if (!townDbReady()) return readRoster();
+  try {
+    let rows = await rosterRows();
+    if (!rows.length) {
+      await seedFromNote();
+      rows = await rosterRows();
+    }
+    return rows as unknown as AgentCard[];
+  } catch (error) {
+    console.warn('[dating] roster read failed —', error instanceof Error ? error.message : error);
+    return readRoster();
+  }
 }
 
 // ── shared world-event feed ──────────────────────────────────────────
@@ -244,12 +408,24 @@ export async function listSquare(): Promise<AgentCard[]> {
 // operator workspace for continuity across restarts; a failed persist
 // never blocks the live feed.
 const EVENTS_NOTE = 'events.json';
-let recentEvents: WorldEvent[] = [];
-let eventsHydrated = false;
+const FEED_SIZE = 25;
 
-async function hydrateEvents(): Promise<void> {
-  if (eventsHydrated) return;
-  eventsHydrated = true;
+/**
+ * Only a fallback now.
+ *
+ * This array used to BE the feed: hydrated once at boot, appended to in memory,
+ * and written back to a single Aicoo note in full each time. Two processes each
+ * held their own copy, so they showed different towns, and each full-array write
+ * dropped whatever the other had just added. It survives for a checkout with no
+ * Postgres, where one process is the whole world and there is nothing to lose an
+ * update to.
+ */
+let localFeed: WorldEvent[] = [];
+let localHydrated = false;
+
+async function hydrateLocalFeed(): Promise<void> {
+  if (localHydrated) return;
+  localHydrated = true;
   if (!config.operatorApiKey) return;
   try {
     const folderId = await ensureFolder(config.operatorApiKey, DIR_ROOT);
@@ -257,28 +433,58 @@ async function hydrateEvents(): Promise<void> {
     if (!note) return;
     const raw = await getNote(config.operatorApiKey, note.id);
     const m = raw.match(/\[[\s\S]*\]/);
-    if (m) recentEvents = JSON.parse(m[0]) as WorldEvent[];
+    if (m) localFeed = JSON.parse(m[0]) as WorldEvent[];
   } catch {
     /* operator unreadable — start from an empty feed */
   }
 }
 
-export async function listEvents(): Promise<WorldEvent[]> {
-  if (!eventsHydrated) await hydrateEvents();
-  return recentEvents;
+/** The town's recent beats, as every process sees them. */
+export async function listEvents(limit = FEED_SIZE): Promise<WorldEvent[]> {
+  if (townDbReady()) {
+    try {
+      return (await recentTownEvents(limit)) as unknown as WorldEvent[];
+    } catch (error) {
+      // A readable-but-stale feed beats a blank plaza. The local array holds
+      // whatever this process itself has seen since it started.
+      console.warn('[dating] feed read failed —', error instanceof Error ? error.message : error);
+    }
+  }
+  await hydrateLocalFeed();
+  return localFeed;
 }
 
+/**
+ * Record a beat — the one place an event becomes durable.
+ *
+ * There were four callers appending events and exactly one of them, the world
+ * loop, also wrote to Postgres. Manual ticks, chance encounters and the
+ * director's beats existed only in one process's memory and in a note, which is
+ * why every detector that queries by pair, by place or by time was reasoning
+ * over a fraction of what had actually happened.
+ */
 export async function appendEvent(e: Omit<WorldEvent, 'at'>): Promise<void> {
-  if (!eventsHydrated) await hydrateEvents();
-  recentEvents = [{ ...e, at: Date.now() }, ...recentEvents].slice(0, 25);
+  const event = { ...e, at: Date.now() } as WorldEvent;
+  if (townDbReady()) {
+    await saveTownEvent(event as unknown as Record<string, unknown>);
+    return;
+  }
+  localFeed = [event, ...localFeed].slice(0, FEED_SIZE);
   // best-effort durability; ignore failures (budget, rate limit, offline)
   if (config.operatorApiKey) {
-    void upsertNote(config.operatorApiKey, DIR_ROOT, EVENTS_NOTE, JSON.stringify(recentEvents, null, 2)).catch(() => undefined);
+    void upsertNote(config.operatorApiKey, DIR_ROOT, EVENTS_NOTE, JSON.stringify(localFeed, null, 2)).catch(() => undefined);
   }
 }
 
 /** Record which account owns an agent, for cards written before that was kept. */
 export async function stampOwnerName(handle: string, ownerName: string): Promise<void> {
+  if (townDbReady()) {
+    // One column on one row — it never needed to rewrite the square.
+    if (await setRosterOwnerName(handle, ownerName)) {
+      console.log(`[dating] ${handle}: owner recorded as ${ownerName} — the world loop can drive it now`);
+    }
+    return;
+  }
   const roster = await readRoster();
   const card = roster.find((c) => c.handle === handle);
   if (!card || card.ownerName === ownerName) return;
@@ -326,7 +532,7 @@ export async function updateAgent(
   ownerSub: string,
   spec: ReleaseSpec
 ): Promise<AgentCard> {
-  const roster = await readRoster();
+  const roster = await listSquare();
   const existing = roster.find((c) => c.ownerSub === ownerSub && c.name === spec.name);
   if (!existing) throw new Error(`No released agent named ${spec.name} for this owner.`);
 
@@ -350,7 +556,7 @@ export async function updateAgent(
       spec.memory.publicBackground.trim() ? `背景：${spec.memory.publicBackground.trim()}` : '',
     ].filter(Boolean).join(' ').slice(0, 700),
   };
-  await writeRoster([...roster.filter((c) => c.handle !== card.handle), card]);
+  await putAgent(card);
   return card;
 }
 
@@ -369,6 +575,7 @@ export async function releaseAgent(
 
   const share = await createShareLink(bearer, {
     folderId,
+    expiresIn: SHARE_LIFETIME,
     label: `${spec.name} @ 相亲角`,
     linkPolicy:
       `You ARE ${spec.name} — nothing else. Speak only first-person as ${spec.name}, from your persona note. ` +
@@ -396,8 +603,6 @@ export async function releaseAgent(
     ].filter(Boolean).join(' ').slice(0, 700),
   };
 
-  const roster = (await readRoster()).filter((c) => c.handle !== card.handle);
-  roster.push(card);
-  await writeRoster(roster);
+  await putAgent(card);
   return card;
 }
