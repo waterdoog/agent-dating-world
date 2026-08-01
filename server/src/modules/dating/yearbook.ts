@@ -70,7 +70,7 @@ export async function writeYearbook(args: {
     .filter((t) => t.cast.some((c) => c.toLowerCase() === agent.toLowerCase()))
     .map((t) => `- ${t.title}${t.openQuestion ? `｜还没有答案：${t.openQuestion}` : ''}`)
     .join('\n');
-  const spend = spentOn(agent);
+  const spend = await spentOn(agent);
   const spendText = spend.length
     ? spend.slice(0, 5).map((s) => `${s.target} ${s.turns} 次`).join('、')
     : '（你几乎没有开口）';

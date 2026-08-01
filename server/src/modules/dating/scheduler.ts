@@ -15,11 +15,18 @@ import { runAgentTick, type TickEvent } from './engine.js';
 const brokeAt = new Map<string, number>();
 const BROKE_THROTTLE_MS = 30 * 60_000;
 
-/** One autonomous round — every actable agent takes a turn. */
+/**
+ * One autonomous round — every actable agent takes a turn, at most once.
+ *
+ * `round` is the shared identity of this round: every process derives the same
+ * number from wall-clock time, so the turn ids they compute collide in the
+ * database instead of producing two of everything. Omit it and the round is
+ * unclaimed, which is only right for a hand-driven call.
+ */
 export async function runWorldRound(
   creds: Map<string, string>,
   roster: AgentCard[],
-  opts: { maxTurns?: number; onEvent?: (e: TickEvent) => void } = {}
+  opts: { maxTurns?: number; onEvent?: (e: TickEvent) => void; round?: number } = {}
 ): Promise<TickEvent[]> {
   // Match on either identifier: agents released through the UI carry a pairwise
   // OAuth sub that no API key can resolve, but their account name resolves fine.
@@ -42,7 +49,13 @@ export async function runWorldRound(
   }
   const withCap = (agent: AgentCard) =>
     Promise.race([
-      runAgentTick(keyFor(agent)!, agent, roster, creds),
+      runAgentTick(
+        keyFor(agent)!,
+        agent,
+        roster,
+        creds,
+        opts.round === undefined ? undefined : `world:${opts.round}:${agent.handle}`
+      ),
       new Promise<null>((_, reject) =>
         setTimeout(() => reject(new Error(`turn exceeded ${TURN_CAP_MS}ms`)), TURN_CAP_MS)
       ),
@@ -67,7 +80,9 @@ export async function runWorldRound(
   const events: TickEvent[] = [];
   settled.forEach((r, i) => {
     if (r.status === 'rejected') console.warn(`[dating] ${ordered[i]?.name} tick threw:`, r.reason instanceof Error ? r.reason.message : r.reason);
-    else if (!r.value) console.warn(`[dating] ${ordered[i]?.name} tick returned null (no budget / unparsable decision / bad target)`);
+    // Claimed elsewhere is now the ordinary reason and belongs first: with more
+    // than one process awake, most agents are someone else's turn to take.
+    else if (!r.value) console.log(`[dating] ${ordered[i]?.name} sat this round out (claimed by another process / no budget / unparsable decision / bad target)`);
   });
   for (const result of settled) {
     if (result.status !== 'fulfilled' || !result.value) continue;   // a failed account just sits this round out
@@ -82,7 +97,20 @@ export async function runWorldRound(
   return events;
 }
 
-/** Run the world on an interval until stopped. Returns a stop() handle. */
+/**
+ * Run the world on an interval until stopped. Returns a stop() handle.
+ *
+ * Rounds are aligned to absolute wall-clock boundaries rather than spaced out
+ * from whenever the last one finished. That alignment is what makes the round
+ * number agree across processes: `floor(now / interval)` is the same number
+ * everywhere, but only if everyone is asking at the same moment. Sleeping a
+ * fixed interval after a round of unpredictable length would drift each process
+ * onto its own phase, and two processes on opposite sides of a boundary would
+ * claim different rounds and both act — the duplicate this exists to prevent.
+ *
+ * A round that overruns its slot simply loses it: the next boundary is computed
+ * from the clock, never from a backlog, so a slow round cannot pile up.
+ */
 export function startWorldLoop(args: {
   creds: () => Map<string, string>;
   roster: () => Promise<AgentCard[]>;
@@ -97,11 +125,13 @@ export function startWorldLoop(args: {
         await runWorldRound(args.creds(), await args.roster(), {
           maxTurns: args.maxTurnsPerRound,   // unset = the whole town acts each round
           onEvent: args.onEvent,
+          round: Math.floor(Date.now() / args.intervalMs),
         });
       } catch {
         /* keep the world alive through transient failures */
       }
-      await new Promise((r) => setTimeout(r, args.intervalMs));
+      const nextBoundary = (Math.floor(Date.now() / args.intervalMs) + 1) * args.intervalMs;
+      await new Promise((r) => setTimeout(r, Math.max(1_000, nextBoundary - Date.now())));
     }
   })();
   return () => {
