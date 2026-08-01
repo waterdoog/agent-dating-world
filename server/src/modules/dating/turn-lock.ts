@@ -143,14 +143,20 @@ async function settle(operationId: string, status: 'done' | 'failed', note: stri
  * What the town is working on, and whether it is still acting twice.
  *
  * `duplicateRounds` is the number this whole mechanism exists to hold at zero:
- * agents that took more than one turn inside a single round. It is measured
- * only over rounds the claim actually governed — from the first claim ever
- * recorded — because counting the damage that prompted the fix would leave the
- * number stuck in the hundreds and tell you nothing about now.
+ * agents that took more than one CLAIMED turn inside a single round.
  *
- * The round width comes from the same interval the loop uses. Hardcoding five
- * minutes here would report two honest consecutive rounds as a duplicate on any
- * shorter interval.
+ * Every qualifier there was earned. Counting all events would include the
+ * damage that prompted the fix and leave the number stuck in the hundreds.
+ * Measuring from the first claim was still wrong — events only started carrying
+ * the id of the turn that produced them later, so the window opened on rows
+ * that had no identity to be judged by, and reported six duplicates that were
+ * six honest rounds seen through the wrong ruler. Hand-driven turns carry no id
+ * either, and two of those in a row is a player clicking twice, not a bug.
+ *
+ * So: only beats that name their turn, and only from the first one that did.
+ * The round width comes from the interval the loop actually uses — five minutes
+ * hardcoded would call two honest consecutive rounds a duplicate on any shorter
+ * setting.
  */
 export async function turnHealth(): Promise<{
   holder: string;
@@ -168,16 +174,18 @@ export async function turnHealth(): Promise<{
       SELECT
         count(*) FILTER (WHERE status = 'claimed' AND lease_expires_at > now())  AS open,
         count(*) FILTER (WHERE status = 'done'   AND created_at >= CURRENT_DATE) AS done_today,
-        count(*) FILTER (WHERE status = 'failed' AND created_at >= CURRENT_DATE) AS failed_today,
-        min(created_at) FILTER (WHERE operation_id LIKE 'world:%')               AS since
+        count(*) FILTER (WHERE status = 'failed' AND created_at >= CURRENT_DATE) AS failed_today
       FROM virtual_n1.town_turns
     `;
-    if (!row?.since) return { ...base, holder };
+    const [first] = await database()`
+      SELECT min(at) AS since FROM virtual_n1.town_events WHERE operation_id IS NOT NULL
+    `;
+    if (!first?.since) return { ...base, holder };
     const [dupes] = await database()`
       SELECT count(*) AS n FROM (
         SELECT actor, floor(extract(epoch from at) / ${roundSeconds}) AS round
           FROM virtual_n1.town_events
-         WHERE at >= ${row.since}
+         WHERE at >= ${first.since} AND operation_id IS NOT NULL
          GROUP BY actor, round
         HAVING count(*) > 1
       ) t
@@ -188,7 +196,7 @@ export async function turnHealth(): Promise<{
       doneToday: Number(row.done_today ?? 0),
       failedToday: Number(row.failed_today ?? 0),
       duplicateRounds: Number(dupes?.n ?? 0),
-      measuredSince: new Date(row.since).toISOString(),
+      measuredSince: new Date(first.since).toISOString(),
     };
   } catch {
     return base;
