@@ -51,6 +51,9 @@ const holder = `${process.env.HOSTNAME ?? 'local'}-${process.pid}-${randomUUID()
  * Without a database there is nothing to coordinate through and a local checkout
  * is one process by definition, so the turn is granted.
  */
+/** Turns this process is holding right now, so a clean exit can hand them back. */
+const inFlight = new Set<string>();
+
 export async function claimTurn(operationId: string, actor: string): Promise<boolean> {
   if (!isDatabaseConfigured()) return true;
   try {
@@ -65,7 +68,9 @@ export async function claimTurn(operationId: string, actor: string): Promise<boo
        WHERE t.status <> 'done' AND t.lease_expires_at < now()
       RETURNING lease_owner
     `;
-    return rows[0]?.lease_owner === holder;
+    const won = rows[0]?.lease_owner === holder;
+    if (won) inFlight.add(operationId);
+    return won;
   } catch (error) {
     // A database blip must not let every process act at once — that is the exact
     // failure this prevents. Losing a beat is the safe direction.
@@ -89,7 +94,34 @@ export async function failTurn(operationId: string, reason: string): Promise<voi
   await settle(operationId, 'failed', reason.slice(0, 300));
 }
 
+/**
+ * Hand back whatever this process is still holding.
+ *
+ * Without this a restart leaves its turns claimed until the lease lapses, and
+ * the agents in them stand still for the rest of the round — five minutes of a
+ * dead town after every deploy, and after every file save in development.
+ * Expiring them lets the next process pick them straight up.
+ *
+ * Safe even if the model call already produced an event: the retry carries the
+ * same operation id, and the unique index on it drops the second copy.
+ */
+export async function releaseClaims(): Promise<void> {
+  if (!isDatabaseConfigured() || !inFlight.size) return;
+  const held = [...inFlight];
+  inFlight.clear();
+  try {
+    await database()`
+      UPDATE virtual_n1.town_turns SET lease_expires_at = now()
+       WHERE operation_id = ANY(${held}) AND lease_owner = ${holder} AND status = 'claimed'
+    `;
+    console.log(`[turn] released ${held.length} in-flight turn(s) on the way out`);
+  } catch {
+    /* they expire on their own soon enough */
+  }
+}
+
 async function settle(operationId: string, status: 'done' | 'failed', note: string | null): Promise<void> {
+  inFlight.delete(operationId);
   if (!isDatabaseConfigured()) return;
   try {
     await database()`

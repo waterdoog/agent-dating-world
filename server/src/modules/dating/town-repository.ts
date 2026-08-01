@@ -18,6 +18,7 @@
  *     Agent Fights' wallet already does. A local checkout still runs.
  */
 import { database, isDatabaseConfigured } from '../../database/client.js';
+import { seal, open } from './sealed.js';
 
 export const townDbReady = (): boolean => isDatabaseConfigured();
 
@@ -243,6 +244,132 @@ export async function allRels(): Promise<Array<{ agent: string; other: string; a
     attraction: Number(r.attraction),
     guessAttraction: r.guess_attraction === null ? null : Number(r.guess_attraction),
   }));
+}
+
+// ── the roster ───────────────────────────────────────────────────────
+
+export interface RosterRow {
+  handle: string;
+  name: string;
+  ownerSub: string;
+  ownerName?: string;
+  shareToken: string;
+  look: Record<string, unknown>;
+  loveStyle: string;
+  oneline: string;
+  persona: string;
+}
+
+const rowToCard = (r: Record<string, unknown>): RosterRow => ({
+  handle: String(r.handle),
+  name: String(r.name),
+  ownerSub: String(r.owner_sub),
+  ...(r.owner_name ? { ownerName: String(r.owner_name) } : {}),
+  shareToken: open(String(r.sealed_link)) ?? '',
+  look: (r.look as Record<string, unknown>) ?? {},
+  loveStyle: String(r.love_style),
+  oneline: String(r.oneline ?? ''),
+  persona: String(r.persona ?? ''),
+});
+
+/**
+ * Every column, with nothing undefined.
+ *
+ * The cards being adopted were written by older versions of the release wizard
+ * and do not all carry every field — postgres.js rejects `undefined` outright
+ * rather than treating it as NULL, so one legacy agent missing an `oneline`
+ * aborted the whole seed. A missing share token stays missing rather than being
+ * sealed as an empty string that would look like a working capability.
+ */
+function columnsOf(card: RosterRow) {
+  return {
+    handle: String(card.handle),
+    name: String(card.name),
+    ownerSub: String(card.ownerSub ?? ''),
+    ownerName: card.ownerName ? String(card.ownerName) : null,
+    sealedLink: card.shareToken ? seal(String(card.shareToken)) : seal(''),
+    look: card.look ?? {},
+    loveStyle: String(card.loveStyle ?? 'open'),
+    oneline: String(card.oneline ?? ''),
+    persona: String(card.persona ?? ''),
+  };
+}
+
+export async function rosterRows(): Promise<RosterRow[]> {
+  const rows = await database()`
+    SELECT * FROM virtual_n1.town_roster ORDER BY created_at
+  `;
+  return rows.map(rowToCard);
+}
+
+/**
+ * Write one agent, touching nothing else.
+ *
+ * This is the whole point of the table: the old path rewrote every agent in the
+ * square to change one of them, so two people releasing at once lost one of the
+ * two. `handle` as the conflict target also makes a repeat release an edit
+ * rather than a duplicate.
+ */
+export async function upsertRosterRow(card: RosterRow): Promise<void> {
+  const v = columnsOf(card);
+  await database()`
+    INSERT INTO virtual_n1.town_roster AS r
+      (handle, name, owner_sub, owner_name, sealed_link, look, love_style, oneline, persona)
+    VALUES (
+      ${v.handle}, ${v.name}, ${v.ownerSub}, ${v.ownerName},
+      ${v.sealedLink}, ${database().json(v.look as never)},
+      ${v.loveStyle}, ${v.oneline}, ${v.persona}
+    )
+    ON CONFLICT (handle) DO UPDATE SET
+      name = EXCLUDED.name,
+      owner_sub = EXCLUDED.owner_sub,
+      -- never blank an owner name we already learned
+      owner_name = COALESCE(EXCLUDED.owner_name, r.owner_name),
+      sealed_link = EXCLUDED.sealed_link,
+      look = EXCLUDED.look,
+      love_style = EXCLUDED.love_style,
+      oneline = EXCLUDED.oneline,
+      persona = EXCLUDED.persona,
+      updated_at = now()
+  `;
+}
+
+/** Record the account name, which is all `stampOwnerName` ever wanted to change. */
+export async function setRosterOwnerName(handle: string, ownerName: string): Promise<boolean> {
+  const rows = await database()`
+    UPDATE virtual_n1.town_roster SET owner_name = ${ownerName}, updated_at = now()
+     WHERE handle = ${handle} AND owner_name IS DISTINCT FROM ${ownerName}
+    RETURNING handle
+  `;
+  return rows.length > 0;
+}
+
+/**
+ * Carry the note's agents over, once.
+ *
+ * `DO NOTHING` rather than an upsert: this runs whenever the table happens to be
+ * empty, and a seed must never overwrite an agent that the town has since
+ * edited. Returns how many it actually adopted.
+ */
+export async function seedRoster(cards: RosterRow[]): Promise<number> {
+  let adopted = 0;
+  for (const card of cards) {
+    if (!card?.handle || !card.name) continue;   // a card with no identity is not an agent
+    const v = columnsOf(card);
+    const rows = await database()`
+      INSERT INTO virtual_n1.town_roster
+        (handle, name, owner_sub, owner_name, sealed_link, look, love_style, oneline, persona)
+      VALUES (
+        ${v.handle}, ${v.name}, ${v.ownerSub}, ${v.ownerName},
+        ${v.sealedLink}, ${database().json(v.look as never)},
+        ${v.loveStyle}, ${v.oneline}, ${v.persona}
+      )
+      ON CONFLICT (handle) DO NOTHING
+      RETURNING handle
+    `;
+    adopted += rows.length;
+  }
+  return adopted;
 }
 
 // ── events ───────────────────────────────────────────────────────────

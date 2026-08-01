@@ -58,7 +58,7 @@ import { startWorldLoop } from './modules/dating/scheduler.js';
 import { loadTownState, flushTownState, townStateHealth } from './modules/dating/town-state.js';
 import { isDatabaseConfigured } from './database/client.js';
 import { collectSignals } from './modules/dating/detectors.js';
-import { turnHealth } from './modules/dating/turn-lock.js';
+import { turnHealth, releaseClaims } from './modules/dating/turn-lock.js';
 import { storeCredential, forgetCredential, liveCredentials, credentialHealth } from './modules/dating/credentials.js';
 import { recentRuns, runById } from './modules/dating/grok.js';
 import { budgetSnapshot } from './modules/dating/budget.js';
@@ -1004,7 +1004,24 @@ void loadTownState();
 // every restart. Both rebuild from the event stream rather than needing tables.
 void rehydrateThreads();
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(sig, () => { void flushTownState().finally(() => process.exit(0)); });
+  process.once(sig, () => {
+    // Whatever happens in here, this process is leaving. A shutdown step that
+    // throws used to be caught by the global handler above and "continued",
+    // which meant the process never exited and had to be force-killed after
+    // five seconds — losing the town state flush it was in the middle of.
+    const leave = () => process.exit(0);
+    try {
+      void releaseClaims()          // hand back in-flight turns, or the agents
+        .catch(() => undefined)     // in them stand still until the lease lapses
+        .then(() => flushTownState())
+        .catch(() => undefined)
+        .finally(leave);
+    } catch {
+      leave();
+    }
+    // A step that hangs must not hold the process open either.
+    setTimeout(leave, 4_000).unref?.();
+  });
 }
 
 if (isMainModule) {

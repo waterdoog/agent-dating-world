@@ -22,6 +22,11 @@ import {
   townDbReady,
   saveEvent as saveTownEvent,
   recentEvents as recentTownEvents,
+  rosterRows,
+  upsertRosterRow,
+  setRosterOwnerName,
+  seedRoster,
+  type RosterRow,
 } from './town-repository.js';
 
 /**
@@ -237,9 +242,65 @@ async function writeRoster(cards: AgentCard[]): Promise<void> {
   await upsertNote(config.operatorApiKey, DIR_ROOT, DIR_NOTE, JSON.stringify(cards, null, 2));
 }
 
+/**
+ * Put one agent in the square.
+ *
+ * Every writer used to read the whole roster, change one entry and write the
+ * whole thing back to a single note. Two people releasing at the same moment
+ * both read the same list and both wrote their own version of it — the one who
+ * finished second erased the other's agent. With a row per agent, a release
+ * touches only that agent.
+ *
+ * Without Postgres the old path remains, because a checkout with no database is
+ * one process and one player.
+ */
+async function putAgent(card: AgentCard): Promise<void> {
+  if (townDbReady()) {
+    await upsertRosterRow(card as unknown as RosterRow);
+    return;
+  }
+  const roster = (await readRoster()).filter((c) => c.handle !== card.handle);
+  await writeRoster([...roster, card]);
+}
+
+/**
+ * Adopt the note's agents the first time the table is empty.
+ *
+ * The eight agents already in the square exist only in that note; a migration
+ * cannot reach them. Seeding on the first read is the one place that knows how
+ * to, and `ON CONFLICT DO NOTHING` inside means it can never overwrite an agent
+ * the town has since edited.
+ */
+let seeded = false;
+async function seedFromNote(): Promise<void> {
+  if (seeded) return;
+  seeded = true;
+  try {
+    const cards = await readRoster();
+    const adopted = await seedRoster(cards as unknown as RosterRow[]);
+    if (adopted) console.log(`[dating] roster: adopted ${adopted} agent(s) from the square note`);
+  } catch (error) {
+    // A failed seed leaves an empty square rather than a broken boot; the note
+    // is still there and the next read tries again after a restart.
+    seeded = false;
+    console.warn('[dating] roster seed failed —', error instanceof Error ? error.message : error);
+  }
+}
+
 /** Public roster — what a newcomer sees, and what the autonomy loop reads. */
 export async function listSquare(): Promise<AgentCard[]> {
-  return readRoster();
+  if (!townDbReady()) return readRoster();
+  try {
+    let rows = await rosterRows();
+    if (!rows.length) {
+      await seedFromNote();
+      rows = await rosterRows();
+    }
+    return rows as unknown as AgentCard[];
+  } catch (error) {
+    console.warn('[dating] roster read failed —', error instanceof Error ? error.message : error);
+    return readRoster();
+  }
 }
 
 // ── shared world-event feed ──────────────────────────────────────────
@@ -319,6 +380,13 @@ export async function appendEvent(e: Omit<WorldEvent, 'at'>): Promise<void> {
 
 /** Record which account owns an agent, for cards written before that was kept. */
 export async function stampOwnerName(handle: string, ownerName: string): Promise<void> {
+  if (townDbReady()) {
+    // One column on one row — it never needed to rewrite the square.
+    if (await setRosterOwnerName(handle, ownerName)) {
+      console.log(`[dating] ${handle}: owner recorded as ${ownerName} — the world loop can drive it now`);
+    }
+    return;
+  }
   const roster = await readRoster();
   const card = roster.find((c) => c.handle === handle);
   if (!card || card.ownerName === ownerName) return;
@@ -366,7 +434,7 @@ export async function updateAgent(
   ownerSub: string,
   spec: ReleaseSpec
 ): Promise<AgentCard> {
-  const roster = await readRoster();
+  const roster = await listSquare();
   const existing = roster.find((c) => c.ownerSub === ownerSub && c.name === spec.name);
   if (!existing) throw new Error(`No released agent named ${spec.name} for this owner.`);
 
@@ -390,7 +458,7 @@ export async function updateAgent(
       spec.memory.publicBackground.trim() ? `背景：${spec.memory.publicBackground.trim()}` : '',
     ].filter(Boolean).join(' ').slice(0, 700),
   };
-  await writeRoster([...roster.filter((c) => c.handle !== card.handle), card]);
+  await putAgent(card);
   return card;
 }
 
@@ -436,8 +504,6 @@ export async function releaseAgent(
     ].filter(Boolean).join(' ').slice(0, 700),
   };
 
-  const roster = (await readRoster()).filter((c) => c.handle !== card.handle);
-  roster.push(card);
-  await writeRoster(roster);
+  await putAgent(card);
   return card;
 }
