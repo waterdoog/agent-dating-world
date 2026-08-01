@@ -16,6 +16,31 @@ const brokeAt = new Map<string, number>();
 const BROKE_THROTTLE_MS = 30 * 60_000;
 
 /**
+ * The same failure, over and over, is one piece of news.
+ *
+ * When an agent's share link dies its every turn fails identically, forever —
+ * 8586 of them landed in one day, each a row in `town_events`, each a card in
+ * the plaza saying the same thing. The feed stopped being a story and became a
+ * stuck error light, and the detectors that read that table were counting
+ * thousands of "beats" that were one broken capability.
+ *
+ * A failure is still recorded the first time and then at most once an hour
+ * while it persists. Nothing is hidden — a turn that did not happen is still a
+ * turn that did not happen, and `turn-health` reports the whole count — but the
+ * town stops narrating it every five minutes.
+ */
+const failedAt = new Map<string, { at: number; note: string }>();
+const FAILURE_THROTTLE_MS = 60 * 60_000;
+
+function isRepeatFailure(agent: string, note: string): boolean {
+  const last = failedAt.get(agent);
+  const now = Date.now();
+  if (last && last.note === note && now - last.at < FAILURE_THROTTLE_MS) return true;
+  failedAt.set(agent, { at: now, note });
+  return false;
+}
+
+/**
  * One autonomous round — every actable agent takes a turn, at most once.
  *
  * `round` is the shared identity of this round: every process derives the same
@@ -91,6 +116,9 @@ export async function runWorldRound(
       if (Date.now() - (brokeAt.get(ev.actor) ?? 0) < BROKE_THROTTLE_MS) continue;
       brokeAt.set(ev.actor, Date.now());
     }
+    // A turn that failed the same way as this agent's last one is the same
+    // piece of news, not a new beat.
+    if (ev.move === 'FAILED' && isRepeatFailure(ev.actor, ev.note ?? '')) continue;
     events.push(ev);
     opts.onEvent?.(ev);
   }

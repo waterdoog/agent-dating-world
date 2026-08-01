@@ -52,7 +52,7 @@ import {
   type FighterReadyIntent,
   type FighterRuntimeEvent,
 } from './fighter-world.js';
-import { listSquare, releaseAgent, updateAgent, readSpec, stampOwnerName, listEvents, appendEvent, type AgentCard, type LoveStyle } from './modules/dating/store.js';
+import { listSquare, releaseAgent, updateAgent, readSpec, stampOwnerName, listEvents, appendEvent, renewShare, isDeadCapability, type AgentCard, type LoveStyle } from './modules/dating/store.js';
 import { runAgentTick, encounterWith, readRels, writeRels, type TickEvent } from './modules/dating/engine.js';
 import { startWorldLoop } from './modules/dating/scheduler.js';
 import { loadTownState, flushTownState, townStateHealth } from './modules/dating/town-state.js';
@@ -74,6 +74,35 @@ const worldCreds = new Map<string, string>();
 
 // The town digest is re-written from real threads, at most once every few
 // minutes, using whichever account the world is running on.
+/**
+ * An agent whose share link has died gets a new one — not a retry loop.
+ *
+ * A capability that expires looks exactly like a turn that failed, and it stays
+ * that way forever: 8586 identical 404s landed in a single day because nothing
+ * distinguished "this turn did not work" from "this agent can no longer speak".
+ * The signature is unambiguous, so treat it as what it is and re-mint.
+ *
+ * Minting a capability is a real action on the owner's account, so it is
+ * bounded twice over: the hour is claimed, so only one process across the whole
+ * town tries, and the claim is terminal, so a failure is not retried until the
+ * next hour. Combined with the scheduler's failure throttle, a permanently dead
+ * link costs one attempt an hour rather than one every round.
+ */
+async function maybeRenewShare(e: TickEvent): Promise<void> {
+  if (e.move !== 'FAILED' || !isDeadCapability(e.note ?? '')) return;
+  const roster = await listSquare().catch(() => [] as AgentCard[]);
+  const card = roster.find((c) => c.name === e.actor);
+  const bearer = card && worldCreds.get(card.ownerSub);
+  if (!card || !bearer) return;
+  const hour = `share:${card.handle}:${Math.floor(Date.now() / 3_600_000)}`;
+  if (!(await claimTurn(hour, 'share'))) return;
+  try {
+    await renewShare(bearer, card);
+  } finally {
+    await completeTurn(hour);
+  }
+}
+
 const DIGEST_EVERY_MS = 9 * 60_000;   // keep the digest well clear of agent turns
 /**
  * Write the town digest — once per window, across every process.
@@ -1131,6 +1160,7 @@ if (isMainModule && (process.env.DATING_WORLD_KEYS || isDatabaseConfigured())) {
         // all query it by pair, by place and by time.
         appendEvent(e).catch((err) => console.warn('[town] appendEvent:', err?.message));
         void recordEvent(e).catch(() => undefined);      // durable in links/
+        void maybeRenewShare(e);                          // a dead capability, not a bad turn
         maybeSummarise();                                 // throttled inside
         void maybeCloseYear().catch(() => undefined);
         console.log(`[dating] 🌀 ${e.actor} [${e.move}] → ${e.target} · a${e.attraction.toFixed(2)}/t${e.tension.toFixed(2)} — ${e.note}`);

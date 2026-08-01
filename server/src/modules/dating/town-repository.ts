@@ -373,6 +373,32 @@ export async function upsertRosterRow(card: RosterRow): Promise<void> {
   `;
 }
 
+/**
+ * Swap in a freshly minted capability.
+ *
+ * Kept separate from the full upsert because renewal must not touch anything
+ * else: the agent's persona, its look and its owner are not what expired.
+ */
+export async function replaceShareToken(handle: string, shareToken: string): Promise<void> {
+  await database()`
+    UPDATE virtual_n1.town_roster
+       SET sealed_link = ${seal(shareToken)}, share_issued_at = now(), updated_at = now()
+     WHERE handle = ${handle}
+  `;
+}
+
+/** How old each agent's capability is — the only warning before one lapses. */
+export async function shareAges(): Promise<Array<{ handle: string; name: string; issuedAt: number | null }>> {
+  const rows = await database()`
+    SELECT handle, name, share_issued_at FROM virtual_n1.town_roster ORDER BY share_issued_at NULLS FIRST
+  `;
+  return rows.map((r) => ({
+    handle: String(r.handle),
+    name: String(r.name),
+    issuedAt: r.share_issued_at ? new Date(r.share_issued_at as string).getTime() : null,
+  }));
+}
+
 /** Record the account name, which is all `stampOwnerName` ever wanted to change. */
 export async function setRosterOwnerName(handle: string, ownerName: string): Promise<boolean> {
   const rows = await database()`

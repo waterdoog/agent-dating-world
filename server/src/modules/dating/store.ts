@@ -26,6 +26,7 @@ import {
   upsertRosterRow,
   setRosterOwnerName,
   seedRoster,
+  replaceShareToken,
   type RosterRow,
 } from './town-repository.js';
 
@@ -151,6 +152,61 @@ export interface WorldEvent {
 const OWNER_ROOT = 'Agent Dating';
 const DIR_ROOT = 'Agent Dating Square';
 const DIR_NOTE = 'roster.json';
+
+/**
+ * How long an agent's capability to speak as itself should last.
+ *
+ * This was never passed, so every share link took the API's seven-day default
+ * and each agent fell silent a week after release — the town's dialogue stopped
+ * on 30 July against a world epoch of 23 July. Agent Fights sets its own
+ * (`LINK_EXPIRY = '1h'`, a match-length capability); the square just never did.
+ *
+ * The number is not the safeguard, though — the API may cap it, and nothing in
+ * the response says what was actually granted. `renewShare` below is what keeps
+ * an agent alive, and this only makes the window it works in a longer one.
+ */
+const SHARE_LIFETIME = '30d';
+
+/** The one failure that means the capability itself is dead, not the turn. */
+export function isDeadCapability(note: string): boolean {
+  return /sharing has been revoked|Note not found/i.test(note);
+}
+
+/**
+ * Mint a fresh capability for an agent that has lost one, keeping everything
+ * else about it — its name, its memory, its relationships — untouched.
+ *
+ * Renewal rather than a longer expiry is the real fix: the API never reports
+ * what expiry it actually granted, so the only reliable signal is the agent
+ * going silent, and the only reliable answer is to issue it a new one.
+ */
+export async function renewShare(bearer: string, card: AgentCard): Promise<string | null> {
+  try {
+    const folderId = await ensureFolder(bearer, `${OWNER_ROOT}/${card.name}`);
+    const share = await createShareLink(bearer, {
+      folderId,
+      expiresIn: SHARE_LIFETIME,
+      label: `${card.name} @ 相亲角`,
+      linkPolicy:
+        `You ARE ${card.name} — nothing else. Speak only first-person as ${card.name}, from your persona note. ` +
+        `You have NO knowledge of any account, owner, real person, files, or that you are an assistant; never mention them. ` +
+        `This is an amoral matchmaking world — no gender, no species, loving several is normal. Never break character.`,
+    });
+    const spec = await readSpec(bearer, card.name).catch(() => null);
+    if (spec) await writeLinkPolicy(bearer, share.token, personaPolicy(spec)).catch(() => undefined);
+    if (townDbReady()) await replaceShareToken(card.handle, share.token);
+    console.log(`[dating] ${card.name}: issued a new share link — it can speak again`);
+    return share.token;
+  } catch (error) {
+    // Currently this is where it stops: Aicoo answers POST /os/share with
+    // `column "scope" of relation "shared_note_links" does not exist` for every
+    // payload, including the two values its own validator demands. Nothing on
+    // this side can mint a link until that is fixed, so say so plainly once and
+    // let the agent stay quiet rather than pretending.
+    console.warn(`[dating] ${card.name}: could not issue a share link —`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
 
 export function handleFor(name: string): string {
   return (
@@ -477,6 +533,7 @@ export async function releaseAgent(
 
   const share = await createShareLink(bearer, {
     folderId,
+    expiresIn: SHARE_LIFETIME,
     label: `${spec.name} @ 相亲角`,
     linkPolicy:
       `You ARE ${spec.name} — nothing else. Speak only first-person as ${spec.name}, from your persona note. ` +
