@@ -1243,9 +1243,11 @@ async function takeTurn(
   const prompt = fillGoal(actor.name, persona, rels, roster, situation, memory.secrets, left, recalled + alsoRecalled, places, lastSaid);
   let decision: Move | null = null;
   let decideRunId: string | undefined;
+  let decideText = '';
   try {
     const out = await think(prompt, 'decide', actor.name, bearer, actor.shareToken);
     decideRunId = out.runId;
+    decideText = out.text;
     decision = parseMove(out.text);
   } catch (error) {
     if (error instanceof ModelError) {
@@ -1261,10 +1263,45 @@ async function takeTurn(
     }
     throw error;
   }
-  if (!decision) return null;
-
-  const target = roster.find((c) => c.handle === decision!.target || c.name === decision!.target);
-  if (!target || target.name === actor.name) return null;
+  /**
+   * A decision nobody can act on gets one correction, then it is reported.
+   *
+   * Both of these used to be a bare `return null`, so a turn that had already
+   * cost a full decision call vanished without a word — the only trace was the
+   * scheduler guessing between "no budget / unparsable / bad target". It was
+   * none of those: the model answered `{"act":"GO_TO_WORK","move":"SELF",
+   * "target":""}` — a solitary act, in neither vocabulary the goal supplies,
+   * aimed at nobody. The town has no way to represent an agent going to work
+   * alone; every beat is between two people. So say what the vocabulary is and
+   * ask once more, rather than silently dropping the round.
+   */
+  let target = decision && roster.find((c) => c.handle === decision!.target || c.name === decision!.target);
+  if (!decision || !target || target.name === actor.name) {
+    const others = roster.filter((c) => c.name !== actor.name).map((c) => c.handle).join('、');
+    const said = decision ? `act=「${decision.act}」target=「${decision.target || '空'}」` : `「${decideText.slice(0, 80)}」`;
+    try {
+      const retryOut = await think(
+        `${prompt}\n\n‼️ 你刚才给的是 ${said}，这一拍没法发生：\n` +
+        `- target 必须是这些 handle 里的一个，不能留空，也不能是你自己：${others}\n` +
+        `- act 必须来自上面的词汇表；小镇里没有"一个人去上班"这种拍子，每一拍都是冲着某个人的。\n` +
+        `- 你可以什么都不说（message 留空），但不能没有对象——盯着谁、避开谁、绕路经过谁，都算。\n` +
+        `重写这一拍，只输出 JSON。`,
+        'decide-retry', actor.name, bearer, actor.shareToken
+      ).catch(() => null);
+      const retry = retryOut && parseMove(retryOut.text);
+      const retried = retry && roster.find((c) => c.handle === retry.target || c.name === retry.target);
+      if (!retry || !retried || retried.name === actor.name) {
+        console.warn(`[dating] ${actor.name}: decision named nobody (${said}) — round dropped`);
+        return null;
+      }
+      decision = retry;
+      target = retried;
+      if (retryOut) decideRunId = retryOut.runId;
+    } catch (error) {
+      console.warn(`[dating] ${actor.name}: target retry failed —`, error instanceof Error ? error.message : error);
+      return null;
+    }
+  }
 
   // A beat that just re-says the last one gets ONE forced retry naming the
   // offending line; if it repeats itself again, the turn is dropped rather than
