@@ -56,7 +56,6 @@ import { listSquare, releaseAgent, updateAgent, readSpec, stampOwnerName, listEv
 import { runAgentTick, encounterWith, readRels, writeRels, type TickEvent } from './modules/dating/engine.js';
 import { startWorldLoop } from './modules/dating/scheduler.js';
 import { loadTownState, flushTownState, townStateHealth } from './modules/dating/town-state.js';
-import { townDbReady, saveEvent } from './modules/dating/town-repository.js';
 import { isDatabaseConfigured } from './database/client.js';
 import { collectSignals } from './modules/dating/detectors.js';
 import { turnHealth } from './modules/dating/turn-lock.js';
@@ -1086,14 +1085,11 @@ if (isMainModule && (process.env.DATING_WORLD_KEYS || isDatabaseConfigured())) {
       roster: () => listSquare(),
       intervalMs,
       onEvent: (e) => {
-        appendEvent(e).catch(() => undefined);
+        // `appendEvent` is the durable write — it is what puts the beat in
+        // Postgres, where the feed, the trajectory detectors and the director
+        // all query it by pair, by place and by time.
+        appendEvent(e).catch((err) => console.warn('[town] appendEvent:', err?.message));
         void recordEvent(e).catch(() => undefined);      // durable in links/
-        // Postgres is what the feed, the trajectory detectors and the
-        // director actually query — by pair, by place, by time.
-        if (townDbReady()) {
-          void saveEvent(e as unknown as Record<string, unknown>)
-            .catch((err) => console.warn('[town] saveEvent:', err?.message));
-        }
         maybeSummarise();                                 // throttled inside
         void maybeCloseYear().catch(() => undefined);
         console.log(`[dating] 🌀 ${e.actor} [${e.move}] → ${e.target} · a${e.attraction.toFixed(2)}/t${e.tension.toFixed(2)} — ${e.note}`);

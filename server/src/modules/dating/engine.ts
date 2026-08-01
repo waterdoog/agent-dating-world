@@ -343,6 +343,13 @@ export interface TickEvent {
   actor: string;
   target: string;
   move: string;
+  /**
+   * Which claimed turn produced this beat, when one did. Carried through to the
+   * event row so a turn retaken after its lease expired cannot record a second
+   * version of the same moment. Absent for hand-driven turns, which are new
+   * events every time.
+   */
+  operationId?: string;
   /** The costly, observable behaviour this beat consisted of. */
   act?: string;
   /** What a bystander (or the target) could actually see, if anything. */
@@ -1182,6 +1189,7 @@ export async function runAgentTick(
   if (operationId && !(await claimTurn(operationId, actor.name))) return null;
   try {
     const event = await takeTurn(bearer, actor, roster, creds);
+    if (event && operationId) event.operationId = operationId;
     if (operationId) await completeTurn(operationId);
     return event;
   } catch (error) {

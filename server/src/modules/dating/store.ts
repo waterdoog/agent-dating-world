@@ -18,6 +18,11 @@ import {
   editNote,
   AicooError,
 } from '../../aicoo.js';
+import {
+  townDbReady,
+  saveEvent as saveTownEvent,
+  recentEvents as recentTownEvents,
+} from './town-repository.js';
 
 /**
  * Aicoo auto-creates a policy note per share link in the owner's `links/`
@@ -244,12 +249,24 @@ export async function listSquare(): Promise<AgentCard[]> {
 // operator workspace for continuity across restarts; a failed persist
 // never blocks the live feed.
 const EVENTS_NOTE = 'events.json';
-let recentEvents: WorldEvent[] = [];
-let eventsHydrated = false;
+const FEED_SIZE = 25;
 
-async function hydrateEvents(): Promise<void> {
-  if (eventsHydrated) return;
-  eventsHydrated = true;
+/**
+ * Only a fallback now.
+ *
+ * This array used to BE the feed: hydrated once at boot, appended to in memory,
+ * and written back to a single Aicoo note in full each time. Two processes each
+ * held their own copy, so they showed different towns, and each full-array write
+ * dropped whatever the other had just added. It survives for a checkout with no
+ * Postgres, where one process is the whole world and there is nothing to lose an
+ * update to.
+ */
+let localFeed: WorldEvent[] = [];
+let localHydrated = false;
+
+async function hydrateLocalFeed(): Promise<void> {
+  if (localHydrated) return;
+  localHydrated = true;
   if (!config.operatorApiKey) return;
   try {
     const folderId = await ensureFolder(config.operatorApiKey, DIR_ROOT);
@@ -257,23 +274,46 @@ async function hydrateEvents(): Promise<void> {
     if (!note) return;
     const raw = await getNote(config.operatorApiKey, note.id);
     const m = raw.match(/\[[\s\S]*\]/);
-    if (m) recentEvents = JSON.parse(m[0]) as WorldEvent[];
+    if (m) localFeed = JSON.parse(m[0]) as WorldEvent[];
   } catch {
     /* operator unreadable — start from an empty feed */
   }
 }
 
-export async function listEvents(): Promise<WorldEvent[]> {
-  if (!eventsHydrated) await hydrateEvents();
-  return recentEvents;
+/** The town's recent beats, as every process sees them. */
+export async function listEvents(limit = FEED_SIZE): Promise<WorldEvent[]> {
+  if (townDbReady()) {
+    try {
+      return (await recentTownEvents(limit)) as unknown as WorldEvent[];
+    } catch (error) {
+      // A readable-but-stale feed beats a blank plaza. The local array holds
+      // whatever this process itself has seen since it started.
+      console.warn('[dating] feed read failed —', error instanceof Error ? error.message : error);
+    }
+  }
+  await hydrateLocalFeed();
+  return localFeed;
 }
 
+/**
+ * Record a beat — the one place an event becomes durable.
+ *
+ * There were four callers appending events and exactly one of them, the world
+ * loop, also wrote to Postgres. Manual ticks, chance encounters and the
+ * director's beats existed only in one process's memory and in a note, which is
+ * why every detector that queries by pair, by place or by time was reasoning
+ * over a fraction of what had actually happened.
+ */
 export async function appendEvent(e: Omit<WorldEvent, 'at'>): Promise<void> {
-  if (!eventsHydrated) await hydrateEvents();
-  recentEvents = [{ ...e, at: Date.now() }, ...recentEvents].slice(0, 25);
+  const event = { ...e, at: Date.now() } as WorldEvent;
+  if (townDbReady()) {
+    await saveTownEvent(event as unknown as Record<string, unknown>);
+    return;
+  }
+  localFeed = [event, ...localFeed].slice(0, FEED_SIZE);
   // best-effort durability; ignore failures (budget, rate limit, offline)
   if (config.operatorApiKey) {
-    void upsertNote(config.operatorApiKey, DIR_ROOT, EVENTS_NOTE, JSON.stringify(recentEvents, null, 2)).catch(() => undefined);
+    void upsertNote(config.operatorApiKey, DIR_ROOT, EVENTS_NOTE, JSON.stringify(localFeed, null, 2)).catch(() => undefined);
   }
 }
 

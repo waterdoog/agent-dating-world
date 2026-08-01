@@ -247,6 +247,17 @@ export async function allRels(): Promise<Array<{ agent: string; other: string; a
 
 // ── events ───────────────────────────────────────────────────────────
 
+/**
+ * Record a beat.
+ *
+ * `ON CONFLICT DO NOTHING` is what makes a retaken turn safe: a process that
+ * inserted an event and died before marking the turn done leaves a lease that
+ * expires, and the turn is legitimately claimed again. The second attempt
+ * carries the same operation id and is dropped here rather than adding a second
+ * version of something that already happened. Rows without an operation id — a
+ * hand-driven turn — are unconstrained, because each of those really is a new
+ * event.
+ */
 export async function saveEvent(e: Record<string, unknown>): Promise<void> {
   const sql = database();
   await sql`
@@ -254,7 +265,7 @@ export async function saveEvent(e: Record<string, unknown>): Promise<void> {
       actor, target, act, move, silent, message, reply, lines, observable,
       attraction, trust, tension, guess_attraction, guess_trust,
       severity, headline, summary, consequence, followup, destination,
-      decide_run_id, reply_run_id, status
+      decide_run_id, reply_run_id, status, operation_id
     ) VALUES (
       ${String(e.actor ?? '')}, ${(e.target as string) ?? null}, ${(e.act as string) ?? null},
       ${(e.move as string) ?? null}, ${Boolean(e.silent)}, ${(e.message as string) ?? null},
@@ -266,8 +277,9 @@ export async function saveEvent(e: Record<string, unknown>): Promise<void> {
       ${(e.summary as string) ?? null}, ${(e.consequence as string) ?? null},
       ${(e.followup as string) ?? null}, ${(e.destination as string) ?? null},
       ${(e.decideRunId as string) ?? null}, ${(e.replyRunId as string) ?? null},
-      ${(e.status as string) ?? null}
+      ${(e.status as string) ?? null}, ${(e.operationId as string) ?? null}
     )
+    ON CONFLICT (operation_id) WHERE operation_id IS NOT NULL DO NOTHING
   `;
 }
 
