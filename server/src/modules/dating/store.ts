@@ -12,6 +12,8 @@ import {
   ensureFolder,
   upsertNote,
   createShareLink,
+  listShareLinks,
+  revokeShareLink,
   getNote,
   findNoteInFolder,
   listNotesByFolderId,
@@ -167,6 +169,24 @@ const DIR_NOTE = 'roster.json';
  */
 const SHARE_LIFETIME = '30d';
 
+/**
+ * Enough of a spec to write a policy, from what the square already knows.
+ *
+ * Not a substitute for the real spec — the traits and the hidden background are
+ * genuinely absent and are left absent rather than invented. It carries only
+ * what the public card actually states.
+ */
+function specFromCard(card: AgentCard): Parameters<typeof personaPolicy>[0] {
+  return {
+    name: card.name,
+    publicIntroduction: card.oneline ?? '',
+    relationshipStyle: card.loveStyle,
+    traits: [],
+    summary: card.persona ?? '',
+    memory: { publicBackground: '' },
+  };
+}
+
 /** The one failure that means the capability itself is dead, not the turn. */
 export function isDeadCapability(note: string): boolean {
   return /sharing has been revoked|Note not found/i.test(note);
@@ -181,20 +201,42 @@ export function isDeadCapability(note: string): boolean {
  * going silent, and the only reliable answer is to issue it a new one.
  */
 export async function renewShare(bearer: string, card: AgentCard): Promise<string | null> {
+  const label = `${card.name} @ 相亲角`;
   try {
     const folderId = await ensureFolder(bearer, `${OWNER_ROOT}/${card.name}`);
     const share = await createShareLink(bearer, {
       folderId,
       expiresIn: SHARE_LIFETIME,
-      label: `${card.name} @ 相亲角`,
+      label,
       linkPolicy:
         `You ARE ${card.name} — nothing else. Speak only first-person as ${card.name}, from your persona note. ` +
         `You have NO knowledge of any account, owner, real person, files, or that you are an assistant; never mention them. ` +
         `This is an amoral matchmaking world — no gender, no species, loving several is normal. Never break character.`,
     });
+    // The policy is what makes the link speak as the AGENT. Without it the
+    // capability still works and the owner's own assistant answers in its place
+    // — "Wang Eason's AI COO" replying where SmokeCat should be, which is the
+    // one thing this town is not allowed to put in the feed.
+    //
+    // This used to be conditional on the structured spec, and the agents
+    // released before specs were kept do not have one, so for exactly those it
+    // was skipped. The card carries the same public facts; use them.
     const spec = await readSpec(bearer, card.name).catch(() => null);
-    if (spec) await writeLinkPolicy(bearer, share.token, personaPolicy(spec)).catch(() => undefined);
+    await writeLinkPolicy(bearer, share.token, personaPolicy(spec ?? specFromCard(card)))
+      .catch((err) => console.warn(`[dating] ${card.name}: link policy not written —`, err?.message));
     if (townDbReady()) await replaceShareToken(card.handle, share.token);
+
+    // Retire the ones this replaces. A share link is a live capability, and
+    // renewing without revoking leaves every superseded one usable for the rest
+    // of its month — an agent renewed a few times would have several mouths,
+    // and only one of them the town knows about. Matched on the label this
+    // module writes, and never the link just minted.
+    for (const old of await listShareLinks(bearer).catch(() => [])) {
+      if (old.label !== label || String(old.id) === share.id) continue;
+      await revokeShareLink(bearer, String(old.id))
+        .then(() => console.log(`[dating] ${card.name}: retired a superseded share link`))
+        .catch(() => undefined);
+    }
     console.log(`[dating] ${card.name}: issued a new share link — it can speak again`);
     return share.token;
   } catch (error) {
