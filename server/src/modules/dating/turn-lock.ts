@@ -170,12 +170,16 @@ export async function turnHealth(): Promise<{
   if (!isDatabaseConfigured()) return base;
   const roundSeconds = Number(process.env.DATING_WORLD_INTERVAL_MS ?? 300_000) / 1000;
   try {
+    // Agent turns only. The same table also claims the digest window and the
+    // year-end write, and counting those here would quietly inflate the number
+    // of turns the town took.
     const [row] = await database()`
       SELECT
         count(*) FILTER (WHERE status = 'claimed' AND lease_expires_at > now())  AS open,
         count(*) FILTER (WHERE status = 'done'   AND created_at >= CURRENT_DATE) AS done_today,
         count(*) FILTER (WHERE status = 'failed' AND created_at >= CURRENT_DATE) AS failed_today
       FROM virtual_n1.town_turns
+      WHERE operation_id LIKE 'world:%'
     `;
     const [first] = await database()`
       SELECT min(at) AS since FROM virtual_n1.town_events WHERE operation_id IS NOT NULL

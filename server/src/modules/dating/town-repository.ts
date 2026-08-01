@@ -246,6 +246,45 @@ export async function allRels(): Promise<Array<{ agent: string; other: string; a
   }));
 }
 
+// ── what the town wrote about itself ─────────────────────────────────
+
+/**
+ * Save an authored piece — a thread's narration, the world digest.
+ *
+ * These are model output, not derived facts, so nothing can recreate them. They
+ * lived in a Map and vanished on every restart, which is why the story lines
+ * looked like they kept resetting.
+ */
+export async function saveNarration(key: string, value: unknown, runId?: string): Promise<void> {
+  const sql = database();
+  await sql`
+    INSERT INTO virtual_n1.town_narration (key, value, run_id)
+    VALUES (${key}, ${sql.json(value as never)}, ${runId ?? null})
+    ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value, run_id = EXCLUDED.run_id, updated_at = now()
+  `;
+}
+
+export async function readNarration<T>(key: string): Promise<T | null> {
+  const [row] = await database()`
+    SELECT value FROM virtual_n1.town_narration WHERE key = ${key}
+  `;
+  return (row?.value as T) ?? null;
+}
+
+/** Every stored narration under a prefix, for rebuilding all threads at once. */
+export async function narrationsUnder<T>(prefix: string): Promise<Array<{ key: string; value: T; runId?: string }>> {
+  const rows = await database()`
+    SELECT key, value, run_id FROM virtual_n1.town_narration
+     WHERE key LIKE ${`${prefix}%`}
+  `;
+  return rows.map((r) => ({
+    key: String(r.key),
+    value: r.value as T,
+    ...(r.run_id ? { runId: String(r.run_id) } : {}),
+  }));
+}
+
 // ── the roster ───────────────────────────────────────────────────────
 
 export interface RosterRow {

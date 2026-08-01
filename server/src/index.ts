@@ -58,7 +58,7 @@ import { startWorldLoop } from './modules/dating/scheduler.js';
 import { loadTownState, flushTownState, townStateHealth } from './modules/dating/town-state.js';
 import { isDatabaseConfigured } from './database/client.js';
 import { collectSignals } from './modules/dating/detectors.js';
-import { turnHealth, releaseClaims } from './modules/dating/turn-lock.js';
+import { turnHealth, releaseClaims, claimTurn, completeTurn } from './modules/dating/turn-lock.js';
 import { storeCredential, forgetCredential, liveCredentials, credentialHealth } from './modules/dating/credentials.js';
 import { recentRuns, runById } from './modules/dating/grok.js';
 import { budgetSnapshot } from './modules/dating/budget.js';
@@ -74,16 +74,30 @@ const worldCreds = new Map<string, string>();
 
 // The town digest is re-written from real threads, at most once every few
 // minutes, using whichever account the world is running on.
-let lastDigestAt = 0;
 const DIGEST_EVERY_MS = 9 * 60_000;   // keep the digest well clear of agent turns
+/**
+ * Write the town digest — once per window, across every process.
+ *
+ * This was a module-level timestamp, so each process ran its own digest on its
+ * own schedule and overwrote the last one with a differently-worded version of
+ * the same town. Claiming the window makes it one call by whoever gets there
+ * first; `completeTurn` makes that terminal, so an expiring lease cannot let a
+ * second process narrate the same window again.
+ */
 function maybeSummarise(): void {
   const bearer = worldCreds.values().next().value;
-  if (!bearer || Date.now() - lastDigestAt < DIGEST_EVERY_MS) return;
-  lastDigestAt = Date.now();
-  // the narrator runs in an agent's sandbox too, so it never touches a personal chat
-  void listSquare()
-    .then((r) => summariseWorld(bearer, r[0]?.shareToken))
-    .catch(() => undefined);
+  if (!bearer) return;
+  const window = `digest:${Math.floor(Date.now() / DIGEST_EVERY_MS)}`;
+  void (async () => {
+    if (!(await claimTurn(window, 'digest'))) return;
+    try {
+      // the narrator runs in an agent's sandbox too, so it never touches a personal chat
+      const roster = await listSquare();
+      await summariseWorld(bearer, roster[0]?.shareToken);
+    } finally {
+      await completeTurn(window);
+    }
+  })().catch(() => undefined);
 }
 
 // One world year = one real day. At each turn of the year every agent writes
@@ -92,25 +106,35 @@ const WORLD_EPOCH = Date.UTC(2026, 6, 23);
 function worldYear(now = Date.now()): number {
   return Math.max(1, Math.floor(((now - WORLD_EPOCH) / 86_400_000) * 365 / 365) + 1);
 }
-let lastYearWritten = 0;
+/**
+ * Close the year once, not once per process.
+ *
+ * `lastYearWritten` was a module-level number, so every process wrote every
+ * agent's yearbook for the same year — each one a separate model call producing
+ * a different account of the same twelve months. The claim is terminal, so the
+ * year stays closed however many processes come and go.
+ */
 async function maybeCloseYear(): Promise<void> {
   const year = worldYear();
-  if (year === lastYearWritten) return;
-  lastYearWritten = year;
-  const roster = await listSquare().catch(() => [] as AgentCard[]);
-  const events = (await listEvents().catch(() => [])) as unknown as TickEvent[];
-  for (const card of roster) {
-    const bearer = worldCreds.get(card.ownerSub);
-    if (!bearer) continue;
-    await writeYearbook({
-      agent: card.name,
-      persona: card.persona || card.oneline || card.name,
-      year: year - 1,
-      rels: await readRels(bearer, card.name).catch(() => []),
-      events,
-      bearer,
-      shareToken: card.shareToken,   // narrate inside the agent's own sandbox
-    }).catch(() => undefined);
+  if (!(await claimTurn(`yearbook:${year}`, 'yearbook'))) return;
+  try {
+    const roster = await listSquare().catch(() => [] as AgentCard[]);
+    const events = (await listEvents().catch(() => [])) as unknown as TickEvent[];
+    for (const card of roster) {
+      const bearer = worldCreds.get(card.ownerSub);
+      if (!bearer) continue;
+      await writeYearbook({
+        agent: card.name,
+        persona: card.persona || card.oneline || card.name,
+        year: year - 1,
+        rels: await readRels(bearer, card.name).catch(() => []),
+        events,
+        bearer,
+        shareToken: card.shareToken,   // narrate inside the agent's own sandbox
+      }).catch(() => undefined);
+    }
+  } finally {
+    await completeTurn(`yearbook:${year}`);
   }
 }
 
