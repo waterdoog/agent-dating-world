@@ -89,9 +89,17 @@ const worldCreds = new Map<string, string>();
  * link costs one attempt an hour rather than one every round.
  */
 async function maybeRenewShare(e: TickEvent): Promise<void> {
-  if (e.move !== 'FAILED' || !isDeadCapability(e.note ?? '')) return;
+  if (!isDeadCapability(e.note ?? '')) return;
+  // Whose capability actually failed. A beat can die on either side: the actor's
+  // own decision call, or the reply, which runs on the TARGET's share link. This
+  // looked only at the actor, so when Bravo's link was the dead one it renewed
+  // SmokeCat's — spending the hour's single attempt on the agent that was fine
+  // and never touching the one that was not.
+  const replyFailed = (e.summary ?? '').startsWith('对方的回合');
+  const whose = replyFailed ? e.target : e.actor;
+  if (!whose) return;
   const roster = await listSquare().catch(() => [] as AgentCard[]);
-  const card = roster.find((c) => c.name === e.actor);
+  const card = roster.find((c) => c.name === whose);
   const bearer = card && worldCreds.get(card.ownerSub);
   if (!card || !bearer) return;
   const hour = `share:${card.handle}:${Math.floor(Date.now() / 3_600_000)}`;
