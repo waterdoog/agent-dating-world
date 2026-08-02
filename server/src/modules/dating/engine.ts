@@ -962,12 +962,44 @@ async function replyFrom(
   target: AgentCard,
   actorName: string,
   line: string,
-  creds: Map<string, string>,
-  fallbackBearer: string
+  creds: Map<string, string>
 ): Promise<{ text: string; runId: string }> {
   const targetKey = creds.get(target.ownerSub);
-  const persona = targetKey ? await personaOf(targetKey, target.name) : (target.persona || target.oneline || target.name);
-  const rels = targetKey ? await readRels(targetKey, target.name).catch(() => []) : [];
+  /**
+   * An agent answers on its own account or it does not answer.
+   *
+   * This used to fall back to the SPEAKER's bearer when the target had no
+   * credential of its own — and Aicoo's guest endpoint runs the caller's own
+   * agent against the shared folder, so the conversation belongs to whoever
+   * lent the token. The result was that another agent's reply, prompt and all,
+   * was written into the lender's personal Aicoo: someone's private chat filling
+   * up with dialogue for characters that are not theirs.
+   *
+   * Six of the eight agents have no stored credential, so most exchanges now go
+   * unanswered. That is the honest state of the town — the owner has not signed
+   * in — and a one-sided conversation is a fact about it, not a bug to paper
+   * over by borrowing an account.
+   */
+  if (!targetKey) {
+    // Every field spelled out. An `as never` here is what let a missing `at`
+    // through once before and took the whole BFF down inside a narrate() call.
+    throw new ModelError('failed', `${target.name} has no credential of its own`, {
+      id: `no-credential-${target.handle}`,
+      provider: 'none',
+      model: 'none',
+      purpose: 'reply',
+      agent: target.name,
+      input: '',
+      output: '',
+      status: 'failed',
+      error: `${target.name} 的主人还没登录过，它没法用自己的身份回话`,
+      attempts: 0,
+      elapsedMs: 0,
+      at: Date.now(),
+    });
+  }
+  const persona = await personaOf(targetKey, target.name);
+  const rels = await readRels(targetKey, target.name).catch(() => []);
   const mine = rels.find((r) => r.handle.toLowerCase() === actorName.toLowerCase());
   const feeling = mine
     ? `你对 ${actorName} 目前的感觉：心动 ${mine.attraction.toFixed(2)}、信任 ${(mine.trust ?? 0.3).toFixed(2)}、张力 ${mine.tension.toFixed(2)}（${mine.note}）。`
@@ -998,7 +1030,7 @@ async function replyFrom(
     `${actorName} 刚走过来对你说：\n"${line}"\n\n只回答你要说的那句话本身，不要旁白、不要引号。`;
   // the reply executes on the TARGET's own account when we hold it, so each
   // agent literally answers from its own workspace; else the caller's account.
-  const { text, run } = await grok(prompt, { purpose: 'reply', agent: target.name, temperature: 1.0, bearer: targetKey ?? fallbackBearer, shareToken: target.shareToken });
+  const { text, run } = await grok(prompt, { purpose: 'reply', agent: target.name, temperature: 1.0, bearer: targetKey, shareToken: target.shareToken });
   const said = strip(text);
   // Concurrent calls on one account can cross wires and hand back another
   // purpose's JSON. A spoken line is never a JSON object — treat that as a
@@ -1537,7 +1569,7 @@ async function takeTurn(
   let reply: string;
   let replyRunId: string | undefined;
   try {
-    const out = await replyFrom(target, actor.name, decision.message, creds, bearer);
+    const out = await replyFrom(target, actor.name, decision.message, creds);
     reply = out.text;
     replyRunId = out.runId;
   } catch (error) {
@@ -1593,7 +1625,7 @@ async function takeTurn(
 
     let back: { text: string; runId: string };
     try {
-      back = await replyFrom(target, actor.name, follow.message, creds, bearer);
+      back = await replyFrom(target, actor.name, follow.message, creds);
     } catch {
       await refundTurn(actor.name, target.name);
       await refundTurn(target.name, actor.name);
@@ -1783,7 +1815,7 @@ export async function encounterWith(
   let reply: string;
   let replyRunId: string | undefined;
   try {
-    const out = await replyFrom(target, actor.name, message, creds, bearer);
+    const out = await replyFrom(target, actor.name, message, creds);
     reply = out.text;
     replyRunId = out.runId;
   } catch (error) {
