@@ -739,6 +739,128 @@ export async function runAgentTick(
   }
 }
 
+/**
+ * What the decision phase can end in — three outcomes, said out loud.
+ *
+ * They used to be three different `return` shapes tangled through eighty lines
+ * of retry logic: a TickEvent, a bare null, and a second bare null meaning
+ * something else entirely. The scheduler could only report the union of them as
+ * "no budget / unparsable decision / bad target", because by the time the value
+ * came back there was genuinely no way to tell which had happened.
+ */
+type Decided =
+  | { kind: 'ok'; decision: Move; target: AgentCard; decideRunId?: string }
+  /** The model call itself failed — a beat that reports the failure honestly. */
+  | { kind: 'failed'; beat: TickEvent }
+  /** Two attempts, still unusable. The round is lost and it has been logged. */
+  | { kind: 'dropped' };
+
+/**
+ * Ask the agent what it does, and insist on an answer the town can perform.
+ *
+ * Two corrections live here, and both exist because the alternative was a
+ * silent `return null` that had already cost a full model call:
+ *
+ *  · a decision naming nobody — the model kept answering with a solitary act
+ *    aimed at no one, which the town cannot represent, since every beat is
+ *    between two people
+ *  · a line that is the last one reworded — left alone this filled the square
+ *    with the same invitation six times over
+ *
+ * Each gets exactly one retry naming what was wrong. A second failure drops the
+ * round, loudly, with what the model actually said.
+ */
+async function decideTurn(args: {
+  prompt: string;
+  actor: AgentCard;
+  roster: AgentCard[];
+  bearer: string;
+  recentEvents: TickEvent[];
+  left: number;
+}): Promise<Decided> {
+  const { prompt, actor, roster, bearer, recentEvents, left } = args;
+  let decision: Move | null = null;
+  let decideRunId: string | undefined;
+  let decideText = '';
+  try {
+    const out = await think(prompt, 'decide', actor.name, bearer, actor.shareToken);
+    decideRunId = out.runId;
+    decideText = out.text;
+    decision = parseMove(out.text);
+  } catch (error) {
+    if (error instanceof ModelError) {
+      return {
+        kind: 'failed',
+        beat: failedBeat(
+          actor.name,
+          `${actor.name} 这一轮没能行动`,
+          `模型调用 ${error.status}：${error.run.error ?? ''}`.trim(),
+          { actor: actor.name, move: 'FAILED', note: error.run.error ?? error.status,
+            decideRunId: error.run.id, turnsLeft: left,
+            status: error.status === 'timeout' ? 'timeout' : 'failed' }
+        ),
+      };
+    }
+    throw error;
+  }
+
+  // ── it has to name someone who exists ───────────────────────────────
+  let target = decision && resolveTarget(decision.target, actor.name, roster);
+  if (!decision || !target) {
+    const others = castFor(actor.name, roster).map((c) => c.handle).join('、');
+    const said = decision ? `act=「${decision.act}」target=「${decision.target || '空'}」` : `「${decideText.slice(0, 80)}」`;
+    try {
+      const retryOut = await think(
+        `${prompt}\n\n‼️ 你刚才给的是 ${said}，这一拍没法发生：\n` +
+        `- target 必须是这些 handle 里的一个，不能留空，也不能是你自己：${others}\n` +
+        `- act 必须来自上面的词汇表；小镇里没有"一个人去上班"这种拍子，每一拍都是冲着某个人的。\n` +
+        `- 你可以什么都不说（message 留空），但不能没有对象——盯着谁、避开谁、绕路经过谁，都算。\n` +
+        `重写这一拍，只输出 JSON。`,
+        'decide-retry', actor.name, bearer, actor.shareToken
+      ).catch(() => null);
+      const retry = retryOut && parseMove(retryOut.text);
+      const retried = retry && resolveTarget(retry.target, actor.name, roster);
+      if (!retry || !retried) {
+        console.warn(`[dating] ${actor.name}: decision named nobody (${said}) — round dropped`);
+        return { kind: 'dropped' };
+      }
+      decision = retry;
+      target = retried;
+      if (retryOut) decideRunId = retryOut.runId;
+    } catch (error) {
+      console.warn(`[dating] ${actor.name}: target retry failed —`, error instanceof Error ? error.message : error);
+      return { kind: 'dropped' };
+    }
+  }
+
+  // ── and it has to be something it has not just said ─────────────────
+  const priorToTarget = recentEvents.filter((e) => e.actor === actor.name && e.target === target.name);
+  const echoed = priorToTarget.find((e) => tooSimilar(decision!.message, e.message));
+  if (echoed) {
+    try {
+      const retryOut = await think(
+        `${prompt}\n\n‼️ 你刚才写的是：「${decision.message}」\n` +
+        `这和你上次说的「${echoed.message}」是同一句话换皮。重写这一拍：\n` +
+        `不许再约同一个时间地点，不许再问同一个问题。改成——你已经去了并且对方没出现／` +
+        `你直接给出答案不再要条件／或者你转身去找另一个人。`,
+        'decide-retry', actor.name, bearer, actor.shareToken
+      );
+      const retry = parseMove(retryOut.text);
+      if (retry && !priorToTarget.some((e) => tooSimilar(retry.message, e.message))) {
+        decision = retry;
+      } else {
+        console.warn(`[dating] ${actor.name} → ${target.name}: dropped a repeated line`);
+        return { kind: 'dropped' };
+      }
+    } catch (error) {
+      console.warn(`[dating] ${actor.name}: repeat retry failed —`, error instanceof Error ? error.message : error);
+      return { kind: 'dropped' };
+    }
+  }
+
+  return { kind: 'ok', decision, target, decideRunId };
+}
+
 async function takeTurn(
   bearer: string,
   actor: AgentCard,
@@ -791,93 +913,13 @@ async function takeTurn(
   const places = await placesFor(actor.name, roster, livePositions());
   const lastSaid = lastSaidBy(actor.name, recentEvents);
   const prompt = fillGoal(actor.name, persona, rels, roster, situation, memory.secrets, left, recalled + alsoRecalled, places, lastSaid);
-  let decision: Move | null = null;
-  let decideRunId: string | undefined;
-  let decideText = '';
-  try {
-    const out = await think(prompt, 'decide', actor.name, bearer, actor.shareToken);
-    decideRunId = out.runId;
-    decideText = out.text;
-    decision = parseMove(out.text);
-  } catch (error) {
-    if (error instanceof ModelError) {
-      return failedBeat(
-        actor.name,
-        `${actor.name} 这一轮没能行动`,
-        `模型调用 ${error.status}：${error.run.error ?? ''}`.trim(),
-        { actor: actor.name, move: 'FAILED', note: error.run.error ?? error.status,
-          decideRunId: error.run.id, turnsLeft: left,
-          status: error.status === 'timeout' ? 'timeout' : 'failed' }
-      );
-    }
-    throw error;
-  }
-  /**
-   * A decision nobody can act on gets one correction, then it is reported.
-   *
-   * Both of these used to be a bare `return null`, so a turn that had already
-   * cost a full decision call vanished without a word — the only trace was the
-   * scheduler guessing between "no budget / unparsable / bad target". It was
-   * none of those: the model answered `{"act":"GO_TO_WORK","move":"SELF",
-   * "target":""}` — a solitary act, in neither vocabulary the goal supplies,
-   * aimed at nobody. The town has no way to represent an agent going to work
-   * alone; every beat is between two people. So say what the vocabulary is and
-   * ask once more, rather than silently dropping the round.
-   */
-  let target = decision && resolveTarget(decision.target, actor.name, roster);
-  if (!decision || !target) {
-    const others = castFor(actor.name, roster).map((c) => c.handle).join('、');
-    const said = decision ? `act=「${decision.act}」target=「${decision.target || '空'}」` : `「${decideText.slice(0, 80)}」`;
-    try {
-      const retryOut = await think(
-        `${prompt}\n\n‼️ 你刚才给的是 ${said}，这一拍没法发生：\n` +
-        `- target 必须是这些 handle 里的一个，不能留空，也不能是你自己：${others}\n` +
-        `- act 必须来自上面的词汇表；小镇里没有"一个人去上班"这种拍子，每一拍都是冲着某个人的。\n` +
-        `- 你可以什么都不说（message 留空），但不能没有对象——盯着谁、避开谁、绕路经过谁，都算。\n` +
-        `重写这一拍，只输出 JSON。`,
-        'decide-retry', actor.name, bearer, actor.shareToken
-      ).catch(() => null);
-      const retry = retryOut && parseMove(retryOut.text);
-      const retried = retry && resolveTarget(retry.target, actor.name, roster);
-      if (!retry || !retried) {
-        console.warn(`[dating] ${actor.name}: decision named nobody (${said}) — round dropped`);
-        return null;
-      }
-      decision = retry;
-      target = retried;
-      if (retryOut) decideRunId = retryOut.runId;
-    } catch (error) {
-      console.warn(`[dating] ${actor.name}: target retry failed —`, error instanceof Error ? error.message : error);
-      return null;
-    }
-  }
-
-  // A beat that just re-says the last one gets ONE forced retry naming the
-  // offending line; if it repeats itself again, the turn is dropped rather than
-  // filling the square with the same invitation six times over.
-  const priorToTarget = recentEvents.filter((e) => e.actor === actor.name && e.target === target.name);
-  const echoed = priorToTarget.find((e) => tooSimilar(decision!.message, e.message));
-  if (echoed) {
-    try {
-      const retryOut = await think(
-        `${prompt}\n\n‼️ 你刚才写的是：「${decision.message}」\n` +
-        `这和你上次说的「${echoed.message}」是同一句话换皮。重写这一拍：\n` +
-        `不许再约同一个时间地点，不许再问同一个问题。改成——你已经去了并且对方没出现／` +
-        `你直接给出答案不再要条件／或者你转身去找另一个人。`,
-        'decide-retry', actor.name, bearer, actor.shareToken
-      );
-      const retry = parseMove(retryOut.text);
-      if (retry && !priorToTarget.some((e) => tooSimilar(retry.message, e.message))) {
-        decision = retry;
-      } else {
-        console.warn(`[dating] ${actor.name} → ${target.name}: dropped a repeated line`);
-        return null;
-      }
-    } catch (error) {
-      console.warn(`[dating] ${actor.name}: repeat retry failed —`, error instanceof Error ? error.message : error);
-      return null;
-    }
-  }
+  const decided = await decideTurn({ prompt, actor, roster, bearer, recentEvents, left });
+  if (decided.kind === 'failed') return decided.beat;
+  if (decided.kind === 'dropped') return null;
+  // `decision` stays mutable: the costly-act and unmute paths below rewrite it.
+  let decision: Move = decided.decision;
+  let decideRunId = decided.decideRunId;
+  const target = decided.target;
 
   // Readings evolve: the model reports how much THIS exchange moved things, and
   // we apply that to where the relationship already stood. A first meeting
