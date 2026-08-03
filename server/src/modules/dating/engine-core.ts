@@ -601,6 +601,66 @@ export function situationFor(
   return lines.join('\n');
 }
 
+// ── building a beat ──────────────────────────────────────────────────
+
+/**
+ * Every beat, built in one place.
+ *
+ * A turn has eleven exits — crime, waiting, silence, a governor, no budget, a
+ * repeated line, a dead capability, quota, the ordinary exchange — and each one
+ * assembled a twenty-field TickEvent by hand. Twenty fields written out eleven
+ * times is not a style problem: it is why a rebuilt beat once shipped without
+ * `at`, which threw a RangeError deep inside a narrate() call and took the whole
+ * BFF down. The missing field was invisible because the other ten sites had it.
+ *
+ * `makeBeat` cannot omit a field. Callers pass only what distinguishes their
+ * exit and the invariants are filled in here, so adding a field to TickEvent is
+ * one edit rather than eleven.
+ *
+ * `at` is a parameter, not `Date.now()` — a beat is stamped when the town says
+ * it happened, and a function that reads the clock itself cannot be tested.
+ */
+export type BeatDraft =
+  Partial<Omit<TickEvent, 'actor'>> & { actor: string };
+
+export function makeBeat(draft: BeatDraft): TickEvent {
+  return {
+    target: '',
+    move: 'APPROACH',
+    message: '',
+    reply: '',
+    attraction: 0,
+    trust: 0,
+    tension: 0,
+    note: '',
+    severity: 'ambient',
+    headline: '',
+    summary: '',
+    consequence: '',
+    followup: '',
+    ...draft,
+  };
+}
+
+/**
+ * A turn that did not happen, reported as what it is.
+ *
+ * The town's one hard rule is that it never puts invented content in the feed,
+ * so a failure is a first-class beat rather than something to hide or to paper
+ * over with a canned line. This used to pick one of five hardcoded taunts and
+ * present it as dialogue.
+ */
+export function failedBeat(actor: string, headline: string, reason: string, over: BeatDraft & { actor?: string } = { actor }): TickEvent {
+  return makeBeat({
+    ...over,
+    actor,
+    headline,
+    summary: reason,
+    severity: 'ambient',
+    status: 'failed',
+  });
+}
+
 // ── who the town may act as ──────────────────────────────────────────
 
 /**
