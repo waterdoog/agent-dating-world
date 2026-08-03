@@ -249,23 +249,36 @@ async function getPersona(bearer: string, name: string): Promise<string> {
 
 
 /**
- * Relationship readings live in Postgres.
+ * Relationship readings live in Postgres. One store, not two.
  *
- * They used to sit as `relationships.json` in each owner's Aicoo workspace. That
- * kept them decentralised, but it made every cross-agent question — who is in a
- * triangle, whose guess is furthest from the truth, which pair has cooled —
- * impossible to ask, and those questions are exactly what the director layer is
- * for. The per-owner note remains the fallback when no database is configured.
+ * They used to sit as `relationships.json` in each owner's Aicoo workspace,
+ * which kept them decentralised but made every cross-agent question — who is in
+ * a triangle, whose guess is furthest from the truth, which pair has cooled —
+ * impossible to ask, and those are exactly the questions the director layer
+ * exists for. The note survives only for a checkout with no database.
+ *
+ * The two paths used to be a fallback chain, and it had three ways of quietly
+ * serving the wrong thing:
+ *
+ *  1. `if (rows.length)` — an empty result fell through to the note. An agent
+ *     that genuinely knows nobody therefore paid a workspace round trip on every
+ *     single turn, and any relationship deleted from Postgres came back from a
+ *     note nobody had written to in days.
+ *  2. A read error fell through too, so a momentary database blip served stale
+ *     readings as if they were current.
+ *  3. A write error went to the note instead, so writes and reads could land in
+ *     different stores and the note became a divergent second copy.
+ *
+ * Together those are worse than an outage: the engine applies deltas to whatever
+ * base it read, so one stale read is written back over fresh data as if it were
+ * an update. An error now propagates and the turn is reported as not having
+ * happened — the same rule the rest of the town follows.
  */
 export async function readRels(bearer: string, name: string): Promise<Rel[]> {
   const now = Date.now();
   if (townDb.townDbReady()) {
-    try {
-      const rows = await townDb.loadRels(name);
-      if (rows.length) return rows.map((r) => seedDimensions(decayRel({ ...r, trust: r.trust ?? 0.3 }, now)));
-    } catch (error) {
-      console.warn('[dating] readRels from Postgres failed —', error instanceof Error ? error.message : error);
-    }
+    const rows = await townDb.loadRels(name);
+    return rows.map((r) => seedDimensions(decayRel({ ...r, trust: r.trust ?? 0.3 }, now)));
   }
   const folderId = await ensureFolder(bearer, `${ROOT}/${name}`);
   const note = await findNoteInFolder(bearer, folderId, 'relationships.json');
@@ -278,12 +291,8 @@ export async function readRels(bearer: string, name: string): Promise<Rel[]> {
 
 export async function writeRels(bearer: string, name: string, rels: Rel[]): Promise<void> {
   if (townDb.townDbReady()) {
-    try {
-      for (const r of rels) await townDb.saveRel(name, r);
-      return;
-    } catch (error) {
-      console.warn('[dating] writeRels to Postgres failed, falling back to notes —', error instanceof Error ? error.message : error);
-    }
+    for (const r of rels) await townDb.saveRel(name, r);
+    return;
   }
   await upsertNote(bearer, `${ROOT}/${name}`, 'relationships.json', JSON.stringify(rels, null, 2));
 }
@@ -492,7 +501,14 @@ async function replyFrom(
     });
   }
   const persona = await personaOf(targetKey, target.name);
-  const rels = await readRels(targetKey, target.name).catch(() => []);
+  // Prompt material only — nothing here is written back, so a blip costs the
+  // reply its memory of this person rather than corrupting it. Logged rather
+  // than swallowed, because an agent that visibly forgets someone it knows
+  // looks like a character bug and was impossible to trace to a read failure.
+  const rels = await readRels(targetKey, target.name).catch((err) => {
+    console.warn(`[dating] ${target.name} replies without its readings —`, err?.message);
+    return [] as Rel[];
+  });
   const mine = rels.find((r) => r.handle.toLowerCase() === actorName.toLowerCase());
   const feeling = mine
     ? `你对 ${actorName} 目前的感觉：心动 ${mine.attraction.toFixed(2)}、信任 ${(mine.trust ?? 0.3).toFixed(2)}、张力 ${mine.tension.toFixed(2)}（${mine.note}）。`
@@ -886,17 +902,28 @@ async function takeTurn(
     if (done && f) {
       const victimKey = creds.of(target);
       if (victimKey) {
-        const vrels = await readRels(victimKey, target.name).catch(() => []);
-        const cur = vrels.find((r) => r.handle.toLowerCase() === actor.name.toLowerCase());
-        const next = vrels.filter((r) => r.handle.toLowerCase() !== actor.name.toLowerCase());
-        next.push({
-          handle: actor.handle,
-          attraction: Math.max(0, Math.min(1, (cur?.attraction ?? 0.3) + f.attractionDelta)),
-          trust: Math.max(0, Math.min(1, (cur?.trust ?? 0.3) + f.trustDelta)),
-          tension: Math.max(0, Math.min(1, (cur?.tension ?? 0.2) + f.tensionDelta)),
-          note: f.rumour.slice(0, 60),
+        // Read it or do not write it. This used to swallow the failure into an
+        // empty list, which made `cur` undefined — so a momentary read error
+        // rewrote the victim's whole standing with the criminal as the default
+        // baseline plus the fallout, erasing however they actually felt. The
+        // crime not landing on the ledger is a beat that did not fully happen;
+        // a fabricated reading is a lie the town then builds on.
+        const vrels = await readRels(victimKey, target.name).catch((err) => {
+          console.warn(`[dating] ${target.name}: fallout not applied, readings unreadable —`, err?.message);
+          return null;
         });
-        await writeRels(victimKey, target.name, next).catch(() => undefined);
+        if (vrels) {
+          const cur = vrels.find((r) => r.handle.toLowerCase() === actor.name.toLowerCase());
+          const next = vrels.filter((r) => r.handle.toLowerCase() !== actor.name.toLowerCase());
+          next.push({
+            handle: actor.handle,
+            attraction: Math.max(0, Math.min(1, (cur?.attraction ?? 0.3) + f.attractionDelta)),
+            trust: Math.max(0, Math.min(1, (cur?.trust ?? 0.3) + f.trustDelta)),
+            tension: Math.max(0, Math.min(1, (cur?.tension ?? 0.2) + f.tensionDelta)),
+            note: f.rumour.slice(0, 60),
+          });
+          await writeRels(victimKey, target.name, next).catch(() => undefined);
+        }
       }
       recordKnowledge({ holder: target.name, about: actor.name, fact: f.rumour, source: '小镇上传开的' });
       const ev: TickEvent = {
@@ -1306,7 +1333,12 @@ export async function encounterWith(
   // Same scoring rule as every other path: a delta applied to the standing
   // reading. This branch used to take an absolute score straight from the model,
   // so one chance meeting could overwrite a relationship built over days.
-  const encRels = await readRels(bearer, actor.name).catch(() => [] as Rel[]);
+  // Not caught. An unreadable standing reading used to become an empty list,
+  // and the neutral baseline below then stood in for a relationship built over
+  // days — which the write at the end of this function saves over the real one.
+  // The comment above says a chance meeting must not overwrite that history;
+  // swallowing this error was the one path that still did.
+  const encRels = await readRels(bearer, actor.name);
   const encBase = encRels.find((r) => r.handle === target.handle) ?? { attraction: 0.25, trust: 0.3, tension: 0.15 };
   const attraction = clamp01(encBase.attraction + clampDelta(o.dAttraction ?? o.attraction));
   const trust = clamp01((encBase.trust ?? 0.3) + clampDelta(o.dTrust ?? o.trust));
