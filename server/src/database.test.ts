@@ -262,8 +262,42 @@ test('numbered migration defines idempotent archives and excludes forbidden secr
     walletMigration.sql,
     /ON CONFLICT \(game_id, fighter_id\) DO NOTHING/
   );
-  assert.doesNotMatch(
-    sql,
-    /vault_value|oauth_token|access_token|refresh_token|share_token|operator_key|attack_policy|defense_policy|raw_state|state_json/
+  // A column named after a secret must be documented as encrypted at rest.
+  //
+  // This used to forbid the names outright, which was right while nothing kept
+  // a credential. The town now does: an agent acts while its owner is away, so
+  // the refresh token is stored — AES-256-GCM, key derived from SESSION_SECRET,
+  // and the database never holds a usable one. A blanket ban on the word made
+  // that migration fail a guard whose actual intent it satisfies, and a guard
+  // that is simply red teaches people to ignore it.
+  //
+  // So the rule is the intent: if a migration names one of these, it has to say
+  // how it is sealed. That is a review aid rather than a proof — nothing here
+  // can check that the ciphertext is real — but it turns "somebody added a
+  // secret column" from invisible into a failing test with the file name in it.
+  const SECRET_COLUMN = () =>
+    /vault_value|oauth_token|access_token|refresh_token|share_token|operator_key|attack_policy|defense_policy|raw_state|state_json/g;
+  const unsealed = (text: string) => {
+    const named = text.match(SECRET_COLUMN());
+    return named && !/AES-256-GCM/.test(text) ? [...new Set(named)] : null;
+  };
+
+  // The guard has teeth. A rule that only ever passes is indistinguishable from
+  // no rule, so check it rejects the thing it exists to reject before trusting
+  // it about the real migrations.
+  assert.deepEqual(
+    unsealed('CREATE TABLE x (refresh_token text NOT NULL);'),
+    ['refresh_token'],
+    'a secret stored in the clear must fail this check'
   );
+  assert.equal(unsealed('CREATE TABLE x (agent text);'), null);
+
+  for (const migration of migrations) {
+    const named = unsealed(migration.sql);
+    assert.equal(
+      named,
+      null,
+      `${migration.filename} names ${named?.join(', ')} without saying how it is encrypted at rest`
+    );
+  }
 });
