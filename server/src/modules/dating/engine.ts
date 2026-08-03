@@ -861,6 +861,72 @@ async function decideTurn(args: {
   return { kind: 'ok', decision, target, decideRunId };
 }
 
+/**
+ * A crime, carried all the way through to who it lands on.
+ *
+ * This is the only beat where an agent changes someone ELSE's readings, so it
+ * is the only one that writes into another owner's workspace — which is why it
+ * lived inline for so long and why it is the one worth having on its own page.
+ * Returns null when the crime did not actually commit (the town refused it, or
+ * there was no fallout), and the turn carries on as an ordinary beat.
+ */
+async function resolveCrime(args: {
+  actor: AgentCard;
+  target: AgentCard;
+  decision: Move;
+  scored: { attraction: number; trust: number; tension: number };
+  creds: CredentialBook;
+  bearer: string;
+  decideRunId?: string;
+}): Promise<TickEvent | null> {
+  const { actor, target, decision, scored, creds, bearer, decideRunId } = args;
+  const done = commitCrime(actor.name, decision.crime!, target.name);
+  const f = done ? falloutOf(decision.crime!, actor.name, target.name) : null;
+  if (!done || !f) return null;
+
+  const victimKey = creds.of(target);
+  if (victimKey) {
+    // Read it or do not write it. This used to swallow the failure into an
+    // empty list, which made `cur` undefined — so a momentary read error
+    // rewrote the victim's whole standing with the criminal as the default
+    // baseline plus the fallout, erasing however they actually felt. The
+    // crime not landing on the ledger is a beat that did not fully happen;
+    // a fabricated reading is a lie the town then builds on.
+    const vrels = await readRels(victimKey, target.name).catch((err) => {
+      console.warn(`[dating] ${target.name}: fallout not applied, readings unreadable —`, err?.message);
+      return null;
+    });
+    if (vrels) {
+      const cur = vrels.find((r) => r.handle.toLowerCase() === actor.name.toLowerCase());
+      const next = vrels.filter((r) => r.handle.toLowerCase() !== actor.name.toLowerCase());
+      next.push({
+        handle: actor.handle,
+        attraction: Math.max(0, Math.min(1, (cur?.attraction ?? 0.3) + f.attractionDelta)),
+        trust: Math.max(0, Math.min(1, (cur?.trust ?? 0.3) + f.trustDelta)),
+        tension: Math.max(0, Math.min(1, (cur?.tension ?? 0.2) + f.tensionDelta)),
+        note: f.rumour.slice(0, 60),
+      });
+      await writeRels(victimKey, target.name, next).catch(() => undefined);
+    }
+  }
+  recordKnowledge({ holder: target.name, about: actor.name, fact: f.rumour, source: '小镇上传开的' });
+
+  const ev = makeBeat({
+    actor: actor.name, target: target.name, move: 'CRIME',
+    message: decision.message,
+    attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
+    note: done.label, severity: 'drama',
+    headline: decision.headline || f.rumour,
+    summary: decision.summary || `${actor.name} ${done.label}。${target.name} 会知道是谁干的。`,
+    consequence: decision.consequence || 'a crime lands on someone who can feel it',
+    followup: decision.followup || `${target.name} 会当面质问，还是先按住不说？`,
+    decideRunId, turnsLeft: await remaining(actor.name), status: 'ok',
+  });
+  const th = absorb(ev);
+  if (th && th.beats.length >= 2) await narrate(th, bearer, actor.shareToken).catch(() => undefined);
+  return ev;
+}
+
 async function takeTurn(
   bearer: string,
   actor: AgentCard,
@@ -939,64 +1005,22 @@ async function takeTurn(
   // CRIME: the agent crosses a line on its own. Real wanted level, real damage
   // to the victim's feelings, and the victim finds out it was them.
   if (decision.move === 'CRIME' && decision.crime) {
-    const done = commitCrime(actor.name, decision.crime, target.name);
-    const f = done ? falloutOf(decision.crime, actor.name, target.name) : null;
-    if (done && f) {
-      const victimKey = creds.of(target);
-      if (victimKey) {
-        // Read it or do not write it. This used to swallow the failure into an
-        // empty list, which made `cur` undefined — so a momentary read error
-        // rewrote the victim's whole standing with the criminal as the default
-        // baseline plus the fallout, erasing however they actually felt. The
-        // crime not landing on the ledger is a beat that did not fully happen;
-        // a fabricated reading is a lie the town then builds on.
-        const vrels = await readRels(victimKey, target.name).catch((err) => {
-          console.warn(`[dating] ${target.name}: fallout not applied, readings unreadable —`, err?.message);
-          return null;
-        });
-        if (vrels) {
-          const cur = vrels.find((r) => r.handle.toLowerCase() === actor.name.toLowerCase());
-          const next = vrels.filter((r) => r.handle.toLowerCase() !== actor.name.toLowerCase());
-          next.push({
-            handle: actor.handle,
-            attraction: Math.max(0, Math.min(1, (cur?.attraction ?? 0.3) + f.attractionDelta)),
-            trust: Math.max(0, Math.min(1, (cur?.trust ?? 0.3) + f.trustDelta)),
-            tension: Math.max(0, Math.min(1, (cur?.tension ?? 0.2) + f.tensionDelta)),
-            note: f.rumour.slice(0, 60),
-          });
-          await writeRels(victimKey, target.name, next).catch(() => undefined);
-        }
-      }
-      recordKnowledge({ holder: target.name, about: actor.name, fact: f.rumour, source: '小镇上传开的' });
-      const ev: TickEvent = {
-        actor: actor.name, target: target.name, move: 'CRIME',
-        message: decision.message, reply: '',
-        attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
-        note: done.label, severity: 'drama',
-        headline: decision.headline || f.rumour,
-        summary: decision.summary || `${actor.name} ${done.label}。${target.name} 会知道是谁干的。`,
-        consequence: decision.consequence || 'a crime lands on someone who can feel it',
-        followup: decision.followup || `${target.name} 会当面质问，还是先按住不说？`,
-        decideRunId, turnsLeft: await remaining(actor.name), status: 'ok',
-      };
-      const th = absorb(ev);
-      if (th && th.beats.length >= 2) await narrate(th, bearer, actor.shareToken).catch(() => undefined);
-      return ev;
-    }
+    const beat = await resolveCrime({ actor, target, decision, scored, creds, bearer, decideRunId });
+    if (beat) return beat;
   }
 
   // WAIT is a real move: the agent chooses NOT to spend a turn on anyone.
   if (decision.move === 'WAIT') {
-    return {
+    return makeBeat({
       actor: actor.name, target: target.name, move: 'WAIT',
-      message: decision.message, reply: '',
+      message: decision.message,
       attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
       curiosity: scored.curiosity, attachment: scored.attachment, possessiveness: scored.possessiveness,
       note: decision.note, severity: decision.severity,
       headline: decision.headline || `${actor.name} 等着 ${target.name}，没有开口`,
       summary: decision.summary, consequence: decision.consequence, followup: decision.followup,
       decideRunId, turnsLeft: left, status: 'ok',
-    };
+    });
   }
 
   // ── a beat with no words ────────────────────────────────────────────
@@ -1113,9 +1137,9 @@ async function takeTurn(
     // Only a visible act reaches the other party at all.
     if (witnessed) recordKnowledge({ holder: target.name, about: actor.name, fact: witnessed, source: '看见的' });
 
-    return {
+    return makeBeat({
       actor: actor.name, target: target.name, move: decision.move, act: decision.act,
-      message: '', reply: '', observable: witnessed,
+      observable: witnessed,
       attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
       guessAttraction: decision.guessAttraction, guessTrust: decision.guessTrust,
       note: decision.note, severity: decision.severity,
@@ -1125,7 +1149,7 @@ async function takeTurn(
       headline: decision.headline || `${actor.name} ${decision.act}`,
       summary: decision.summary, consequence: decision.consequence, followup: decision.followup,
       decideRunId, turnsLeft: left, status: 'ok', silent: true,
-    };
+    });
   }
 
   // The budget is spoken lines: the actor pays for its opener, the target pays
@@ -1273,7 +1297,7 @@ async function takeTurn(
     });
   }
 
-  const event: TickEvent = {
+  const event = makeBeat({
     actor: actor.name,
     target: target.name,
     move: decision.move,
@@ -1298,7 +1322,7 @@ async function takeTurn(
     replyRunId,
     turnsLeft: await remaining(actor.name),
     status: 'ok',
-  };
+  });
 
   // fold this beat into the pair's continuing story, and re-narrate the thread
   // when it has enough history to actually be a story.
@@ -1414,14 +1438,14 @@ export async function encounterWith(
   const next = rels.filter((r) => r.handle !== target.handle);
   next.push({ handle: target.handle, attraction, trust, tension, note, at: Date.now() });
   await writeRels(bearer, actor.name, next).catch(() => undefined);
-  const event: TickEvent = {
+  const event = makeBeat({
     actor: actor.name, target: target.name, move: 'APPROACH', message, reply, attraction, trust, tension, note,
     severity: tension > 0.6 ? 'drama' : 'relationship',
     headline: `${actor.name} 在广场上叫住了 ${target.name}`,
     summary: note ? `${actor.name} 走近 ${target.name}：${note}` : `${actor.name} 走近了 ${target.name}`,
     consequence: '', followup: '',
     decideRunId, replyRunId, turnsLeft: await remaining(actor.name), status: 'ok',
-  };
+  });
   const thread = absorb(event);
   if (thread && thread.beats.length >= 2) {
     // Hand the narrator the rivalries it cannot see from a pair-keyed thread.
