@@ -22,7 +22,9 @@ import {
   desireOf,
   destinationOf,
   feelsLike,
+  failedBeat,
   lastSaidBy,
+  makeBeat,
   overTalked,
   pairBeats,
   parseMove,
@@ -297,6 +299,40 @@ test('resolveTarget accepts a handle or a name, and refuses the actor itself', (
 test('castFor excludes the actor', () => {
   const names = castFor('SmokeCat', [card('SmokeCat'), card('Bravo')]).map((c) => c.name);
   assert.deepEqual(names, ['Bravo']);
+});
+
+// ── building a beat ──────────────────────────────────────────────────
+
+test('makeBeat cannot leave a required field out', () => {
+  // A turn has eleven exits and each one used to assemble a twenty-field event
+  // by hand. One of them shipped without `at`, which threw a RangeError inside
+  // narrate() and took the whole BFF down — invisible, because the other ten
+  // had it. This is that class of bug made unwriteable.
+  const minimal = makeBeat({ actor: 'SmokeCat' });
+  for (const field of ['actor', 'target', 'move', 'message', 'reply', 'attraction',
+                       'trust', 'tension', 'note', 'severity', 'headline', 'summary',
+                       'consequence', 'followup']) {
+    assert.ok(field in minimal, `${field} is missing from a beat built with only an actor`);
+  }
+  assert.equal(minimal.actor, 'SmokeCat');
+});
+
+test('makeBeat lets a caller override anything it actually knows', () => {
+  const b = makeBeat({ actor: 'SmokeCat', target: 'Bravo', move: 'CONFESS', tension: 0.8 });
+  assert.equal(b.move, 'CONFESS');
+  assert.equal(b.tension, 0.8);
+  assert.equal(b.trust, 0, 'what the caller did not say keeps its invariant');
+});
+
+test('failedBeat reports a turn that did not happen as exactly that', () => {
+  // The town's one hard rule: never put invented content in the feed. This used
+  // to pick one of five hardcoded taunts and present it as dialogue.
+  const b = failedBeat('SmokeCat', 'SmokeCat 这一轮没能行动', '模型调用 failed：404');
+  assert.equal(b.status, 'failed');
+  assert.equal(b.severity, 'ambient', 'a failure is not drama');
+  assert.equal(b.message, '', 'nothing is put in its mouth');
+  assert.equal(b.reply, '');
+  assert.match(b.summary, /404/, 'the real reason survives to the feed');
 });
 
 // ── credentials ──────────────────────────────────────────────────────

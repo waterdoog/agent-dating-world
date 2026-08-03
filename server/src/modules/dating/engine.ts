@@ -42,7 +42,7 @@ import { detectTriangles } from './detectors.js';
  * handle it belongs here, otherwise it belongs there and it has a test.
  */
 import {
-  ACTS, ACT_OFFERS, MOVES, SILENT_ACTS, CredentialBook,
+  ACTS, ACT_OFFERS, MOVES, SILENT_ACTS, CredentialBook, makeBeat, failedBeat,
   asSeverity, clamp01, clampDelta,
   castFor, decayRel, desireOf, destinationOf, feelsLike, lastSaidBy,
   overTalked, parseMove, quietTooLong, resolveTarget, saturated, seedDimensions,
@@ -69,15 +69,12 @@ const isQuota = (e: unknown) => e instanceof AicooError && e.status === 402;
  * A quota failure is now reported as what it is: a turn that did not happen.
  */
 function brokeEvent(name: string): TickEvent {
-  return {
-    actor: name, target: '', move: 'FAILED', message: '', reply: '',
-    attraction: 0, trust: 0, tension: 0, note: 'Aicoo 额度不足',
-    severity: 'ambient',
-    headline: `${name} 这一轮没能行动`,
-    summary: `${name} 的 Aicoo 账户模型额度用尽，这一拍没有发生。`,
-    consequence: '', followup: '',
-    status: 'failed',
-  };
+  return failedBeat(
+    name,
+    `${name} 这一轮没能行动`,
+    `${name} 的 Aicoo 账户模型额度用尽，这一拍没有发生。`,
+    { actor: name, move: 'FAILED', note: 'Aicoo 额度不足' }
+  );
 }
 
 /** The standing goal configured for every dating agent (set via /goal). */
@@ -788,15 +785,14 @@ async function takeTurn(
     decision = parseMove(out.text);
   } catch (error) {
     if (error instanceof ModelError) {
-      return {
-        actor: actor.name, target: '', move: 'FAILED', message: '', reply: '',
-        attraction: 0, trust: 0, tension: 0, note: error.run.error ?? error.status,
-        severity: 'ambient',
-        headline: `${actor.name} 这一轮没能行动`,
-        summary: `模型调用 ${error.status}：${error.run.error ?? ''}`.trim(),
-        consequence: '', followup: '', decideRunId: error.run.id,
-        turnsLeft: left, status: error.status === 'timeout' ? 'timeout' : 'failed',
-      };
+      return failedBeat(
+        actor.name,
+        `${actor.name} 这一轮没能行动`,
+        `模型调用 ${error.status}：${error.run.error ?? ''}`.trim(),
+        { actor: actor.name, move: 'FAILED', note: error.run.error ?? error.status,
+          decideRunId: error.run.id, turnsLeft: left,
+          status: error.status === 'timeout' ? 'timeout' : 'failed' }
+      );
     }
     throw error;
   }
@@ -1081,16 +1077,17 @@ async function takeTurn(
     await refundTurn(actor.name, target.name);    // the turn provably never happened
     await refundTurn(target.name, actor.name);
     if (error instanceof ModelError) {
-      return {
-        actor: actor.name, target: target.name, move: decision.move,
-        message: decision.message, reply: '',
-        attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
-        note: error.run.error ?? error.status, severity: 'ambient',
-        headline: `${target.name} 没有回应${actor.name}`,
-        summary: `对方的回合 ${error.status}：${error.run.error ?? ''}`.trim(),
-        consequence: '', followup: '', decideRunId, replyRunId: error.run.id,
-        turnsLeft: await remaining(actor.name), status: error.status === 'timeout' ? 'timeout' : 'failed',
-      };
+      return failedBeat(
+        actor.name,
+        `${target.name} 没有回应${actor.name}`,
+        `对方的回合 ${error.status}：${error.run.error ?? ''}`.trim(),
+        { actor: actor.name, target: target.name, move: decision.move,
+          message: decision.message,
+          attraction: scored.attraction, trust: scored.trust, tension: scored.tension,
+          note: error.run.error ?? error.status, decideRunId, replyRunId: error.run.id,
+          turnsLeft: await remaining(actor.name),
+          status: error.status === 'timeout' ? 'timeout' : 'failed' }
+      );
     }
     throw error;
   }
@@ -1292,14 +1289,14 @@ export async function encounterWith(
     if (m) o = JSON.parse(m[0]);
   } catch (error) {
     if (error instanceof ModelError) {
-      return {
-        actor: actor.name, target: target.name, move: 'APPROACH', message: '', reply: '',
-        attraction: 0, trust: 0, tension: 0, note: error.run.error ?? error.status, severity: 'ambient',
-        headline: `${actor.name} 张了张嘴，没能说出话`,
-        summary: `模型调用 ${error.status}：${error.run.error ?? ''}`.trim(),
-        consequence: '', followup: '', decideRunId: error.run.id,
-        turnsLeft: left, status: error.status === 'timeout' ? 'timeout' : 'failed',
-      };
+      return failedBeat(
+        actor.name,
+        `${actor.name} 张了张嘴，没能说出话`,
+        `模型调用 ${error.status}：${error.run.error ?? ''}`.trim(),
+        { actor: actor.name, target: target.name, note: error.run.error ?? error.status,
+          decideRunId: error.run.id, turnsLeft: left,
+          status: error.status === 'timeout' ? 'timeout' : 'failed' }
+      );
     }
     throw error;
   }
@@ -1326,14 +1323,16 @@ export async function encounterWith(
   } catch (error) {
     await refundTurn(actor.name, target.name);
     if (error instanceof ModelError) {
-      return {
-        actor: actor.name, target: target.name, move: 'APPROACH', message, reply: '',
-        attraction, trust, tension, note: error.run.error ?? error.status, severity: 'ambient',
-        headline: `${target.name} 没有回应 ${actor.name}`,
-        summary: `对方的回合 ${error.status}`, consequence: '', followup: '',
-        decideRunId, replyRunId: error.run.id,
-        turnsLeft: await remaining(actor.name), status: error.status === 'timeout' ? 'timeout' : 'failed',
-      };
+      return failedBeat(
+        actor.name,
+        `${target.name} 没有回应 ${actor.name}`,
+        `对方的回合 ${error.status}`,
+        { actor: actor.name, target: target.name, message,
+          attraction, trust, tension, note: error.run.error ?? error.status,
+          decideRunId, replyRunId: error.run.id,
+          turnsLeft: await remaining(actor.name),
+          status: error.status === 'timeout' ? 'timeout' : 'failed' }
+      );
     }
     throw error;
   }
