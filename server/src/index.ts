@@ -54,6 +54,7 @@ import {
 } from './fighter-world.js';
 import { listSquare, releaseAgent, updateAgent, readSpec, stampOwnerName, listEvents, appendEvent, renewShare, isDeadCapability, type AgentCard, type LoveStyle } from './modules/dating/store.js';
 import { runAgentTick, encounterWith, readRels, writeRels, type TickEvent } from './modules/dating/engine.js';
+import { CredentialBook } from './modules/dating/engine-core.js';
 import { startWorldLoop } from './modules/dating/scheduler.js';
 import { loadTownState, flushTownState, townStateHealth } from './modules/dating/town-state.js';
 import { isDatabaseConfigured } from './database/client.js';
@@ -71,6 +72,21 @@ import { NPCS, CRIMES, wantedLevel, commitCrime, clearWanted, wantedBoard, balan
 // Stable API keys the world can act with (ownerSub → key), seeded from
 // DATING_WORLD_KEYS at boot. Lets a target's REAL persona answer on its own COO.
 const worldCreds = new Map<string, string>();
+
+/**
+ * Everything the world can currently act as — API keys plus the stored OAuth
+ * credentials of players who signed in.
+ *
+ * The routes used to hand out `worldCreds` directly, which holds only the keys
+ * pasted into DATING_WORLD_KEYS. The autonomy loop meanwhile built a merged map
+ * including every signed-in player and kept it to itself, so a hand-driven turn
+ * saw a strictly smaller town than a scheduled one: an agent whose owner had
+ * signed in could act on its own schedule and yet be treated as credential-less
+ * the moment its player pressed the button.
+ *
+ * One book, refreshed in place by the loop, read by everyone.
+ */
+let liveBook = new CredentialBook(worldCreds);
 
 // The town digest is re-written from real threads, at most once every few
 // minutes, using whichever account the world is running on.
@@ -100,7 +116,7 @@ async function maybeRenewShare(e: TickEvent): Promise<void> {
   if (!whose) return;
   const roster = await listSquare().catch(() => [] as AgentCard[]);
   const card = roster.find((c) => c.name === whose);
-  const bearer = card && worldCreds.get(card.ownerSub);
+  const bearer = card && liveBook.of(card);
   if (!card || !bearer) return;
   const hour = `share:${card.handle}:${Math.floor(Date.now() / 3_600_000)}`;
   if (!(await claimTurn(hour, 'share'))) return;
@@ -158,7 +174,7 @@ async function maybeCloseYear(): Promise<void> {
     const roster = await listSquare().catch(() => [] as AgentCard[]);
     const events = (await listEvents().catch(() => [])) as unknown as TickEvent[];
     for (const card of roster) {
-      const bearer = worldCreds.get(card.ownerSub);
+      const bearer = liveBook.of(card);
       if (!bearer) continue;
       await writeYearbook({
         agent: card.name,
@@ -727,7 +743,7 @@ app.post('/api/dating/town/crime', async (c) => {
   const victim = roster.find((r) => r.name.toLowerCase() === victimName.toLowerCase());
   if (victim) {
     const f = falloutOf(crimeId, mine.name, victim.name);
-    const victimKey = worldCreds.get(victim.ownerSub);
+    const victimKey = liveBook.of(victim);
     if (f && victimKey) {
       const rels = await readRels(victimKey, victim.name).catch(() => []);
       const cur = rels.find((r) => r.handle.toLowerCase() === mine.name.toLowerCase());
@@ -995,7 +1011,7 @@ app.post('/api/dating/tick', async (c) => {
     if (!mine) return jsonError(c, 404, 'Release an agent into the square first.');
     // Deliberately unclaimed: a player asking their own agent to act is a
     // distinct event each time, not a scheduled round to be deduplicated.
-    const event = await runAgentTick(auth.bearer, mine, roster, worldCreds);
+    const event = await runAgentTick(auth.bearer, mine, roster, liveBook);
     if (event) await appendEvent(event);
     return c.json(event ? { event } : { event: null, note: 'Your agent held back this round.' });
   } catch (error) {
@@ -1014,7 +1030,7 @@ app.post('/api/dating/encounter', async (c) => {
     if (!mine) return jsonError(c, 404, 'Release an agent into the square first.');
     const target = roster.find((card) => card.handle === targetHandle);
     if (!target || target.handle === mine.handle) return jsonError(c, 404, 'No such agent to meet.');
-    const event = await encounterWith(auth.bearer, mine, target, worldCreds);
+    const event = await encounterWith(auth.bearer, mine, target, liveBook);
     if (event) await appendEvent(event);
     return c.json({ event });
   } catch (error) {
@@ -1146,12 +1162,14 @@ if (isMainModule && (process.env.DATING_WORLD_KEYS || isDatabaseConfigured())) {
     }
     const intervalMs = Number(process.env.DATING_WORLD_INTERVAL_MS ?? 300_000);
     // Refreshed each round so a player who signs in mid-session joins the world
-    // without a restart, and one who signs out drops out of it.
-    let live = initial;
+    // without a restart, and one who signs out drops out of it. Written into the
+    // module-level book rather than a local, so the hand-driven routes see the
+    // same town the loop does.
+    liveBook = new CredentialBook(initial);
     void (async () => {
       for (;;) {
         await new Promise((r) => setTimeout(r, intervalMs));
-        live = await withOauth().catch(() => live);
+        liveBook = await withOauth().then((m) => new CredentialBook(m)).catch(() => liveBook);
       }
     })();
     // Any number of processes may run this. Each round is claimed per agent in
@@ -1159,7 +1177,7 @@ if (isMainModule && (process.env.DATING_WORLD_KEYS || isDatabaseConfigured())) {
     // already taken and goes quiet — rather than doubling the town.
     console.log(`[dating] 🌍 world loop live · ${initial.size} identifier(s) · every ${intervalMs}ms`);
     startWorldLoop({
-      creds: () => live,
+      creds: () => liveBook,
       roster: () => listSquare(),
       intervalMs,
       onEvent: (e) => {

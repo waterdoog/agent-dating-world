@@ -42,7 +42,7 @@ import { detectTriangles } from './detectors.js';
  * handle it belongs here, otherwise it belongs there and it has a test.
  */
 import {
-  ACTS, ACT_OFFERS, MOVES, SILENT_ACTS,
+  ACTS, ACT_OFFERS, MOVES, SILENT_ACTS, CredentialBook,
   asSeverity, clamp01, clampDelta,
   castFor, decayRel, desireOf, destinationOf, feelsLike, lastSaidBy,
   overTalked, parseMove, quietTooLong, resolveTarget, saturated, seedDimensions,
@@ -458,9 +458,9 @@ async function replyFrom(
   target: AgentCard,
   actorName: string,
   line: string,
-  creds: Map<string, string>
+  creds: CredentialBook
 ): Promise<{ text: string; runId: string }> {
-  const targetKey = creds.get(target.ownerSub);
+  const targetKey = creds.of(target);
   /**
    * An agent answers on its own account or it does not answer.
    *
@@ -711,7 +711,7 @@ export async function runAgentTick(
   bearer: string,
   actor: AgentCard,
   roster: AgentCard[],
-  creds: Map<string, string>,
+  creds: CredentialBook,
   operationId?: string
 ): Promise<TickEvent | null> {
   if (operationId && !(await claimTurn(operationId, actor.name))) return null;
@@ -730,7 +730,7 @@ async function takeTurn(
   bearer: string,
   actor: AgentCard,
   roster: AgentCard[],
-  creds: Map<string, string>
+  creds: CredentialBook
 ): Promise<TickEvent | null> {
   const left = await remaining(actor.name);
   if (left <= 0) return null;                    // spent today — it simply doesn't speak
@@ -888,7 +888,7 @@ async function takeTurn(
     const done = commitCrime(actor.name, decision.crime, target.name);
     const f = done ? falloutOf(decision.crime, actor.name, target.name) : null;
     if (done && f) {
-      const victimKey = creds.get(target.ownerSub);
+      const victimKey = creds.of(target);
       if (victimKey) {
         const vrels = await readRels(victimKey, target.name).catch(() => []);
         const cur = vrels.find((r) => r.handle.toLowerCase() === actor.name.toLowerCase());
@@ -1187,7 +1187,7 @@ async function takeTurn(
     consequence: decision.consequence,
   }, actor.shareToken).catch(() => undefined);
 
-  const targetKey = creds.get(target.ownerSub) ?? (target.ownerName ? creds.get(target.ownerName) : undefined);
+  const targetKey = creds.of(target);
   if (targetKey) {
     // mirrored: from the target's side, `said` and `heard` swap over
     void remember(targetKey, target.name, actor.name, {
@@ -1255,7 +1255,7 @@ export async function encounterWith(
   bearer: string,
   actor: AgentCard,
   target: AgentCard,
-  creds: Map<string, string>
+  creds: CredentialBook
 ): Promise<TickEvent | null> {
   const left = await remaining(actor.name);
   if (left <= 0) return null;                      // no turns left today

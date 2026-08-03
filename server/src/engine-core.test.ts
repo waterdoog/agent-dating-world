@@ -16,6 +16,7 @@ import {
   ACT_OFFERS,
   asSeverity,
   castFor,
+  CredentialBook,
   clampDelta,
   decayRel,
   desireOf,
@@ -296,6 +297,41 @@ test('resolveTarget accepts a handle or a name, and refuses the actor itself', (
 test('castFor excludes the actor', () => {
   const names = castFor('SmokeCat', [card('SmokeCat'), card('Bravo')]).map((c) => c.name);
   assert.deepEqual(names, ['Bravo']);
+});
+
+// ── credentials ──────────────────────────────────────────────────────
+
+test('CredentialBook matches an agent by either identifier', () => {
+  // An agent released through the interface carries a pairwise OAuth sub that
+  // no API key can resolve, so it is reachable by account name and not by sub.
+  // Four call sites had drifted into three different rules about this: under
+  // the scheduler's it could take a turn, under the reply path's it could never
+  // answer one. Same agent, same town, two verdicts.
+  const book = new CredentialBook(new Map([['sub-1', 'key-a'], ['eason', 'key-b']]));
+  assert.equal(book.of({ ownerSub: 'sub-1' }), 'key-a', 'by pairwise sub');
+  assert.equal(book.of({ ownerSub: 'unknown', ownerName: 'eason' }), 'key-b', 'by account name');
+  assert.equal(book.of({ ownerSub: 'sub-1', ownerName: 'eason' }), 'key-a', 'sub wins when both resolve');
+});
+
+test('CredentialBook returns null, not undefined, for an agent it cannot act as', () => {
+  // The type is the point. `undefined` invites `?? someoneElsesBearer`, and
+  // that line put one agent's dialogue into another owner's private chat —
+  // Aicoo's guest endpoint runs the CALLER's agent, so the conversation belongs
+  // to whoever lent the token.
+  const book = new CredentialBook(new Map([['sub-1', 'key-a']]));
+  assert.equal(book.of({ ownerSub: 'nobody' }), null);
+  assert.equal(book.of({ ownerSub: 'nobody', ownerName: 'also-nobody' }), null);
+  assert.equal(book.canAct({ ownerSub: 'sub-1' }), true);
+  assert.equal(book.canAct({ ownerSub: 'nobody' }), false);
+});
+
+test('CredentialBook offers no way to ask for someone else', () => {
+  // A regression guard on the shape itself: any method that took two agents, or
+  // returned the whole map, would let the borrowing bug back in.
+  const book = new CredentialBook(new Map());
+  const surface = Object.getOwnPropertyNames(CredentialBook.prototype).filter((k) => k !== 'constructor');
+  assert.deepEqual(surface.sort(), ['canAct', 'of', 'size'], 'the whole surface, deliberately');
+  assert.equal(book.size, 0);
 });
 
 // ── small pieces that everything else leans on ───────────────────────
