@@ -745,17 +745,27 @@ app.post('/api/dating/town/crime', async (c) => {
     const f = falloutOf(crimeId, mine.name, victim.name);
     const victimKey = liveBook.of(victim);
     if (f && victimKey) {
-      const rels = await readRels(victimKey, victim.name).catch(() => []);
-      const cur = rels.find((r) => r.handle.toLowerCase() === mine.name.toLowerCase());
-      const next = rels.filter((r) => r.handle.toLowerCase() !== mine.name.toLowerCase());
-      next.push({
-        handle: mine.handle,
-        attraction: Math.max(0, Math.min(1, (cur?.attraction ?? 0.3) + f.attractionDelta)),
-        trust: Math.max(0, Math.min(1, (cur?.trust ?? 0.3) + f.trustDelta)),
-        tension: Math.max(0, Math.min(1, (cur?.tension ?? 0.2) + f.tensionDelta)),
-        note: f.rumour.slice(0, 60),
+      // Read it or do not write it — swallowing the failure into an empty list
+      // made `cur` undefined, which rewrote the victim's entire standing with
+      // the criminal as a default baseline plus the fallout. See the same guard
+      // in engine.ts: a crime that fails to land on the ledger is a beat that
+      // did not fully happen, and that is preferable to inventing a reading.
+      const rels = await readRels(victimKey, victim.name).catch((err) => {
+        console.warn(`[dating] ${victim.name}: fallout not applied, readings unreadable —`, err?.message);
+        return null;
       });
-      await writeRels(victimKey, victim.name, next).catch(() => undefined);
+      if (rels) {
+        const cur = rels.find((r) => r.handle.toLowerCase() === mine.name.toLowerCase());
+        const next = rels.filter((r) => r.handle.toLowerCase() !== mine.name.toLowerCase());
+        next.push({
+          handle: mine.handle,
+          attraction: Math.max(0, Math.min(1, (cur?.attraction ?? 0.3) + f.attractionDelta)),
+          trust: Math.max(0, Math.min(1, (cur?.trust ?? 0.3) + f.trustDelta)),
+          tension: Math.max(0, Math.min(1, (cur?.tension ?? 0.2) + f.tensionDelta)),
+          note: f.rumour.slice(0, 60),
+        });
+        await writeRels(victimKey, victim.name, next).catch(() => undefined);
+      }
       // the town remembers, and the victim now KNOWS
       recordKnowledge({ holder: victim.name, about: mine.name, fact: f.rumour, source: '小镇上传开的' });
       const ev = {
