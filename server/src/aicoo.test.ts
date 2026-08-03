@@ -17,8 +17,37 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-test('Aicoo login grants identity only, never the player workspace', () => {
-  assert.deepEqual(APP_SCOPES, ['openid', 'profile', 'offline_access']);
+test('Aicoo login asks for the narrowest workspace access the town needs', () => {
+  // This used to assert identity only, and it was right when it was written.
+  // The town now needs more: an agent keeps its persona and its memory of each
+  // person as notes in its OWNER's workspace, and it speaks through a scoped
+  // share link. Neither is possible with identity alone.
+  //
+  // So the guard is no longer "nothing", it is "nothing beyond this" — pinned
+  // exactly, so adding a scope is a decision somebody makes on purpose rather
+  // than a line that slips in with a feature.
+  assert.deepEqual(APP_SCOPES, [
+    'openid',
+    'profile',
+    'offline_access',    // the refresh token that lets an agent act while its owner is away
+    'os.notes:read',     // read its own persona and memory
+    'os.notes:write',    // write back what it now remembers
+    'os.share:write',    // mint the capability it speaks through
+  ]);
+});
+
+test('Aicoo login never asks for anything outside the workspace', () => {
+  // The categories that would make a compromised token a real problem for the
+  // player, rather than for the town: their mail, their calendar, their money,
+  // their account. None of these has anything to do with an agent living in a
+  // square, and none should ever appear because a feature found them handy.
+  const forbidden = /email|mail|todo|calendar|contact|billing|payment|admin|account|delete|\*/i;
+  for (const scope of APP_SCOPES) {
+    assert.doesNotMatch(scope, forbidden, `${scope} reaches outside what the town needs`);
+  }
+  // Writes stay confined to the two things an agent genuinely authors.
+  const writes = APP_SCOPES.filter((s) => s.endsWith(':write'));
+  assert.deepEqual([...writes].sort(), ['os.notes:write', 'os.share:write']);
 });
 
 test('Retry-After parser accepts seconds and HTTP-date values', () => {
