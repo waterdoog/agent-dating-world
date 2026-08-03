@@ -4,12 +4,13 @@
  * one self-directed turn against THE GOAL (see engine.ts) — picking a move,
  * sending a real in-character message, and letting its feelings evolve.
  *
- * Credentials: a map of ownerSub → bearer. In production this is fed by aicoo's
- * heartbeat (once os.heartbeat scope lands) or per-user stored keys; today it can
- * be seeded from the accounts we hold, so the world genuinely runs on its own.
+ * Credentials arrive as a CredentialBook, not a Map: there is one rule for what
+ * counts as an agent's own credential, and no way to ask for someone else's.
+ 
  */
 import type { AgentCard } from './store.js';
 import { runAgentTick, type TickEvent } from './engine.js';
+import type { CredentialBook } from './engine-core.js';
 import { townDbReady, alreadyReportedFailure } from './town-repository.js';
 
 // A broke agent gets roasted at most once per window, so the feed isn't spammed.
@@ -68,14 +69,16 @@ async function isRepeatFailure(agent: string, summary: string): Promise<boolean>
  * unclaimed, which is only right for a hand-driven call.
  */
 export async function runWorldRound(
-  creds: Map<string, string>,
+  creds: CredentialBook,
   roster: AgentCard[],
   opts: { maxTurns?: number; onEvent?: (e: TickEvent) => void; round?: number } = {}
 ): Promise<TickEvent[]> {
-  // Match on either identifier: agents released through the UI carry a pairwise
-  // OAuth sub that no API key can resolve, but their account name resolves fine.
-  const keyFor = (a: AgentCard) => creds.get(a.ownerSub) ?? (a.ownerName ? creds.get(a.ownerName) : undefined);
-  const actable = roster.filter((a) => keyFor(a));
+  // One matching rule, defined once. This was four separate expressions across
+  // three files that had drifted into disagreeing: an agent reachable by account
+  // name but not by pairwise sub could take a turn here and yet be judged to
+  // have no credential when it came to answering one.
+  const keyFor = (a: AgentCard) => creds.of(a);
+  const actable = roster.filter((a) => creds.canAct(a));
   const turns = opts.maxTurns ? actable.slice(0, opts.maxTurns) : actable;
 
   // Agents live in different owner accounts, so their turns can run at the same
@@ -159,7 +162,7 @@ export async function runWorldRound(
  * from the clock, never from a backlog, so a slow round cannot pile up.
  */
 export function startWorldLoop(args: {
-  creds: () => Map<string, string>;
+  creds: () => CredentialBook;
   roster: () => Promise<AgentCard[]>;
   intervalMs: number;
   maxTurnsPerRound?: number;

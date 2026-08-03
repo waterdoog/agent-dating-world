@@ -601,6 +601,60 @@ export function situationFor(
   return lines.join('\n');
 }
 
+// ── who the town may act as ──────────────────────────────────────────
+
+/**
+ * The credentials the world holds, and the only way to ask for one.
+ *
+ * This replaces a bare `Map<string, string>` passed down through every layer,
+ * and the reason is not tidiness. A Map answers `get(anything)`, so the calling
+ * code decided for itself what counted as "this agent's credential" — and four
+ * call sites had arrived at three different answers:
+ *
+ *   · the scheduler matched on ownerSub OR ownerName
+ *   · the memory write matched on ownerSub OR ownerName
+ *   · the reply path matched on ownerSub only
+ *   · the crime fallout matched on ownerSub only
+ *
+ * An agent released through the interface carries a pairwise OAuth sub that no
+ * API key can resolve, so it was reachable by name and not by sub. Under the
+ * scheduler's rule it could take a turn; under the reply path's rule it could
+ * never answer one. Same agent, same town, two verdicts.
+ *
+ * Worse, a Map makes `creds.get(target) ?? someoneElsesBearer` a natural thing
+ * to write — and that line put one agent's dialogue into another owner's
+ * private chat, because Aicoo's guest endpoint runs the CALLER's agent. There
+ * is deliberately no method here that returns a credential for anyone other
+ * than the agent asked about, and `of` returns null rather than undefined so
+ * the empty case has to be handled instead of falling through `??`.
+ */
+export class CredentialBook {
+  constructor(private readonly keys: Map<string, string>) {}
+
+  /**
+   * The bearer this agent may act as, or null if the world holds none.
+   *
+   * Both identifiers, in one place. `ownerSub` is the pairwise OAuth subject and
+   * `ownerName` is the account name an API key can resolve; an agent is the same
+   * agent whichever of the two the world happens to know it by.
+   */
+  of(agent: { ownerSub: string; ownerName?: string }): string | null {
+    return this.keys.get(agent.ownerSub)
+      ?? (agent.ownerName ? this.keys.get(agent.ownerName) : undefined)
+      ?? null;
+  }
+
+  /** Can this agent act at all — for filtering a roster before spending a turn. */
+  canAct(agent: { ownerSub: string; ownerName?: string }): boolean {
+    return this.of(agent) !== null;
+  }
+
+  /** How many identifiers the world can act through, for the boot log. */
+  get size(): number {
+    return this.keys.size;
+  }
+}
+
 /** Which agents an actor may act on — everyone but itself. */
 export function castFor(actorName: string, roster: AgentCard[]): AgentCard[] {
   return roster.filter((c) => c.name !== actorName);
